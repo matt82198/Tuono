@@ -24,14 +24,19 @@ end
 local FALLBACK_TEXTURE = 134400
 local TRINKET_SLOTS = { 13, 14 }
 
--- Keybind cache: spellID -> "S-1" (abbreviation format)
+-- Keybind cache: spellID -> "S-1" (already abbreviated, ready to display)
+-- Module-local to avoid per-tick allocations; invalidated only on binding changes
 local spellIDtoKeytext = {}
 local function InvalidateKeybindCache()
-	spellIDtoKeytext = {}
+	-- Wipe cache in-place; reuse same table to avoid allocating new table
+	for k in pairs(spellIDtoKeytext) do
+		spellIDtoKeytext[k] = nil
+	end
 end
 
 local function AbbreviateKey(keyStr)
 	if not keyStr or keyStr == "" then return nil end
+	-- Single pass string operations to create abbreviated form once
 	keyStr = string.gsub(keyStr, "SHIFT%-", "S-")
 	keyStr = string.gsub(keyStr, "CTRL%-", "C-")
 	keyStr = string.gsub(keyStr, "ALT%-", "A-")
@@ -42,7 +47,7 @@ end
 local function GetKeybindText(spellID)
 	if not spellID then return nil end
 
-	-- Check cache first
+	-- Cache hit: return already-abbreviated string without recomputing
 	if spellIDtoKeytext[spellID] then
 		return spellIDtoKeytext[spellID]
 	end
@@ -226,6 +231,8 @@ function OA.Display.Init()
 end
 
 function OA.Display.Render(result)
+	-- Allocation-light per-tick rendering: all frames/fontstrings created at Init,
+	-- reused here; keybind strings cached at module scope; no per-tick table creation
 	if not OA.Display.anchor then
 		return
 	end
