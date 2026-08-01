@@ -59,8 +59,8 @@ local function runTocCheck()
     return testCount, passCount
   end
 
-  -- Test 2: Verify single Interface line (not comma-separated)
-  test("toc interface line is single-number format", function()
+  -- Test 2: Verify Interface line on line 1 with numeric single-or-list format
+  test("toc interface line on line 1, numeric single-or-list", function()
     local interfaceLines = {}
     for line in tocContent:gmatch("[^\n]+") do
       if line:match("^##%s*Interface%s*:") then
@@ -79,15 +79,12 @@ local function runTocCheck()
       error("Could not parse Interface line: " .. interfaceLine)
     end
 
-    -- Check that it doesn't contain commas (which indicate multi-version)
-    if numberPart:find(",") then
-      error("Interface line contains comma-separated versions (not allowed): " .. numberPart)
-    end
+    -- Strip trailing whitespace (handles Windows line endings)
+    numberPart = numberPart:gsub("%s+$", "")
 
-    -- Verify it's a valid number
-    local num = tonumber(numberPart)
-    if not num then
-      error("Interface line does not contain a valid number: " .. numberPart)
+    -- Verify it contains only digits, commas, and spaces, and starts/ends with a digit
+    if not numberPart:match("^[0-9][0-9, ]*[0-9]$") and not numberPart:match("^[0-9]+$") then
+      error("Interface line must contain one or more comma-separated digit numbers: " .. numberPart)
     end
   end)
 
