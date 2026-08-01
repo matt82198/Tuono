@@ -168,3 +168,10 @@ Provides on OA:
 - `OA.State.stealthed` (bool) — refreshed on UNIT_AURA + RefreshFast via Stealth aura scan (1784 or "Stealth" name fallback)
 - **opener_stealth rule:** PIN kind="opener" spellID=stealth when `not S.inCombat and not S.stealthed`
 - **Note:** Research doc (outlaw-rotation.md §5 RESEARCH LIMITATIONS) does not name a specific opener ability from Stealth state; opener_from_stealth rule SKIPPED
+
+**Enemy Counting (AoE Signal):**
+- `OA.State.enemyCount` — number of threat-engaged enemies (nil if detector unavailable)
+  - Implemented via `C_NamePlate.GetNamePlates()` threat-level enumeration (Midnight 12.0.7+)
+  - Detects hostile nameplates with threat > 0 on player; 2+ triggers AoE rules
+  - Blade Flurry PREFER fires when enemyCount >= 2 OR aoeMode=true OR aoeDetected=true (composite signal)
+  - Status (2026-08-01): Threat-table detection implemented; pending live-game verification via `/oa apitest` probes

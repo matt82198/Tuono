@@ -20,7 +20,9 @@ local function deepMerge(target, source)
     if type(v) == "table" and type(target[k]) == "table" then
       target[k] = deepMerge(target[k], v)
     else
-      target[k] = v
+      if target[k] == nil then
+        target[k] = v
+      end
     end
   end
   return target

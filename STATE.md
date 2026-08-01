@@ -26,13 +26,13 @@
 
 ## NEXT STEPS (Ordered)
 
-1. **USER in-game on v0.2.3:** User runs `/oa apitest` to pin exact Client API surface (Interface line); combat-tests party-HP readability probe; verifies icon-strip visual (dummy combat at-level). Decision: party-HP cadence AoE upgrade legal?
+1. **AoE Detection Verification (v0.3.0 prerequisite):** User runs `/oa apitest` to validate threat-table detection (`C_NamePlate.GetNamePlates()` + `UnitThreatSituation()` legality + behavior in live combat). Confirm: does threat-count accurately detect 2+ enemies? Are APIs available on Midnight 12.0.7+?
 
-2. **Aug 11 Interface bump:** When 12.1 launches, bump Interface pin to 120100 in TOC; verify no API surface changes impact existing rules.
+2. **Aug 11 Interface bump:** When 12.1 launches, bump Interface pin to 120100 in TOC; verify no API surface changes impact threat-detection or existing rules.
 
-3. **M4 Completion (HP-cadence AoE if probe passes):** Party-HP cadence detector as optional high-fidelity AoE advisor (legal-by-construction per research; gated on user verdict from step 1).
+3. **v0.3.0 Finalization:** Lock threat-table AoE detection (M4 feature complete); ship with `/oa apitest` results documented; call for user feedback on detection accuracy.
 
-4. **M5 (CurseForge packaging):** `.pkgmeta` file, full options panel polish, enhanced README (setup, features, limitations), CHANGELOG (all milestones, per-patch notes), user-gated CurseForge upload via GitHub release.
+4. **M5 (CurseForge packaging):** `.pkgmeta` file, full options panel polish, enhanced README (setup, features, limitations, AoE detection method), CHANGELOG (all milestones, per-patch notes), user-gated CurseForge upload via GitHub release.
 
 5. **Sim-data refresh cadence:** Post-patch: run `tools/refresh_sim_data.py` to clone SimC, extract MID1_Rogue_Outlaw.simc, refresh rules.lua (semi-automated; hand-completion + verification required). See docs/SIM-DATA.md for procedure.
 

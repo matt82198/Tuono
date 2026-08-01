@@ -1435,6 +1435,29 @@ test("aura-infra: full tick under combatSecrets mode without error", function()
   stub.state.combatSecrets = false
 end)
 
+-- === v1-core tests ===
+
+-- P0 Fix Test 1: User-saved values survive ADDON_LOADED + PLAYER_LOGIN reload cycle
+test("v1-core: saved user settings survive reload (P0 bite-proof)", function()
+  -- Simulate a user setting custom values and reloading
+  -- Set OA.db to have custom values BEFORE firing reload events
+  OA.db.display.scale = 1.7
+  OA.db.show.cds = false
+  OA.db.aoeMode = true
+  _G.OutlawAssistDB = OA.db
+
+  -- Now fire ADDON_LOADED which calls deepMerge(OutlawAssistDB or {}, OA.defaults)
+  -- BUG: deepMerge currently overwrites with defaults
+  -- FIX: deepMerge should only fill missing keys
+  stub.FireEvent("ADDON_LOADED", "OutlawAssist")
+  stub.FireEvent("PLAYER_LOGIN")
+
+  -- After fix, user's custom values should survive
+  assert_eq(OA.db.display.scale, 1.7, "saved scale 1.7 survives reload (not overwritten by default 1.0)")
+  assert_eq(OA.db.show.cds, false, "saved cds=false survives reload (not overwritten by default true)")
+  assert_eq(OA.db.aoeMode, true, "saved aoeMode=true survives reload (not overwritten by default false)")
+end)
+
 -- Summary
 print("")
 print(passCount .. "/" .. testCount .. " tests passed")
