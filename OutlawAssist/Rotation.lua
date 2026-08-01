@@ -6,18 +6,18 @@ OA.Rotation = OA.Rotation or {}
 -- Format: { cost, cpGen, cpSpend (0 if not spender, else CP cost), cd (base cooldown), gcd }
 -- Each value sourced from Wowhead spell page and verified 2026-08-01.
 local ABILITIES = {
-	-- Sinister Strike: https://www.wowhead.com/spell=1752/sinister-strike (verified 45 energy)
+	-- Sinister Strike: https://www.wowhead.com/spell=193315/sinister-strike (verified 45 energy, current-patch ID not legacy)
 	[OA.SpellIDs.sinisterStrike] = { cost=45, cpGen=1, cpSpend=0, cd=0, gcd=true },
-	-- Ambush: https://www.wowhead.com/spell=8676/ambush (0 cost, stealth-only, 2 CP gen)
-	[OA.SpellIDs.ambush] = { cost=0, cpGen=2, cpSpend=0, cd=0, gcd=false },
-	-- Blade Rush: https://www.wowhead.com/spell=271896/blade-rush (0 cost, 60s CD, not 10s)
+	-- Ambush: https://www.wowhead.com/spell=8676/ambush (0 cost, stealth-only, 2 CP gen, GCD=true per live)
+	[OA.SpellIDs.ambush] = { cost=0, cpGen=2, cpSpend=0, cd=0, gcd=true },
+	-- Blade Rush: https://www.wowhead.com/spell=271877/blade-rush (0 cost, 60s CD, not 10s)
 	[OA.SpellIDs.bladeRush] = { cost=0, cpGen=1, cpSpend=0, cd=60, gcd=true },
 	-- Roll the Bones: https://www.wowhead.com/spell=315508/roll-the-bones (verified 25 energy, 45s CD)
 	[OA.SpellIDs.rollTheBones] = { cost=25, cpGen=0, cpSpend=0, cd=45, gcd=true },
 	-- Between the Eyes: https://www.wowhead.com/spell=315341/between-the-eyes (25 energy, 45s CD, not 30s)
 	[OA.SpellIDs.betweenTheEyes] = { cost=25, cpGen=0, cpSpend=6, cd=45, gcd=true },
-	-- Killing Spree: https://www.wowhead.com/spell=5374/killing-spree (45 energy, 180s CD, not 30s)
-	[OA.SpellIDs.killingSpree] = { cost=45, cpGen=0, cpSpend=6, cd=180, gcd=true },
+	-- Killing Spree: https://www.wowhead.com/spell=51690/killing-spree (45 energy, 180s CD, NOT a CP spender — independent cooldown burst)
+	[OA.SpellIDs.killingSpree] = { cost=45, cpGen=0, cpSpend=0, cd=180, gcd=true },
 	-- Dispatch: https://www.wowhead.com/spell=2098/dispatch (35 energy, not 25; verified critical for leveling)
 	[OA.SpellIDs.dispatch] = { cost=35, cpGen=0, cpSpend=5, cd=0, gcd=true },
 	-- Pistol Shot: https://www.wowhead.com/spell=185763/pistol-shot (verified 40 energy)
@@ -95,6 +95,10 @@ local PRIORITY_SINGLE = {
 		spellID = OA.SpellIDs.rollTheBones,
 		requiresSpell = OA.SpellIDs.rollTheBones,
 		when = function(S, A)
+			-- Reroll RtB at low stage, but not at 5-6 CP when a finisher is available (spend finisher first)
+			if S.comboPoints >= 5 and (cdOf(S, "betweenTheEyes").ready or cdOf(S, "killingSpree").ready) then
+				return false
+			end
 			return S.buffs.rtb.stage < 2 and cdOf(S, "rollTheBones").ready and canAfford(S, OA.SpellIDs.rollTheBones)
 		end
 	},
@@ -111,7 +115,9 @@ local PRIORITY_SINGLE = {
 		spellID = OA.SpellIDs.adrenalineRush,
 		requiresSpell = OA.SpellIDs.adrenalineRush,
 		when = function(S, A)
-			return cdOf(S, "adrenalineRush").ready and canAfford(S, OA.SpellIDs.adrenalineRush)
+			-- Use AR on cooldown at low combo points (consistent with rules.lua:adrenaline_rush_low_cp)
+			-- At 5-6 CP with finisher available, hold for better uptime window
+			return S.comboPoints <= 2 and cdOf(S, "adrenalineRush").ready and canAfford(S, OA.SpellIDs.adrenalineRush)
 		end
 	},
 	{
@@ -119,6 +125,10 @@ local PRIORITY_SINGLE = {
 		spellID = OA.SpellIDs.bladeRush,
 		requiresSpell = OA.SpellIDs.bladeRush,
 		when = function(S, A)
+			-- Use BR on cooldown, but not at 5-6 CP when a finisher is available (spend finisher first)
+			if S.comboPoints >= 5 and (cdOf(S, "betweenTheEyes").ready or cdOf(S, "killingSpree").ready) then
+				return false
+			end
 			return cdOf(S, "bladeRush").ready and canAfford(S, OA.SpellIDs.bladeRush)
 		end
 	},
@@ -129,6 +139,10 @@ local PRIORITY_SINGLE = {
 		when = function(S, A)
 			-- Use Preparation when any of its cooldown-reset targets are down
 			-- Per rotation-model.md §1b rule 6: reset AR/BtE/Blade Rush when any are down and Prep is up
+			-- Gate: do not use at 5-6 CP when a finisher is available (spend finisher first)
+			if S.comboPoints >= 5 and cdOf(S, "betweenTheEyes").ready then
+				return false  -- BtE available, spend it first
+			end
 			local arDown = not cdOf(S, "adrenalineRush").ready and cdOf(S, "adrenalineRush").remaining > 0
 			local bteDown = not cdOf(S, "betweenTheEyes").ready and cdOf(S, "betweenTheEyes").remaining > 0
 			local brDown = not cdOf(S, "bladeRush").ready and cdOf(S, "bladeRush").remaining > 0
@@ -144,11 +158,12 @@ local PRIORITY_SINGLE = {
 		end
 	},
 	{
-		name = "KS_finisher_6cp",
+		name = "KS_burst_cooldown",
 		spellID = OA.SpellIDs.killingSpree,
 		requiresSpell = OA.SpellIDs.killingSpree,
 		when = function(S, A)
-			return S.comboPoints >= 6 and cdOf(S, "killingSpree").ready and canAfford(S, OA.SpellIDs.killingSpree)
+			-- Killing Spree is a combo-point-independent burst cooldown, use on cooldown like Blade Rush
+			return cdOf(S, "killingSpree").ready and canAfford(S, OA.SpellIDs.killingSpree)
 		end
 	},
 	{
@@ -433,6 +448,12 @@ function OA.Rotation.Predict(state, steps)
 			if spellID == OA.SpellIDs.pistolShot then
 				S.buffs.opportunity.up = false
 				S.buffs.opportunity.expires = 0
+			end
+
+			-- Clear stealth after Ambush (P0-1: Ambush breaks stealth on cast, so subsequent steps should not predict Ambush again).
+			-- Without this, the simulation predicts Ambush 4 times in a row, which is impossible in live play.
+			if spellID == OA.SpellIDs.ambush then
+				S.stealthed = false
 			end
 
 			-- Start cooldown on the ABILITY's key (never the rule name).

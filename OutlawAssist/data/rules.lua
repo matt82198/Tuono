@@ -117,7 +117,7 @@ OA.Rules = {
     source = "outlaw-rotation.md §1 (Priority Order: 'Blade Rush – Use on cooldown as a regular combo-point builder')"
   },
 
-  -- Additional Rule 9: Sinister Strike at low combo points
+  -- Additional Rule 9: Sinister Strike at low combo points (P0-3: gate to <= 4 CP, not 5, to avoid demoting finisher at 5 CP)
   {
     name = "sinister_strike_builder",
     desc = "Use Sinister Strike as primary combo-point generator",
@@ -126,9 +126,11 @@ OA.Rules = {
     spellID = 193315,
     itemSlot = nil,
     when = function(S, A)
-      return S.comboPoints <= 5 and S.energy >= 40
+      -- FIX P0-3: gate to <= 4 CP so Dispatch is not demoted when at 5 CP. Rotation.lua Dispatch_finisher
+      -- (priority 10) correctly puts Dispatch first; this PREFER should not override it.
+      return S.comboPoints <= 4 and S.energy >= 40
     end,
-    source = "outlaw-rotation.md §1 (Priority Order: 'Sinister Strike – Bread-and-butter combo-point generator at 5 or fewer Combo Points')"
+    source = "outlaw-rotation.md §1 (Priority Order: 'Sinister Strike – Bread-and-butter combo-point generator at 5 or fewer Combo Points'); FIX: gated to <= 4 CP to prevent demoting Dispatch finisher (P0-3)"
   },
 
   -- Additional Rule 10: RtB maintenance during stage progression
