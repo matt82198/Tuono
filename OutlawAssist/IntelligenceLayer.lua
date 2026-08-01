@@ -274,6 +274,18 @@ function OA.Engine.Evaluate()
         end
       end
 
+      -- POSITION 1 ONLY: the immediate action must be castable RIGHT NOW. Later
+      -- sequence steps are legitimately on cooldown at this instant -- that is the
+      -- point of a forward simulation -- so filtering them against live cooldowns
+      -- would delete correct future steps.
+      if not skip and i == 1 and entry.isSequence and entry.spellID then
+        local key = OA.Rotation and OA.Rotation.SPELL_TO_CDKEY and OA.Rotation.SPELL_TO_CDKEY[entry.spellID]
+        local cd = key and S.cooldowns[key]
+        if cd and cd.known and not cd.ready then
+          skip = true
+        end
+      end
+
       -- For cooldown/trinket entries: verify the cooldown is known and ready
       if not skip and entry.kind == "cooldown" and entry.spellID then
         local cd = S.cooldowns[entry.spellID == OA.SpellIDs.adrenalineRush and "adrenalineRush" or

@@ -57,6 +57,8 @@ end
 -- Exposed for introspection (/oa debug) and so tests can assert the DATA, not just
 -- behaviour -- the ability numbers are the thing most likely to be silently wrong.
 OA.Rotation.ABILITIES = ABILITIES
+-- Exposed so the engine can map a queued spell back to its cooldown key.
+OA.Rotation.SPELL_TO_CDKEY = SPELL_TO_CDKEY
 
 local SPELL_TO_CDKEY = {}
 for k, v in pairs(OA.SpellIDs or {}) do

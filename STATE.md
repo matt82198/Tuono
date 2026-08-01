@@ -112,3 +112,12 @@ SOLE FOCUS: the Outlaw rotation helper. Ship a green build the user can play.
 - GAP THAT ALLOWED IT: 145 unit tests were green while live play was broken. tests/scenario_bar.lua
   (end-to-end harness printing what the BAR shows) found it in minutes. Converting that harness into
   asserting tests is queued as the structural fix.
+
+### DECISION (afk, 2026-08-01): cooldown reminders vs sequence slots
+The adversarial audit flagged that a full 4-step sequence pushes rule-derived cooldown/trinket
+reminders out of the visible bar. ACCEPTED, not fixed: the user's explicit requirement is that the
+bar shows the SEQUENCE ("it should always show 4"), and major cooldowns already appear IN the
+sequence when they are the correct press (Adrenaline Rush, Blade Rush and Preparation are priority
+rules). A separate reminder for something the sequence already handles is duplication.
+REVERSAL: if the user asks to see cooldowns that are ready but not yet the right press, reserve a
+trailing slot for extras rather than growing the bar.
