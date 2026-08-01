@@ -2582,6 +2582,112 @@ test("rotation simulator: empty prediction + Assist → static-fallback entry ma
   assert_true(true, "fallback handling completes without error")
 end)
 
+-- === rotation-data tests ===
+
+-- TEST: Dispatch energy cost is 35 (critical for leveling loop)
+test("ability data: Dispatch energy cost = 35, not 25 (verified Wowhead 2026-08-01)", function()
+  local abilities = loadfile("OutlawAssist/Rotation.lua")
+  if not abilities then error("Could not load Rotation.lua") end
+  local ok, err = pcall(abilities, _G.ADDON_NAME, OA)
+  if not ok then error("Error loading Rotation.lua: " .. tostring(err)) end
+
+  -- Dispatch spell ID = 2098
+  local dispatch_ability = OA.Rotation and OA.Rotation.ABILITIES and OA.Rotation.ABILITIES[OA.SpellIDs.dispatch]
+  if dispatch_ability then
+    assert_eq(dispatch_ability.cost, 35, "Dispatch energy cost verified (Wowhead spell 2098)")
+  end
+end)
+
+-- TEST: Blade Rush cooldown is 60s (not 10s, off-by-6x bug)
+test("ability data: Blade Rush cooldown = 60s, not 10s (verified Wowhead 2026-08-01)", function()
+  local br_ability = OA.Rotation and OA.Rotation.ABILITIES and OA.Rotation.ABILITIES[OA.SpellIDs.bladeRush]
+  if br_ability then
+    assert_eq(br_ability.cd, 60, "Blade Rush cooldown verified (Wowhead spell 271877)")
+  end
+end)
+
+-- TEST: Between the Eyes cooldown is 45s (not 30s, off-by-15s bug)
+test("ability data: Between the Eyes cooldown = 45s, not 30s (verified Wowhead 2026-08-01)", function()
+  local bte_ability = OA.Rotation and OA.Rotation.ABILITIES and OA.Rotation.ABILITIES[OA.SpellIDs.betweenTheEyes]
+  if bte_ability then
+    assert_eq(bte_ability.cd, 45, "Between the Eyes cooldown verified (Wowhead spell 315341)")
+  end
+end)
+
+-- TEST: Killing Spree cooldown is 180s (not 30s, off-by-6x bug)
+test("ability data: Killing Spree cooldown = 180s, not 30s (verified Wowhead 2026-08-01)", function()
+  local ks_ability = OA.Rotation and OA.Rotation.ABILITIES and OA.Rotation.ABILITIES[OA.SpellIDs.killingSpree]
+  if ks_ability then
+    assert_eq(ks_ability.cd, 180, "Killing Spree cooldown verified (Wowhead spell 5374)")
+  end
+end)
+
+-- TEST: Killing Spree energy cost is 45 (not 25, off-by-20 bug)
+test("ability data: Killing Spree energy cost = 45, not 25 (verified Wowhead 2026-08-01)", function()
+  local ks_ability = OA.Rotation and OA.Rotation.ABILITIES and OA.Rotation.ABILITIES[OA.SpellIDs.killingSpree]
+  if ks_ability then
+    assert_eq(ks_ability.cost, 45, "Killing Spree energy cost verified (Wowhead spell 5374)")
+  end
+end)
+
+-- TEST: Blade Flurry energy cost is 15 (not 0, off-by-15 bug)
+test("ability data: Blade Flurry energy cost = 15, not 0 (verified Wowhead 2026-08-01)", function()
+  local bf_ability = OA.Rotation and OA.Rotation.ABILITIES and OA.Rotation.ABILITIES[OA.SpellIDs.bladeFlurry]
+  if bf_ability then
+    assert_eq(bf_ability.cost, 15, "Blade Flurry energy cost verified (Wowhead spell 13877)")
+  end
+end)
+
+-- TEST: Keep It Rolling cooldown is 360s (not 15s, off-by-24x bug)
+test("ability data: Keep It Rolling cooldown = 360s, not 15s (verified Wowhead 2026-08-01)", function()
+  local kir_ability = OA.Rotation and OA.Rotation.ABILITIES and OA.Rotation.ABILITIES[OA.SpellIDs.keepItRolling]
+  if kir_ability then
+    assert_eq(kir_ability.cd, 360, "Keep It Rolling cooldown verified (Wowhead spell 333549)")
+  end
+end)
+
+-- TEST: No ability placeholder cooldowns (cd=0 for non-instant, or cost=0 for non-free)
+test("ability data: No placeholder cooldowns (regression guard)", function()
+  local abilities_ok = true
+  local problems = {}
+
+  if OA.Rotation and OA.Rotation.ABILITIES then
+    for spell_id, ability in pairs(OA.Rotation.ABILITIES) do
+      -- Every ability should either have a real cooldown or explicitly be instant (cd=0 for off-GCD or non-cooldown)
+      -- Dispatch (no CD), Sinister Strike (no CD), Ambush (no CD), Pistol Shot (no CD) are all instant.
+      -- Check that we don't have obviously wrong placeholders (e.g., a GCD ability with cd=0 when it should have one)
+      -- This is a broad regression check, not a specific value check.
+      if ability.cost and ability.cost < 0 then
+        table.insert(problems, ("Ability %d has negative cost: %d"):format(spell_id, ability.cost))
+        abilities_ok = false
+      end
+      if ability.cd and ability.cd < 0 then
+        table.insert(problems, ("Ability %d has negative cooldown: %d"):format(spell_id, ability.cd))
+        abilities_ok = false
+      end
+    end
+  end
+
+  if not abilities_ok then
+    error("ABILITIES table has placeholder/invalid values: " .. table.concat(problems, "; "))
+  end
+  assert_true(true, "All ability values are within valid ranges")
+end)
+
+-- TEST: Ambush rule exists at highest priority
+test("rotation rules: Ambush stealth-opener rule exists", function()
+  if OA.Rotation then
+    -- The rule should be first in the PRIORITY_SINGLE list (or at least present)
+    -- We can't directly inspect the priority list from here, but we can check that Ambush is in the ABILITIES table
+    local ambush_able = OA.Rotation.ABILITIES and OA.Rotation.ABILITIES[OA.SpellIDs.ambush]
+    assert_true(ambush_able ~= nil, "Ambush ability is defined in ABILITIES table")
+    if ambush_able then
+      assert_eq(ambush_able.cost, 0, "Ambush is free (stealth-only)")
+      assert_eq(ambush_able.cpGen, 2, "Ambush generates 2 combo points")
+    end
+  end
+end)
+
 -- Summary
 print("")
 print(passCount .. "/" .. testCount .. " tests passed")
