@@ -113,12 +113,12 @@ Comprehensive reference for all abilities in the rotation. **GCD** = triggers Gl
 |---------|-------------|---------|--------|-----------------|------|---------------|-------|
 | Ambush | 0 (stealth) | — | +2 | — | No | No | Stealth-only opener; no energy cost from stealth |
 | Adrenaline Rush | 0 | — | — | 180s | No | No | Boosts energy capacity +50, regen +60%, GCD faster |
-| Between the Eyes | 25 | 6 | — | Varies | Yes | No | Finisher; applies debuff; reduced by Restless Blades (1.0s/CP, +30% in RtB Stage 3) |
-| Blade Flurry | 0 | — | — | Varies | No | No | AoE toggle; 28% damage spread; cooldown reduced by Restless Blades |
-| Blade Rush | 25 | — | +1 | Varies | Yes | No | Builder/gap closer; cooldown reduced by Restless Blades |
-| Dispatch | 25 | 5-6 | — | None | Yes | No | Finisher; no cooldown; damage scales with CP spent |
-| Keep It Rolling | 0 | — | — | Varies | No | Yes | Extends Roll the Bones +30s duration; cooldown reduced by Restless Blades |
-| Killing Spree | 25 | 6 | — | Varies | Yes | No | Finisher; dashes to targets; cooldown reduced by Restless Blades |
+| Between the Eyes | 25 | 6 | — | 45s | Yes | No | Finisher; applies debuff; reduced by Restless Blades (1.0s/CP, +30% in RtB Stage 3) |
+| Blade Flurry | 15 | — | — | 30s | No | No | AoE toggle; 28% damage spread; cooldown reduced by Restless Blades |
+| Blade Rush | 0 | — | +1 | 60s | Yes | No | Builder/gap closer; cooldown reduced by Restless Blades |
+| Dispatch | 35 | 5-6 | — | None | Yes | No | Finisher; no cooldown; damage scales with CP spent (critical for leveling) |
+| Keep It Rolling | 0 | — | — | 360s | No | Yes | Extends Roll the Bones +30s duration; cooldown reduced by Restless Blades |
+| Killing Spree | 45 | 6 | — | 180s | Yes | No | Finisher; dashes to targets; cooldown reduced by Restless Blades |
 | Pistol Shot | 40 | — | +1 (or +4 with Fan the Hammer) | None | Yes | Proc-based | Requires Opportunity proc; no cooldown; multiple CP gen |
 | Preparation | 0 | — | — | Varies | No | Yes | Resets AR, BtE, Blade Rush cooldowns |
 | Roll the Bones | 25 | — | — | Varies | Yes | No | Grants progressive stages 1-4; cooldown reduced by Restless Blades |
@@ -133,7 +133,7 @@ Comprehensive reference for all abilities in the rotation. **GCD** = triggers Gl
 - **Base Maximum:** 100 Energy
 - **Base Regeneration:** 10 Energy/sec (not haste-scaled in Midnight 12.x)
 - **With Vigor Talent:** Energy max +100 (total 200)
-- **During Adrenaline Rush:** Energy max +50 (total 250 base, 350 with Vigor)
+- **During Adrenaline Rush:** Energy max +50 (total 150 base, 250 with Vigor)
 - **AR Effect on Regen:** +60% (from 10 to 16 Energy/sec base)
 - **Combat Potency Passive:** +25% additional regen (adds 2.5 Energy/sec, stacks with AR for 3.75 Energy/sec during AR)
 - **Haste Scaling:** Energy regen is NOT directly haste-scaled; haste affects GCD and Adrenaline Rush's GCD reduction instead

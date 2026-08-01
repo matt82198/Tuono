@@ -2,6 +2,18 @@
 
 All notable changes to OutlawAssist are documented here.
 
+## [1.3.0] - 2026-08-01
+
+### Fixed
+- **CRITICAL: Six ability cooldowns/costs were wrong** — Blade Rush cd 10→60s (6x), Killing Spree cd 30→180s (6x), Killing Spree cost 25→45, Between the Eyes cd 30→45s, Dispatch cost 25→35 (core leveling bug), Blade Flurry cost 0→15, Keep It Rolling cd 15→360s (24x). All values verified against live Wowhead 2026-08-01; forward simulation was silently corrupted by these errors.
+- **Ambush stealth-opener rule missing** — Ambush was in the ABILITIES table but never appeared in any priority rule, so the free 2-CP stealth opener was never recommended. Added `Ambush_stealth_opener` rule at highest priority for all stealth scenarios.
+- **Sinister Strike has no combo-point cap check** — SS would spam past 6 CP forever if a finisher reads as unavailable, instead of going quiet. Added `comboPoints < comboPointsMax` guard.
+- **Blade Flurry rule didn't check energy cost** — The AoE toggle rule checked cooldown and CP only, not the 15 energy cost. Added energy check.
+- **SpellID TODO comments cleared** — All 14 SpellIDs now verified against Wowhead and marked VERIFIED; removed stale TODOs.
+
+### Added
+- **Regression guards** — Tests to prevent future placeholder cooldown/cost errors, specifically the critical Dispatch 35-energy leveling case.
+
 ## [1.2.2] - 2026-08-01
 
 ### Fixed

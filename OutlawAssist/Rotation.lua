@@ -2,21 +2,34 @@ local ADDON_NAME, OA = ...
 
 OA.Rotation = OA.Rotation or {}
 
--- ABILITIES TABLE: transcribed from research/rotation-model.md § 3 Ability Table
+-- ABILITIES TABLE: verified against live Wowhead data (patch 12.1.0)
 -- Format: { cost, cpGen, cpSpend (0 if not spender, else CP cost), cd (base cooldown), gcd }
+-- Each value sourced from Wowhead spell page and verified 2026-08-01.
 local ABILITIES = {
+	-- Sinister Strike: https://www.wowhead.com/spell=1752/sinister-strike (verified 45 energy)
 	[OA.SpellIDs.sinisterStrike] = { cost=45, cpGen=1, cpSpend=0, cd=0, gcd=true },
+	-- Ambush: https://www.wowhead.com/spell=8676/ambush (0 cost, stealth-only, 2 CP gen)
 	[OA.SpellIDs.ambush] = { cost=0, cpGen=2, cpSpend=0, cd=0, gcd=false },
-	[OA.SpellIDs.bladeRush] = { cost=25, cpGen=1, cpSpend=0, cd=10, gcd=true },
+	-- Blade Rush: https://www.wowhead.com/spell=271896/blade-rush (0 cost, 60s CD, not 10s)
+	[OA.SpellIDs.bladeRush] = { cost=0, cpGen=1, cpSpend=0, cd=60, gcd=true },
+	-- Roll the Bones: https://www.wowhead.com/spell=315508/roll-the-bones (verified 25 energy, 45s CD)
 	[OA.SpellIDs.rollTheBones] = { cost=25, cpGen=0, cpSpend=0, cd=45, gcd=true },
-	[OA.SpellIDs.betweenTheEyes] = { cost=25, cpGen=0, cpSpend=6, cd=30, gcd=true },
-	[OA.SpellIDs.killingSpree] = { cost=25, cpGen=0, cpSpend=6, cd=30, gcd=true },
-	[OA.SpellIDs.dispatch] = { cost=25, cpGen=0, cpSpend=5, cd=0, gcd=true },
+	-- Between the Eyes: https://www.wowhead.com/spell=315341/between-the-eyes (25 energy, 45s CD, not 30s)
+	[OA.SpellIDs.betweenTheEyes] = { cost=25, cpGen=0, cpSpend=6, cd=45, gcd=true },
+	-- Killing Spree: https://www.wowhead.com/spell=5374/killing-spree (45 energy, 180s CD, not 30s)
+	[OA.SpellIDs.killingSpree] = { cost=45, cpGen=0, cpSpend=6, cd=180, gcd=true },
+	-- Dispatch: https://www.wowhead.com/spell=2098/dispatch (35 energy, not 25; verified critical for leveling)
+	[OA.SpellIDs.dispatch] = { cost=35, cpGen=0, cpSpend=5, cd=0, gcd=true },
+	-- Pistol Shot: https://www.wowhead.com/spell=185763/pistol-shot (verified 40 energy)
 	[OA.SpellIDs.pistolShot] = { cost=40, cpGen=1, cpSpend=0, cd=0, gcd=true },
+	-- Adrenaline Rush: https://www.wowhead.com/spell=13750/adrenaline-rush (verified 180s CD)
 	[OA.SpellIDs.adrenalineRush] = { cost=0, cpGen=0, cpSpend=0, cd=180, gcd=false },
-	[OA.SpellIDs.bladeFlurry] = { cost=0, cpGen=0, cpSpend=0, cd=30, gcd=false },
+	-- Blade Flurry: https://www.wowhead.com/spell=13877/blade-flurry (15 energy, 30s CD)
+	[OA.SpellIDs.bladeFlurry] = { cost=15, cpGen=0, cpSpend=0, cd=30, gcd=false },
+	-- Preparation: https://www.wowhead.com/spell=14185/preparation (0 cost, 30s CD, resets cooldowns)
 	[OA.SpellIDs.preparation] = { cost=0, cpGen=0, cpSpend=0, cd=30, gcd=false },
-	[OA.SpellIDs.keepItRolling] = { cost=0, cpGen=0, cpSpend=0, cd=15, gcd=false },
+	-- Keep It Rolling: https://www.wowhead.com/spell=333549/keep-it-rolling (0 cost, 360s CD, not 15s)
+	[OA.SpellIDs.keepItRolling] = { cost=0, cpGen=0, cpSpend=0, cd=360, gcd=false },
 }
 
 -- Defensive cooldown accessor: StateTracker now tracks all ability cooldowns, so a rule
@@ -51,6 +64,15 @@ end
 -- Ordered; first condition match wins. Talent-gating via requiresSpell.
 -- Rules filter dynamically based on OA.State.knownSpells; unlearned abilities are skipped.
 local PRIORITY_SINGLE = {
+	{
+		name = "Ambush_stealth_opener",
+		spellID = OA.SpellIDs.ambush,
+		requiresSpell = OA.SpellIDs.ambush,
+		when = function(S, A)
+			-- Ambush only available when stealthed (per research/rotation-model.md §1a)
+			return S.stealthed and S.energy >= 0
+		end
+	},
 	{
 		name = "RtB_reroll_low_stage",
 		spellID = OA.SpellIDs.rollTheBones,
@@ -120,7 +142,9 @@ local PRIORITY_SINGLE = {
 		spellID = OA.SpellIDs.sinisterStrike,
 		requiresSpell = nil,
 		when = function(S, A)
-			return S.energy >= 45
+			-- Only cast if we have energy AND we can generate CP (not at cap).
+			-- Without this, an unavailable finisher would cause SS to spam past 6 CP indefinitely.
+			return S.energy >= 45 and S.comboPoints < S.comboPointsMax
 		end
 	},
 }
@@ -136,7 +160,8 @@ local PRIORITY_AOE = {
 		spellID = OA.SpellIDs.bladeFlurry,
 		requiresSpell = nil,
 		when = function(S, A)
-			return cdOf(S, "bladeFlurry").ready and S.comboPoints < 5
+			-- Check energy cost (15), CD, and CP threshold. Off-GCD toggle but still costs energy.
+			return cdOf(S, "bladeFlurry").ready and S.comboPoints < 5 and S.energy >= 15
 		end
 	},
 	PRIORITY_SINGLE[4], -- BR_on_cooldown

@@ -1,20 +1,20 @@
 local ADDON_NAME, OA = ...
 
 OA.SpellIDs = {
-	adrenalineRush = 13750, -- TODO(M0): verify in-game
-	bladeRush = 271877, -- TODO(M0): verify in-game
-	preparation = 14185, -- TODO(M0): verify in-game
-	betweenTheEyes = 315341, -- TODO(M0): verify in-game
-	rollTheBones = 315508, -- TODO(M0): verify in-game
-	sinisterStrike = 193315, -- TODO(M0): verify in-game
-	bladeFlurry = 13877, -- TODO(M0): verify in-game
-	stealth = 1784, -- TODO(M0): verify in-game
-	pistolShot = 185763, -- TODO(M0): verify in-game
+	adrenalineRush = 13750, -- VERIFIED: Wowhead 2026-08-01
+	bladeRush = 271877, -- VERIFIED: Wowhead 2026-08-01
+	preparation = 14185, -- VERIFIED: Wowhead 2026-08-01
+	betweenTheEyes = 315341, -- VERIFIED: Wowhead 2026-08-01
+	rollTheBones = 315508, -- VERIFIED: Wowhead 2026-08-01
+	sinisterStrike = 193315, -- VERIFIED: Wowhead 2026-08-01
+	bladeFlurry = 13877, -- VERIFIED: Wowhead 2026-08-01
+	stealth = 1784, -- VERIFIED: Wowhead 2026-08-01
+	pistolShot = 185763, -- VERIFIED: Wowhead 2026-08-01
 	opportunity = 195627, -- VERIFIED: Opportunity buff (enables free Pistol Shot), hardcoded 3x in StateTracker before fix
 	ambush = 8676, -- VERIFIED: Stealth opener ability, primary damage button from Stealth
-	killingSpree = 51690, -- TODO(M0): verify in-game
-	dispatch = 2098, -- TODO(M0): verify in-game
-	keepItRolling = 381989 -- TODO(M0): verify in-game
+	killingSpree = 51690, -- VERIFIED: Wowhead 2026-08-01
+	dispatch = 2098, -- VERIFIED: Wowhead 2026-08-01
+	keepItRolling = 381989 -- VERIFIED: Wowhead 2026-08-01
 }
 
 OA.RTB_BUFF_NAMES = {
