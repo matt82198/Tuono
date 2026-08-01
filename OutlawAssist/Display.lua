@@ -216,6 +216,13 @@ function OA.Display.Init()
 		icon.isSizeLarge = (i == 1)
 	end
 
+	-- Status text for empty-queue reason (centered in the strip area)
+	local statusText = strip:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+	statusText:SetPoint("CENTER", strip, "CENTER", 0, 0)
+	statusText:SetTextColor(0.7, 0.7, 1, 0.8)
+	statusText:Hide()
+	anchor.statusText = statusText
+
 	-- Register for UPDATE_BINDINGS and ACTIONBAR_SLOT_CHANGED events
 	local eventFrame = CreateFrame("Frame")
 	eventFrame:RegisterEvent("UPDATE_BINDINGS")
@@ -257,6 +264,10 @@ function OA.Display.Render(result)
 
 	anchor:Show()
 
+	-- Track degraded state for desaturation effect
+	local isDegraded = OA.State and OA.State.buffs and OA.State.buffs.degraded or false
+	local assistAvailable = OA.Assist and OA.Assist.available ~= false or true
+
 	-- Render unified strip from result.queue
 	if show.queue and result and result.queue then
 		local maxIcons = math.min(iconCount, 8, #result.queue)
@@ -279,6 +290,13 @@ function OA.Display.Render(result)
 					-- Set border color by kind (default to "rotation" if kind is missing)
 					local kind = entry.kind or "rotation"
 					local r, g, b, a = GetKindBorderColor(kind)
+					-- Apply desaturation tint if degraded (reduce saturation, increase grey)
+					if isDegraded then
+						r = r * 0.6 + 0.2
+						g = g * 0.6 + 0.2
+						b = b * 0.6 + 0.2
+						a = a * 0.8  -- slightly more transparent when degraded
+					end
 					icon.border:SetColorTexture(r, g, b, a)
 					icon.border:Show()
 
@@ -303,9 +321,25 @@ function OA.Display.Render(result)
 				icon:Hide()
 			end
 		end
+		anchor.statusText:Hide()
 	else
+		-- Queue is empty or show.queue is false: show reason or status
 		for _, icon in ipairs(anchor.icons) do
 			icon:Hide()
 		end
+
+		-- Show status text if assist is unavailable
+		if not assistAvailable then
+			anchor.statusText:SetText("Rotation assist unavailable")
+			anchor.statusText:Show()
+		else
+			anchor.statusText:Hide()
+		end
+	end
+
+	-- Show degraded indicator hint (subtle visual cue on first icon's border alpha)
+	if isDegraded and (#(result and result.queue or {}) > 0) then
+		-- Degradation already applied via desaturation above; no additional indicator needed
+		-- The desaturated borders act as the visual cue
 	end
 end

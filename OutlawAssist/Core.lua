@@ -227,5 +227,21 @@ OA.RegisterEvent("PLAYER_LOGIN", function()
   if #missing > 0 then
     OA.print("module(s) failed to load: " .. table.concat(missing, ", ") .. " - run /console scriptErrors 1 and /reload to see the error")
   end
+
+  -- First-run welcome message (print if no saved vars were loaded before login)
+  local isFirstRun = (OutlawAssistDB == nil or (not OutlawAssistDB.showedWelcome))
+  if isFirstRun then
+    OA.print("OutlawAssist v1.0 loaded. Type /oa help for commands or /oa unlock to move the display.")
+    if OutlawAssistDB then
+      OutlawAssistDB.showedWelcome = true
+    end
+  end
+
+  -- Spec-gate message if not Outlaw Rogue
+  local classToken = select(2, UnitClass("player"))
+  local spec = GetSpecialization and GetSpecialization() or nil
+  if classToken ~= "ROGUE" or (spec and spec ~= 2) then
+    OA.print("This addon only functions on Outlaw Rogue characters. The display will remain hidden on other specs.")
+  end
 end)
 
