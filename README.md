@@ -96,10 +96,26 @@ When WoW patches, SimulationCraft's Midnight profiles may update. To refresh the
 5. Run `lua tests/run_tests.lua` to verify rule syntax
 6. Test in-game on a training dummy
 
-## Known Limitations
+## What This Can and Cannot Do
 
+### Can Do
+- **Display Blizzard's rotation queue:** Shows up to 8 suggested spells (default 4) from `C_AssistedCombat.GetNextCastSpell()` each frame
+- **Layer Outlaw-specific context:** Tracks Roll the Bones stage, Opportunity procs, cooldown readiness (Adrenaline Rush, Blade Rush, Preparation), and equipped trinket cooldowns
+- **Suggest priority overrides:** Recommends which queued spell to cast first based on Outlaw decision rules (e.g., "cast Between the Eyes at 6+ CP", "reroll bad RtB", "use trinket during AR window")
+- **Detect 2+ enemies:** Composite signal via threat-table and manual toggle; suggests Blade Flurry when AoE is active
+- **Display keybinds:** Shows hotkey overlays for each spell icon so you know which button to press
+- **Survive Midnight secret values:** All aura tracking guarded against API data loss; graceful degradation when values become unreadable
+
+### Cannot Do
+- **True multi-step lookahead:** Blizzard's `GetRotationSpells()` returns a STATIC list of the spec's rotational spells, not a live predicted queue. We display Blizzard's position-1 recommendation + your own priority hints, but cannot predict what position 2 will be 2 seconds from now. What you see is what Blizzard's real-time recommendation engine produces that frame.
+- **Read enemy buffs/debuffs/cooldowns:** Midnight's secret values system blocks all enemy aura and cooldown introspection. No interrupt planning, no targeted defensives, no fight-mechanic awareness.
+- **Count enemies directly:** Must rely on threat-table nameplates (imperfect in dungeons) or manual `/oa aoe` toggle. No target scanning or health-bar parsing.
+- **Automate input:** Addon displays suggestions only. You press the button—it never does (ToS-compliant by design).
+- **Provide combat-log analysis:** Combat log events removed from addon API in Midnight. Buff-tracking falls back to event-driven buff checks and stale caches.
+
+### Known Limitations
 - **Midnight secret values:** Cannot read enemy buffs, debuffs, or cooldowns. No interrupt planning, no targeted defensives, no fight-mechanic awareness.
-- **Enemy counting:** Cannot count nearby enemies legally. Blade Flurry advisory requires manual AoE toggle (`/oa aoe`); presence is inferred from whether Blade Flurry appears in Blizzard's queue.
+- **Enemy counting:** Threat-table detection is primary; Blade Flurry advisory requires manual AoE toggle (`/oa aoe`) as fallback.
 - **Multi-spec:** Outlaw Rogue only for v1. Assassination and Subtlety not supported.
 - **No input automation:** Addon displays suggestions only. You press the button—it never does (ToS-compliant by design).
 
