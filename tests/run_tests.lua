@@ -1664,8 +1664,23 @@ test("live-queue: queue does not pad with static rotation entries", function()
 
   -- Old behavior would pad with all static rotation entries (4+).
   -- New behavior should have only position 1 + any rule-derived entries.
-  -- Most states should result in <= 3 entries when no major rules fire.
-  assert_true(#r.queue <= 3, "queue not padded with static rotation (<=3 when no rules fire)")
+  -- The real invariant: nothing in the queue comes from Blizzard's STATIC rotation list.
+  -- (The old "<= 3 entries" bound predates the simulator: our own predicted sequence
+  -- legitimately fills several slots, and before cooldowns started correctly the sim
+  -- repeated one ability and deduped down to a short queue -- a bug, not a spec.)
+  assert_true(#r.queue <= 8, "queue respects the 8-entry cap")
+  for i, entry in ipairs(r.queue) do
+    assert_true(entry.source ~= "blizzard" or entry.confidence == "static-fallback",
+      "queue entry " .. i .. " is ours or a labelled fallback, never static padding")
+  end
+  -- And the sequence must not repeat a cooldown-bearing ability back to back, which is
+  -- what a simulation that fails to start cooldowns produces.
+  for i = 2, #r.queue do
+    if r.queue[i].spellID and r.queue[i].kind ~= "trinket" then
+      assert_true(r.queue[i].spellID ~= r.queue[i - 1].spellID,
+        "no immediate duplicate at position " .. i .. " (cooldowns advanced in sim)")
+    end
+  end
 end)
 
 -- LIVE QUEUE TEST 4: aoeDetected still works off rotationSet

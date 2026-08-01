@@ -2,6 +2,14 @@
 
 All notable changes to OutlawAssist are documented here.
 
+## [1.2.2] - 2026-08-01
+
+### Fixed
+- Simulated cooldowns never started: the cooldown was keyed by the RULE name instead of
+  the ability, so a predicted sequence could repeat the same ability instead of advancing.
+- A missing cooldown key returned a shared module-level table, so writing to it corrupted
+  every later untracked lookup for the rest of the session.
+
 ## [1.2.1] - 2026-08-01
 
 ### Fixed

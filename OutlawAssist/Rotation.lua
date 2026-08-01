@@ -22,11 +22,28 @@ local ABILITIES = {
 -- Defensive cooldown accessor: StateTracker now tracks all ability cooldowns, so a rule
 -- referencing any rotation ability gets valid cooldown data. This accessor is a safety
 -- belt for any future abilities; if a cooldown is not tracked, it returns ready=true.
-local UNTRACKED_CD = { known = false, ready = true, remaining = 0 }
+-- Read-only fallback for malformed state. NEVER hand this out as a writable table:
+-- it is module-level, so a single `cdOf(...).remaining = x` on a missing key would
+-- corrupt every later untracked lookup for the rest of the session.
+local UNTRACKED_CD_RO = { known = false, ready = true, remaining = 0 }
 local function cdOf(S, key)
-	local t = S and S.cooldowns and S.cooldowns[key]
-	if t == nil then return UNTRACKED_CD end
+	if not (S and S.cooldowns and key) then return UNTRACKED_CD_RO end
+	local t = S.cooldowns[key]
+	if t == nil then
+		-- Create in the VIRTUAL state (deepCopyState isolates it from OA.State), so
+		-- writes land somewhere real instead of on a shared sentinel.
+		t = { known = false, ready = true, remaining = 0 }
+		S.cooldowns[key] = t
+	end
 	return t
+end
+
+-- spellID -> cooldown key. Starting a cooldown used to write to `reason`, which is the
+-- RULE name ("BR_on_cooldown"), so no ability cooldown ever actually started in the
+-- simulation and the same ability could repeat forever in a predicted sequence.
+local SPELL_TO_CDKEY = {}
+for k, v in pairs(OA.SpellIDs or {}) do
+	if type(v) == "number" then SPELL_TO_CDKEY[v] = k end
 end
 
 -- PRIORITY LIST: SINGLE-TARGET (research/rotation-model.md §1b)
@@ -284,9 +301,14 @@ function OA.Rotation.Predict(state, steps)
 				cdOf(S, "keepItRolling").remaining = math.max(0, cdOf(S, "keepItRolling").remaining - cdr)
 			end
 
-			-- Start cooldown (if ability has one; use ability.cd)
+			-- Start cooldown on the ABILITY's key (never the rule name).
 			if ability.cd and ability.cd > 0 then
-				cdOf(S, reason or "unknown").remaining = ability.cd
+				local cdKey = SPELL_TO_CDKEY[spellID]
+				if cdKey then
+					local slot = cdOf(S, cdKey)
+					slot.remaining = ability.cd
+					slot.ready = false
+				end
 			end
 
 			-- Advance virtual time by GCD (if applicable)
