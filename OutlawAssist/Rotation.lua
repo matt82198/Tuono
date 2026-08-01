@@ -63,6 +63,17 @@ for k, v in pairs(OA.SpellIDs or {}) do
 	if type(v) == "number" then SPELL_TO_CDKEY[v] = k end
 end
 
+-- Central affordability checker: prevents hardcoded energy/CP thresholds from drifting vs ABILITIES table
+-- Usage: rules call canAfford(S, spellID) instead of S.energy >= X; guarantees consistency
+-- NOTE: CP is a strategic decision (managed per-rule), not affordability; we only check energy here
+local function canAfford(S, spellID)
+	if not spellID then return true end  -- No spell = no cost
+	local ability = ABILITIES[spellID]
+	if not ability then return false end  -- Unknown spell = unaffordable
+	-- Check energy cost only; CP is per-rule strategy
+	return S.energy >= ability.cost
+end
+
 -- PRIORITY LIST: SINGLE-TARGET (research/rotation-model.md §1b)
 -- Each rule: { name, spellID, requiresSpell (or nil for basic builder), when(S, A) -> bool }
 -- Ordered; first condition match wins. Talent-gating via requiresSpell.
@@ -74,7 +85,7 @@ local PRIORITY_SINGLE = {
 		requiresSpell = OA.SpellIDs.ambush,
 		when = function(S, A)
 			-- Ambush only available when stealthed (per research/rotation-model.md §1a)
-			return S.stealthed and S.energy >= 0
+			return S.stealthed and canAfford(S, OA.SpellIDs.ambush)
 		end
 	},
 	{
@@ -82,7 +93,7 @@ local PRIORITY_SINGLE = {
 		spellID = OA.SpellIDs.rollTheBones,
 		requiresSpell = OA.SpellIDs.rollTheBones,
 		when = function(S, A)
-			return S.buffs.rtb.stage < 2 and cdOf(S, "rollTheBones").ready and S.energy >= 25
+			return S.buffs.rtb.stage < 2 and cdOf(S, "rollTheBones").ready and canAfford(S, OA.SpellIDs.rollTheBones)
 		end
 	},
 	{
@@ -90,7 +101,7 @@ local PRIORITY_SINGLE = {
 		spellID = OA.SpellIDs.keepItRolling,
 		requiresSpell = OA.SpellIDs.keepItRolling,
 		when = function(S, A)
-			return S.buffs.rtb.stage >= 3 and cdOf(S, "keepItRolling").ready and S.energy >= 0
+			return S.buffs.rtb.stage >= 3 and cdOf(S, "keepItRolling").ready and canAfford(S, OA.SpellIDs.keepItRolling)
 		end
 	},
 	{
@@ -98,7 +109,7 @@ local PRIORITY_SINGLE = {
 		spellID = OA.SpellIDs.adrenalineRush,
 		requiresSpell = OA.SpellIDs.adrenalineRush,
 		when = function(S, A)
-			return cdOf(S, "adrenalineRush").ready
+			return cdOf(S, "adrenalineRush").ready and canAfford(S, OA.SpellIDs.adrenalineRush)
 		end
 	},
 	{
@@ -106,7 +117,20 @@ local PRIORITY_SINGLE = {
 		spellID = OA.SpellIDs.bladeRush,
 		requiresSpell = OA.SpellIDs.bladeRush,
 		when = function(S, A)
-			return cdOf(S, "bladeRush").ready and S.energy >= 25
+			return cdOf(S, "bladeRush").ready and canAfford(S, OA.SpellIDs.bladeRush)
+		end
+	},
+	{
+		name = "Prep_reset_cooldowns",
+		spellID = OA.SpellIDs.preparation,
+		requiresSpell = OA.SpellIDs.preparation,
+		when = function(S, A)
+			-- Use Preparation when any of its cooldown-reset targets are down
+			-- Per rotation-model.md §1b rule 6: reset AR/BtE/Blade Rush when any are down and Prep is up
+			local arDown = not cdOf(S, "adrenalineRush").ready and cdOf(S, "adrenalineRush").remaining > 0
+			local bteDown = not cdOf(S, "betweenTheEyes").ready and cdOf(S, "betweenTheEyes").remaining > 0
+			local brDown = not cdOf(S, "bladeRush").ready and cdOf(S, "bladeRush").remaining > 0
+			return cdOf(S, "preparation").ready and (arDown or bteDown or brDown) and canAfford(S, OA.SpellIDs.preparation)
 		end
 	},
 	{
@@ -114,7 +138,7 @@ local PRIORITY_SINGLE = {
 		spellID = OA.SpellIDs.betweenTheEyes,
 		requiresSpell = OA.SpellIDs.betweenTheEyes,
 		when = function(S, A)
-			return S.comboPoints >= 6 and cdOf(S, "betweenTheEyes").ready and S.energy >= 25
+			return S.comboPoints >= 6 and cdOf(S, "betweenTheEyes").ready and canAfford(S, OA.SpellIDs.betweenTheEyes)
 		end
 	},
 	{
@@ -122,7 +146,29 @@ local PRIORITY_SINGLE = {
 		spellID = OA.SpellIDs.killingSpree,
 		requiresSpell = OA.SpellIDs.killingSpree,
 		when = function(S, A)
-			return S.comboPoints >= 6 and cdOf(S, "killingSpree").ready and S.energy >= 25
+			return S.comboPoints >= 6 and cdOf(S, "killingSpree").ready and canAfford(S, OA.SpellIDs.killingSpree)
+		end
+	},
+	{
+		name = "SS_at_5cp_if_6cp_finisher_coming",
+		spellID = OA.SpellIDs.sinisterStrike,
+		requiresSpell = nil,
+		when = function(S, A)
+			-- CP Pooling decision (P1-1): at 5 CP, if BtE or KS will be ready within ~1 GCD,
+			-- pool 1 more CP to hit 6 for better CDR instead of casting Dispatch now.
+			-- ~1 GCD = ~1.0s (or ~0.8s during AR). Check if either is within 1.5s (conservative margin).
+			-- Only if Dispatch is available (otherwise this is not a choice).
+			if S.comboPoints ~= 5 then return false end
+			if not canAfford(S, OA.SpellIDs.sinisterStrike) then return false end
+			if not OA.SpellIDs.dispatch or not (OA.State and OA.State.knownSpells and OA.State.knownSpells[OA.SpellIDs.dispatch] ~= false) then
+				return false  -- Dispatch not available
+			end
+			-- Check if BtE or KS will be ready soon
+			local bteCDRemaining = cdOf(S, "betweenTheEyes").remaining or 0
+			local ksCDRemaining = cdOf(S, "killingSpree").remaining or 0
+			local finisherReadySoon = (bteCDRemaining <= 1.5 and bteCDRemaining > 0) or (ksCDRemaining <= 1.5 and ksCDRemaining > 0)
+			-- Only pool if at least one finisher is coming back up soon
+			return finisherReadySoon
 		end
 	},
 	{
@@ -130,7 +176,19 @@ local PRIORITY_SINGLE = {
 		spellID = OA.SpellIDs.dispatch,
 		requiresSpell = OA.SpellIDs.dispatch,
 		when = function(S, A)
-			return S.comboPoints >= 5 and S.energy >= 25
+			-- Dispatch when at 5-6 CP, but only if both BtE and KS are unavailable
+			-- or if pooling is not beneficial. This ensures CP pooling happens first.
+			if S.comboPoints < 5 then return false end
+			if not canAfford(S, OA.SpellIDs.dispatch) then return false end
+			-- Verify both 6-CP finishers are on cooldown before casting Dispatch
+			local bteReady = cdOf(S, "betweenTheEyes").ready
+			local ksReady = cdOf(S, "killingSpree").ready
+			-- At 5 CP: only use Dispatch if both 6-CP finishers are on cooldown
+			if S.comboPoints == 5 then
+				return not bteReady and not ksReady
+			end
+			-- At 6 CP: use Dispatch if both 6-CP finishers are on cooldown (avoid this at 6 CP if finisher is up)
+			return not bteReady and not ksReady
 		end
 	},
 	{
@@ -138,7 +196,7 @@ local PRIORITY_SINGLE = {
 		spellID = OA.SpellIDs.pistolShot,
 		requiresSpell = OA.SpellIDs.pistolShot,
 		when = function(S, A)
-			return S.buffs.opportunity.up and S.energy >= 40
+			return S.buffs.opportunity.up and canAfford(S, OA.SpellIDs.pistolShot)
 		end
 	},
 	{
@@ -148,7 +206,7 @@ local PRIORITY_SINGLE = {
 		when = function(S, A)
 			-- Only cast if we have energy AND we can generate CP (not at cap).
 			-- Without this, an unavailable finisher would cause SS to spam past 6 CP indefinitely.
-			return S.energy >= 45 and S.comboPoints < S.comboPointsMax
+			return canAfford(S, OA.SpellIDs.sinisterStrike) and S.comboPoints < S.comboPointsMax
 		end
 	},
 }
@@ -165,7 +223,7 @@ local PRIORITY_AOE = {
 		requiresSpell = nil,
 		when = function(S, A)
 			-- Check energy cost (15), CD, and CP threshold. Off-GCD toggle but still costs energy.
-			return cdOf(S, "bladeFlurry").ready and S.comboPoints < 5 and S.energy >= 15
+			return cdOf(S, "bladeFlurry").ready and S.comboPoints < 5 and canAfford(S, OA.SpellIDs.bladeFlurry)
 		end
 	},
 	PRIORITY_SINGLE[4], -- BR_on_cooldown
@@ -286,17 +344,45 @@ function OA.Rotation.Predict(state, steps)
 		-- Find first matching rule
 		local spellID = nil
 		local reason = nil
+		local pooledEnergy = false
 
-		for _, rule in ipairs(priorityList) do
-			if rule.when(S, OA.Assist) then
-				spellID = rule.spellID
-				reason = rule.name
+		-- Try up to 3 GCDs of pooling if energy-starved
+		local poolAttempts = 0
+		local maxPoolAttempts = 3
+		repeat
+			for _, rule in ipairs(priorityList) do
+				if rule.when(S, OA.Assist) then
+					spellID = rule.spellID
+					reason = rule.name
+					break
+				end
+			end
+
+			if not spellID and poolAttempts < maxPoolAttempts then
+				-- No castable ability and we haven't tried pooling yet.
+				-- Check if this is energy starvation: advance time 1 GCD and retry.
+				local gcd = calcGCD(S.buffs.adrenalineRush.up) or 1.0
+				local regenRate = calcEnergyRegen(S.buffs.adrenalineRush.up, false)
+				S.energy = math.min(maxEnergy, S.energy + (regenRate * gcd))
+
+				-- Decrement cooldowns by GCD
+				for cdName, cdData in pairs(S.cooldowns) do
+					if cdData.remaining and cdData.remaining > 0 then
+						cdData.remaining = math.max(0, cdData.remaining - gcd)
+					end
+				end
+
+				poolAttempts = poolAttempts + 1
+				pooledEnergy = true
+				-- Retry the priority check
+			else
+				-- Either found a spell or exhausted pooling attempts
 				break
 			end
-		end
+		until false
 
 		if not spellID then
-			-- No castable ability; early exit
+			-- No castable ability even after pooling; early exit
 			break
 		end
 
@@ -338,6 +424,13 @@ function OA.Rotation.Predict(state, steps)
 				cdOf(S, "betweenTheEyes").remaining = math.max(0, cdOf(S, "betweenTheEyes").remaining - cdr)
 				cdOf(S, "killingSpree").remaining = math.max(0, cdOf(S, "killingSpree").remaining - cdr)
 				cdOf(S, "keepItRolling").remaining = math.max(0, cdOf(S, "keepItRolling").remaining - cdr)
+			end
+
+			-- Clear Opportunity buff after Pistol Shot (P1-3: simulation must not assume reproc for free).
+			-- Without this, multi-step predictions recommend consecutive Pistol Shots as if Opportunity resets instantly.
+			if spellID == OA.SpellIDs.pistolShot then
+				S.buffs.opportunity.up = false
+				S.buffs.opportunity.expires = 0
 			end
 
 			-- Start cooldown on the ABILITY's key (never the rule name).

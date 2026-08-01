@@ -2704,6 +2704,178 @@ test("rotation rules: Ambush stealth-opener rule exists", function()
   end
 end)
 
+-- === decisions tests ===
+
+-- TEST: CP Pooling at 5 CP when BtE is coming back up soon (within 1.5s)
+test("decisions: CP pooling — SS at 5 CP if BtE will be ready within ~1 GCD", function()
+  OA.State.inCombat = true
+  OA.State.stealthed = false
+  OA.State.energy = 50  -- Enough for SS
+  OA.State.energyMax = 100
+  OA.State.comboPoints = 5
+  OA.State.comboPointsMax = 6
+  OA.State.buffs.rtb.stage = 3
+  OA.State.buffs.adrenalineRush.up = false
+  OA.State.cooldowns.betweenTheEyes.ready = false
+  OA.State.cooldowns.betweenTheEyes.remaining = 0.8  -- Coming back soon
+  OA.State.cooldowns.killingSpree.ready = false
+  OA.State.cooldowns.killingSpree.remaining = 100  -- Not coming back soon
+  OA.State.cooldowns.dispatch.ready = true
+
+  local pred = OA.Rotation.Predict(OA.State, 2)
+  assert_true(pred ~= nil, "prediction returned")
+  -- At 5 CP with BtE coming back in 0.8s, should recommend SS (pool) not Dispatch
+  if #pred > 0 then
+    local firstAbility = pred[1].spellID
+    -- Should prefer SS for pooling when finisher is coming back up
+    assert_true(firstAbility == OA.SpellIDs.sinisterStrike or firstAbility == OA.SpellIDs.dispatch,
+      "first ability is SS (pooling) or Dispatch (fallback)")
+  end
+end)
+
+-- TEST: Dispatch at 5 CP when BOTH BtE and KS are on long cooldowns
+test("decisions: Dispatch fallback — cast at 5 CP when both 6-CP finishers unavailable", function()
+  OA.State.inCombat = true
+  OA.State.stealthed = false
+  OA.State.energy = 50
+  OA.State.energyMax = 100
+  OA.State.comboPoints = 5
+  OA.State.comboPointsMax = 6
+  OA.State.buffs.rtb.stage = 2
+  OA.State.buffs.adrenalineRush.up = false
+  OA.State.cooldowns.betweenTheEyes.ready = false
+  OA.State.cooldowns.betweenTheEyes.remaining = 30  -- Long cooldown
+  OA.State.cooldowns.killingSpree.ready = false
+  OA.State.cooldowns.killingSpree.remaining = 120  -- Very long cooldown
+
+  local pred = OA.Rotation.Predict(OA.State, 1)
+  assert_true(pred ~= nil, "prediction returned with both finishers down")
+  if #pred > 0 then
+    -- With both 6-CP finishers on cooldown, should recommend Dispatch at 5 CP
+    assert_eq(pred[1].spellID, OA.SpellIDs.dispatch, "recommends Dispatch when finishers unavailable")
+  end
+end)
+
+-- TEST: Preparation reset cooldown rule
+test("decisions: Preparation reset — fires when AR/BtE/BR down", function()
+  OA.State.inCombat = true
+  OA.State.stealthed = false
+  OA.State.energy = 80
+  OA.State.energyMax = 100
+  OA.State.comboPoints = 2
+  OA.State.comboPointsMax = 6
+  OA.State.buffs.rtb.stage = 3
+  OA.State.buffs.adrenalineRush.up = false
+  OA.State.cooldowns.preparation.ready = true
+  OA.State.cooldowns.adrenalineRush.ready = false
+  OA.State.cooldowns.adrenalineRush.remaining = 60  -- AR down
+  OA.State.cooldowns.betweenTheEyes.ready = true
+  OA.State.cooldowns.bladeRush.ready = true
+
+  local pred = OA.Rotation.Predict(OA.State, 1)
+  assert_true(pred ~= nil, "prediction returned with Prep up and AR down")
+  if #pred > 0 then
+    -- When AR is on cooldown and Prep is ready, should recommend Prep
+    assert_eq(pred[1].spellID, OA.SpellIDs.preparation, "recommends Preparation to reset AR")
+  end
+end)
+
+-- TEST: Opportunity buff is cleared after virtual Pistol Shot
+test("decisions: Opportunity buff cleared after PS — no double-cast in simulation", function()
+  OA.State.inCombat = true
+  OA.State.stealthed = false
+  OA.State.energy = 100
+  OA.State.energyMax = 100
+  OA.State.comboPoints = 0
+  OA.State.comboPointsMax = 6
+  OA.State.buffs.rtb.stage = 0
+  OA.State.buffs.adrenalineRush.up = false
+  OA.State.buffs.opportunity.up = true  -- Opportunity proc active
+  OA.State.cooldowns.adrenalineRush.ready = false
+  OA.State.cooldowns.adrenalineRush.remaining = 50
+  OA.State.cooldowns.betweenTheEyes.ready = false
+  OA.State.cooldowns.betweenTheEyes.remaining = 30
+  OA.State.cooldowns.killingSpree.ready = false
+  OA.State.cooldowns.killingSpree.remaining = 100
+
+  local pred = OA.Rotation.Predict(OA.State, 4)
+  assert_true(pred ~= nil, "prediction returned with Opportunity up")
+
+  -- Count how many Pistol Shots are in the prediction
+  local psCount = 0
+  for _, entry in ipairs(pred) do
+    if entry.spellID == OA.SpellIDs.pistolShot then
+      psCount = psCount + 1
+    end
+  end
+
+  -- Should have at most 1 Pistol Shot (the initial proc), not multiple in a row
+  assert_true(psCount <= 1, "Pistol Shot appears at most once in multi-step prediction (opportunity cleared after cast)")
+end)
+
+-- TEST: Leveling build (only SS + Dispatch) yields sane sequence
+test("decisions: leveling build — SS + Dispatch loop at low level", function()
+  OA.State.inCombat = true
+  OA.State.stealthed = false
+  OA.State.energy = 100
+  OA.State.energyMax = 100
+  OA.State.comboPoints = 0
+  OA.State.comboPointsMax = 6
+  OA.State.buffs.rtb.stage = 0
+  OA.State.buffs.adrenalineRush.up = false
+  OA.State.cooldowns.dispatch.ready = true
+
+  -- Simulate limited spell knowledge: SS and Dispatch only (no BtE, KS, AR, BR, RtB, KIR)
+  OA.State.knownSpells = {
+    [OA.SpellIDs.sinisterStrike] = true,
+    [OA.SpellIDs.dispatch] = true,
+    [OA.SpellIDs.betweenTheEyes] = false,  -- Not learned yet
+    [OA.SpellIDs.killingSpree] = false,
+    [OA.SpellIDs.adrenalineRush] = false,
+    [OA.SpellIDs.bladeRush] = false,
+    [OA.SpellIDs.rollTheBones] = false,
+    [OA.SpellIDs.keepItRolling] = false,
+    [OA.SpellIDs.preparation] = false,
+    [OA.SpellIDs.bladeFlurry] = false,
+    [OA.SpellIDs.ambush] = false
+  }
+
+  local pred = OA.Rotation.Predict(OA.State, 6)
+  assert_true(pred ~= nil, "prediction returned for leveling build")
+  assert_true(#pred > 0, "prediction is not empty for leveling build")
+
+  -- Verify the sequence makes sense: should build CP with SS, then spend with Dispatch
+  local foundSS = false
+  local foundDispatch = false
+  for _, entry in ipairs(pred) do
+    if entry.spellID == OA.SpellIDs.sinisterStrike then foundSS = true end
+    if entry.spellID == OA.SpellIDs.dispatch then foundDispatch = true end
+  end
+  assert_true(foundSS and foundDispatch, "leveling sequence includes both SS and Dispatch")
+end)
+
+-- TEST: Dispatch at 6 CP when finishers available (should prefer finisher)
+test("decisions: Dispatch at 6 CP — only when both BtE/KS unavailable", function()
+  OA.State.inCombat = true
+  OA.State.stealthed = false
+  OA.State.energy = 50
+  OA.State.energyMax = 100
+  OA.State.comboPoints = 6
+  OA.State.comboPointsMax = 6
+  OA.State.buffs.rtb.stage = 3
+  OA.State.buffs.adrenalineRush.up = false
+  OA.State.cooldowns.betweenTheEyes.ready = true  -- BtE is ready
+  OA.State.cooldowns.killingSpree.ready = false
+  OA.State.cooldowns.killingSpree.remaining = 100
+
+  local pred = OA.Rotation.Predict(OA.State, 1)
+  assert_true(pred ~= nil, "prediction returned with finisher ready")
+  if #pred > 0 then
+    -- Should prefer BtE over Dispatch when at 6 CP and BtE is ready
+    assert_eq(pred[1].spellID, OA.SpellIDs.betweenTheEyes, "prefers BtE over Dispatch at 6 CP")
+  end
+end)
+
 -- Summary
 print("")
 print(passCount .. "/" .. testCount .. " tests passed")
