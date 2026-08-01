@@ -54,6 +54,10 @@ end
 -- spellID -> cooldown key. Starting a cooldown used to write to `reason`, which is the
 -- RULE name ("BR_on_cooldown"), so no ability cooldown ever actually started in the
 -- simulation and the same ability could repeat forever in a predicted sequence.
+-- Exposed for introspection (/oa debug) and so tests can assert the DATA, not just
+-- behaviour -- the ability numbers are the thing most likely to be silently wrong.
+OA.Rotation.ABILITIES = ABILITIES
+
 local SPELL_TO_CDKEY = {}
 for k, v in pairs(OA.SpellIDs or {}) do
 	if type(v) == "number" then SPELL_TO_CDKEY[v] = k end
