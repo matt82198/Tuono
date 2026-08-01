@@ -43,32 +43,15 @@ function OA.Engine.Evaluate()
   local S = OA.State
   local A = OA.Assist
 
-  -- Step 1: Build base queue from Assist (nextSpellID first, with dedup)
-  if not A.available then
-    -- Assist unavailable - single advisory
-    resultAdvisories[1] = {
-      kind = "rtb",
-      icon = nil,
-      itemSlot = nil,
-      text = "Blizzard rotation assist unavailable",
-      active = true
-    }
-    return { queue = resultQueue, advisories = resultAdvisories }
-  end
-
-  -- Populate base queue: POSITION 1 ONLY from live GetNextCastSpell (no static rotation padding)
-  -- GetRotationSpells is treated as a capability set (rotationSet), not a sequence to pad the queue
-  local queueIndex = 1
-  if A.nextSpellID then
-    resultQueue[queueIndex] = { spellID = A.nextSpellID, source = "blizzard", kind = "rotation" }
-    tempDedup[A.nextSpellID] = true
-    queueSet[A.nextSpellID] = queueIndex
-    queueIndex = queueIndex + 1
-  end
-
-  -- Step 1b: Add our rotation predictions (if available)
-  -- Our Predict() gives us the deterministic next 1-4 casts
+  -- COORDINATOR EVIDENCE (live client, 52 samples): Blizzard's GetNextCastSpell is STATIC
+  -- in combat — it returns exactly ONE value and never changes, even when combo points max.
+  -- ARCHITECTURE: Our Rotation.Predict is THE PRIMARY SOURCE. Blizzard is a fallback.
+  --
+  -- Step 0: Get our rotation predictions (primary source, independent of Assist)
   local predictions = OA.safe(OA.Rotation.Predict, S, 4)
+  local queueIndex = 1
+  local hasAssistStatic = false
+
   if predictions and type(predictions) == "table" then
     for _, pred in ipairs(predictions) do
       if pred.spellID and not tempDedup[pred.spellID] then
@@ -85,9 +68,38 @@ function OA.Engine.Evaluate()
     end
   end
 
-  -- Optionally store whether Blizzard agrees with our step 1
+  -- Step 0b: If our predictions are empty AND Assist is available, use Blizzard's pick
+  -- as a fallback (marked as unreliable/"static-fallback")
+  if #resultQueue == 0 and A.available and A.nextSpellID then
+    table.insert(resultQueue, {
+      spellID = A.nextSpellID,
+      source = "blizzard_static_fallback",
+      kind = "rotation",
+      confidence = "static-fallback"
+    })
+    tempDedup[A.nextSpellID] = true
+    queueSet[A.nextSpellID] = queueIndex
+    queueIndex = queueIndex + 1
+    hasAssistStatic = true
+  end
+
+  -- Step 0c: If Assist is unavailable, return our predictions as-is (possibly empty)
+  -- Empty queue is valid when out of resources; UI shows degraded/empty bar.
+  if not A.available and #resultQueue > 0 then
+    resultAdvisories[1] = {
+      kind = "rtb",
+      icon = nil,
+      itemSlot = nil,
+      text = "Blizzard rotation assist unavailable; using simulator",
+      active = true
+    }
+  end
+
+  -- Diagnostic: store whether Blizzard agrees with our prediction
+  -- With static Assist, disagreement is EXPECTED and does NOT indicate our prediction is wrong.
+  OA.Engine = OA.Engine or {}
+  OA.Engine.assistStatic = hasAssistStatic
   if predictions and #predictions > 0 and A.nextSpellID then
-    OA.Engine = OA.Engine or {}
     OA.Engine.blizzAgrees = (predictions[1].spellID == A.nextSpellID)
   end
 

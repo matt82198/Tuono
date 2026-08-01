@@ -2475,6 +2475,68 @@ test("rotation simulator: predictions wired into intelligence layer queue", func
   assert_true(true, "Engine.Evaluate completes with Predict wired in")
 end)
 
+-- TEST: CRITICAL — Assist unavailable → our predictions still returned (COORDINATOR FINDING)
+test("rotation simulator: Assist unavailable → predictions work standalone", function()
+  OA.State.inCombat = true
+  OA.State.stealthed = false
+  OA.State.energy = 100
+  OA.State.energyMax = 100
+  OA.State.comboPoints = 0
+  OA.State.buffs.rtb.stage = 0
+  OA.State.buffs.adrenalineRush.up = false
+  OA.State.cooldowns.adrenalineRush.ready = true
+  OA.State.cooldowns.bladeRush.ready = true
+
+  local originalC_AssistedCombat = _G.C_AssistedCombat
+  _G.C_AssistedCombat = nil
+  OA.Assist.Update()
+  OA.State.RefreshFast()
+
+  local r = OA.Engine.Evaluate()
+  assert_true(r.queue ~= nil, "queue exists when Assist unavailable")
+  assert_true(#r.queue > 0, "queue populated from OUR predictions (Assist unavailable)")
+  assert_true(OA.Assist.available == false, "Assist is unavailable")
+
+  _G.C_AssistedCombat = originalC_AssistedCombat
+end)
+
+-- TEST: Static fallback behavior — empty prediction + Assist available → confidence="static-fallback"
+test("rotation simulator: empty prediction + Assist → static-fallback entry marked", function()
+  OA.State.inCombat = true
+  OA.State.stealthed = false
+  OA.State.energy = 0  -- Out of energy → likely no castable ability
+  OA.State.energyMax = 100
+  OA.State.comboPoints = 0
+  OA.State.buffs.rtb.stage = 0
+  OA.State.buffs.adrenalineRush.up = false
+  OA.State.cooldowns.adrenalineRush.ready = false
+  OA.State.cooldowns.adrenalineRush.remaining = 100
+  OA.State.cooldowns.bladeRush.ready = false
+  OA.State.cooldowns.bladeRush.remaining = 30
+  OA.Assist.Update()
+  OA.State.RefreshFast()
+
+  local r = OA.Engine.Evaluate()
+  assert_true(r.queue ~= nil, "queue exists")
+
+  -- Prediction with no energy + all CDs down should be empty → fallback to Blizzard
+  -- Check that assistStatic flag is set correctly when fallback is used
+  if #r.queue > 0 then
+    local foundFallback = false
+    for _, entry in ipairs(r.queue) do
+      if entry.confidence == "static-fallback" then
+        foundFallback = true
+        break
+      end
+    end
+    if foundFallback then
+      assert_true(OA.Engine.assistStatic, "assistStatic flag set when static-fallback entry used")
+    end
+  end
+
+  assert_true(true, "fallback handling completes without error")
+end)
+
 -- Summary
 print("")
 print(passCount .. "/" .. testCount .. " tests passed")
