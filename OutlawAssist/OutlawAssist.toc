@@ -1,8 +1,9 @@
-## Interface: 120100
+# X-Interface-Note: bump to 120100 when patch 12.1 goes live (2026-08-11)
+## Interface: 120007
 ## Title: Outlaw Assist
 ## Notes: Smart rotation assistance for Outlaw Rogues
 ## Author: Matt Culliton
-## Version: 0.2.1
+## Version: 0.2.2
 ## SavedVariables: OutlawAssistDB
 
 Core.lua
