@@ -7,7 +7,9 @@ OA.SpellIDs = {
 	betweenTheEyes = 315341, -- TODO(M0): verify in-game
 	rollTheBones = 315508, -- TODO(M0): verify in-game
 	sinisterStrike = 193315, -- TODO(M0): verify in-game
-	bladeFlurry = 13877 -- TODO(M0): verify in-game
+	bladeFlurry = 13877, -- TODO(M0): verify in-game
+	stealth = 1784, -- TODO(M0): verify in-game
+	pistolShot = 185763 -- TODO(M0): verify in-game
 }
 
 OA.RTB_BUFF_NAMES = {
@@ -40,13 +42,15 @@ OA.State = {
 		[14] = { itemID = nil, ready = false, remaining = 0, onUse = false }
 	},
 	tier = { twoPc = false, fourPc = false },
-	inCombat = false
+	inCombat = false,
+	stealthed = false
 }
 
 local lastBuffScan = -1
 local trinketSpellCache = {}
+local trinketCacheSentinel = {}
 
-local function NormalizeCooldown(startTime, duration, isEnabled)
+local function NormalizeCooldown(startTime, duration)
 	startTime = OA.num(startTime, 0)
 	duration = OA.num(duration, 0)
 	if startTime == 0 or duration == 0 then
@@ -64,26 +68,26 @@ end
 local function RefreshCooldowns()
 	local ar_cd = C_Spell and C_Spell.GetSpellCooldown and C_Spell.GetSpellCooldown(OA.SpellIDs.adrenalineRush)
 	if ar_cd then
-		OA.State.cooldowns.adrenalineRush = NormalizeCooldown(ar_cd.startTime, ar_cd.duration, ar_cd.isEnabled)
+		OA.State.cooldowns.adrenalineRush = NormalizeCooldown(ar_cd.startTime, ar_cd.duration)
 	elseif GetSpellCooldown then
-		local start, duration, enabled = GetSpellCooldown(OA.SpellIDs.adrenalineRush)
-		OA.State.cooldowns.adrenalineRush = NormalizeCooldown(start, duration, enabled)
+		local start, duration = GetSpellCooldown(OA.SpellIDs.adrenalineRush)
+		OA.State.cooldowns.adrenalineRush = NormalizeCooldown(start, duration)
 	end
 
 	local br_cd = C_Spell and C_Spell.GetSpellCooldown and C_Spell.GetSpellCooldown(OA.SpellIDs.bladeRush)
 	if br_cd then
-		OA.State.cooldowns.bladeRush = NormalizeCooldown(br_cd.startTime, br_cd.duration, br_cd.isEnabled)
+		OA.State.cooldowns.bladeRush = NormalizeCooldown(br_cd.startTime, br_cd.duration)
 	elseif GetSpellCooldown then
-		local start, duration, enabled = GetSpellCooldown(OA.SpellIDs.bladeRush)
-		OA.State.cooldowns.bladeRush = NormalizeCooldown(start, duration, enabled)
+		local start, duration = GetSpellCooldown(OA.SpellIDs.bladeRush)
+		OA.State.cooldowns.bladeRush = NormalizeCooldown(start, duration)
 	end
 
 	local prep_cd = C_Spell and C_Spell.GetSpellCooldown and C_Spell.GetSpellCooldown(OA.SpellIDs.preparation)
 	if prep_cd then
-		OA.State.cooldowns.preparation = NormalizeCooldown(prep_cd.startTime, prep_cd.duration, prep_cd.isEnabled)
+		OA.State.cooldowns.preparation = NormalizeCooldown(prep_cd.startTime, prep_cd.duration)
 	elseif GetSpellCooldown then
-		local start, duration, enabled = GetSpellCooldown(OA.SpellIDs.preparation)
-		OA.State.cooldowns.preparation = NormalizeCooldown(start, duration, enabled)
+		local start, duration = GetSpellCooldown(OA.SpellIDs.preparation)
+		OA.State.cooldowns.preparation = NormalizeCooldown(start, duration)
 	end
 end
 
@@ -93,6 +97,7 @@ local function RefreshBuffs()
 	OA.State.buffs.rtb.stage = 0
 	OA.State.buffs.opportunity.up = false
 	OA.State.buffs.adrenalineRush.up = false
+	OA.State.stealthed = false
 
 	if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
 		local i = 1
@@ -100,24 +105,30 @@ local function RefreshBuffs()
 			local aura = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
 			if not aura then break end
 
-			if aura.spellId == OA.SpellIDs.rollTheBones then
+			local auraSpellId = OA.num(aura.spellId, 0)
+			if auraSpellId == OA.SpellIDs.rollTheBones then
 				OA.State.buffs.rtb.stage = OA.num(aura.applications, 1)
 				OA.State.buffs.rtb.expires = OA.num(aura.expirationTime, now)
 				table.insert(OA.State.buffs.rtb.names, "Roll the Bones")
 			end
 
-			if aura.spellId == OA.SpellIDs.adrenalineRush then
+			if auraSpellId == OA.SpellIDs.adrenalineRush then
 				OA.State.buffs.adrenalineRush.up = true
 				OA.State.buffs.adrenalineRush.expires = OA.num(aura.expirationTime, now)
 			end
 
-			if aura.spellId == 195627 then
+			if auraSpellId == 195627 then
 				OA.State.buffs.opportunity.up = true
 				OA.State.buffs.opportunity.expires = OA.num(aura.expirationTime, now)
 			end
 
+			if auraSpellId == OA.SpellIDs.stealth then
+				OA.State.stealthed = true
+			end
+
+			local auraName = aura.name or ""
 			for _, buffName in ipairs(OA.RTB_BUFF_NAMES) do
-				if aura.name == buffName and aura.spellId ~= OA.SpellIDs.rollTheBones then
+				if auraName == buffName and auraSpellId ~= OA.SpellIDs.rollTheBones then
 					table.insert(OA.State.buffs.rtb.names, buffName)
 					if OA.State.buffs.rtb.stage == 0 then
 						OA.State.buffs.rtb.stage = 1
@@ -150,6 +161,10 @@ local function RefreshBuffs()
 				local _, _, _, _, _, expTime = UnitBuff("player", i)
 				OA.State.buffs.opportunity.up = true
 				OA.State.buffs.opportunity.expires = OA.num(expTime, now)
+			end
+
+			if name == "Stealth" then
+				OA.State.stealthed = true
 			end
 
 			for _, buffName in ipairs(OA.RTB_BUFF_NAMES) do
@@ -191,7 +206,7 @@ local function RefreshTrinkets()
 				end
 			end
 
-			if not trinketSpellCache[itemID] then
+			if trinketSpellCache[itemID] == nil then
 				local hasUse = false
 				if C_Item and C_Item.GetItemSpell then
 					local spellName, spellID = C_Item.GetItemSpell(itemID)
@@ -200,9 +215,10 @@ local function RefreshTrinkets()
 					local spellName, spellID = GetItemSpell(itemID)
 					hasUse = OA.num(spellID, 0) > 0
 				end
-				trinketSpellCache[itemID] = hasUse
+				trinketSpellCache[itemID] = hasUse or trinketCacheSentinel
 			end
-			OA.State.trinkets[slot].onUse = trinketSpellCache[itemID] or false
+			local cached = trinketSpellCache[itemID]
+			OA.State.trinkets[slot].onUse = (cached ~= trinketCacheSentinel) and cached or false
 		end
 	end
 end
@@ -227,24 +243,24 @@ function OA.State.RefreshFast()
 	RefreshTrinkets()
 end
 
-local function OnPlayerEnteringWorld()
+local function OnPlayerEnteringWorld(event)
 	wipe(trinketSpellCache)
 	RefreshTrinkets()
 end
 
-local function OnPlayerEquipmentChanged()
+local function OnPlayerEquipmentChanged(event)
 	RefreshTrinkets()
 end
 
-local function OnPlayerRegenDisabled()
+local function OnPlayerRegenDisabled(event)
 	OA.State.inCombat = true
 end
 
-local function OnPlayerRegenEnabled()
+local function OnPlayerRegenEnabled(event)
 	OA.State.inCombat = false
 end
 
-local function OnUnitAura(unit)
+local function OnUnitAura(event, unit)
 	if unit == "player" then
 		RefreshBuffs()
 	end
