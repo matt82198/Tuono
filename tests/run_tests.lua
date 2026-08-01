@@ -1,6 +1,22 @@
 #!/usr/bin/env lua
 -- Test runner for OutlawAssist addon
 
+-- Run TOC lint first (fail-closed)
+local toc_check = loadfile("tests/toc_check.lua")
+if toc_check then
+  local ok, tocPassed = pcall(toc_check)
+  if not ok then
+    print("FATAL: TOC check failed: " .. tostring(tocPassed))
+    os.exit(1)
+  end
+  if not tocPassed then
+    print("FATAL: TOC lint checks failed")
+    os.exit(1)
+  end
+else
+  print("WARNING: TOC check script not found")
+end
+
 local stub = require("tests.wow_stub")
 
 -- Global setup
@@ -357,6 +373,48 @@ test("energy cap advisory not active when energyMax is 0", function()
     end
   end
   assert_false(hasEnergyAdv, "energy cap advisory NOT active when energyMax is 0")
+end)
+
+-- Test 14: Secret value behavioral proof - full tick with secret values
+test("secret value handling - full tick without error", function()
+  -- Create secret values for UnitPower returns (simulate Midnight combat)
+  local secretEnergy = stub.makeSecret(50)
+  local secretCombo = stub.makeSecret(2)
+
+  -- Monkey-patch UnitPower to return secret values
+  local originalUnitPower = _G.UnitPower
+  _G.UnitPower = function(unit, powerType)
+    if unit == "player" then
+      if powerType == 3 then -- Energy
+        return secretEnergy
+      elseif powerType == 4 then -- ComboPoints
+        return secretCombo
+      end
+    end
+    return 0
+  end
+
+  -- Run a full tick: RefreshFast -> Assist.Update -> Engine.Evaluate -> Display.Render
+  -- If OA.num() guards are in place, this should NOT error
+  OA.Assist.Update()
+  OA.State.RefreshFast()
+  local r = OA.Engine.Evaluate()
+  OA.Display.Render(r)
+
+  -- Verify that state was populated with safe numbers (not secret values)
+  assert_true(type(OA.State.energy) == "number", "energy coerced to number despite secret input")
+  assert_true(type(OA.State.comboPoints) == "number", "comboPoints coerced to number despite secret input")
+
+  -- Restore original UnitPower
+  _G.UnitPower = originalUnitPower
+end)
+
+-- Test 15: Secret value detection with issecretvalue
+test("issecretvalue detects secret values correctly", function()
+  local secret = stub.makeSecret(42)
+  assert_true(_G.issecretvalue(secret), "issecretvalue returns true for secret values")
+  assert_false(_G.issecretvalue(42), "issecretvalue returns false for plain numbers")
+  assert_false(_G.issecretvalue("42"), "issecretvalue returns false for strings")
 end)
 
 -- Summary

@@ -47,6 +47,8 @@ local lastBuffScan = -1
 local trinketSpellCache = {}
 
 local function NormalizeCooldown(startTime, duration, isEnabled)
+	startTime = OA.num(startTime, 0)
+	duration = OA.num(duration, 0)
 	if startTime == 0 or duration == 0 then
 		return { known = true, ready = true, remaining = 0 }
 	end
@@ -99,19 +101,19 @@ local function RefreshBuffs()
 			if not aura then break end
 
 			if aura.spellId == OA.SpellIDs.rollTheBones then
-				OA.State.buffs.rtb.stage = aura.applications or 1
-				OA.State.buffs.rtb.expires = (aura.expirationTime or now)
+				OA.State.buffs.rtb.stage = OA.num(aura.applications, 1)
+				OA.State.buffs.rtb.expires = OA.num(aura.expirationTime, now)
 				table.insert(OA.State.buffs.rtb.names, "Roll the Bones")
 			end
 
 			if aura.spellId == OA.SpellIDs.adrenalineRush then
 				OA.State.buffs.adrenalineRush.up = true
-				OA.State.buffs.adrenalineRush.expires = (aura.expirationTime or now)
+				OA.State.buffs.adrenalineRush.expires = OA.num(aura.expirationTime, now)
 			end
 
 			if aura.spellId == 195627 then
 				OA.State.buffs.opportunity.up = true
-				OA.State.buffs.opportunity.expires = (aura.expirationTime or now)
+				OA.State.buffs.opportunity.expires = OA.num(aura.expirationTime, now)
 			end
 
 			for _, buffName in ipairs(OA.RTB_BUFF_NAMES) do
@@ -133,21 +135,21 @@ local function RefreshBuffs()
 
 			if name == "Roll the Bones" then
 				local _, _, count, _, duration, expTime = UnitBuff("player", i)
-				OA.State.buffs.rtb.stage = count or 1
-				OA.State.buffs.rtb.expires = expTime or now
+				OA.State.buffs.rtb.stage = OA.num(count, 1)
+				OA.State.buffs.rtb.expires = OA.num(expTime, now)
 				table.insert(OA.State.buffs.rtb.names, name)
 			end
 
 			if name == "Adrenaline Rush" then
 				local _, _, _, _, _, expTime = UnitBuff("player", i)
 				OA.State.buffs.adrenalineRush.up = true
-				OA.State.buffs.adrenalineRush.expires = expTime or now
+				OA.State.buffs.adrenalineRush.expires = OA.num(expTime, now)
 			end
 
 			if name == "Opportunity" then
 				local _, _, _, _, _, expTime = UnitBuff("player", i)
 				OA.State.buffs.opportunity.up = true
-				OA.State.buffs.opportunity.expires = expTime or now
+				OA.State.buffs.opportunity.expires = OA.num(expTime, now)
 			end
 
 			for _, buffName in ipairs(OA.RTB_BUFF_NAMES) do
@@ -176,6 +178,8 @@ local function RefreshTrinkets()
 			else
 				cd_start, cd_duration = GetItemCooldown(itemID)
 			end
+			cd_start = OA.num(cd_start, 0)
+			cd_duration = OA.num(cd_duration, 0)
 			if cd_start ~= nil and cd_duration ~= nil then
 				local now = GetTime()
 				if cd_start == 0 or cd_duration == 0 then
@@ -207,10 +211,10 @@ function OA.State.RefreshFast()
 	local energyPower = Enum and Enum.PowerType and Enum.PowerType.Energy or 3
 	local comboPower = Enum and Enum.PowerType and Enum.PowerType.ComboPoints or 4
 
-	OA.State.energy = UnitPower("player", energyPower) or 0
-	OA.State.energyMax = UnitPowerMax("player", energyPower) or 0
-	OA.State.comboPoints = UnitPower("player", comboPower) or 0
-	OA.State.comboPointsMax = UnitPowerMax("player", comboPower) or 0
+	OA.State.energy = OA.num(UnitPower("player", energyPower), 0)
+	OA.State.energyMax = OA.num(UnitPowerMax("player", energyPower), 0)
+	OA.State.comboPoints = OA.num(UnitPower("player", comboPower), 0)
+	OA.State.comboPointsMax = OA.num(UnitPowerMax("player", comboPower), 0)
 
 	RefreshCooldowns()
 

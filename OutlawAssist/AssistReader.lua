@@ -3,7 +3,8 @@ local ADDON_NAME, OA = ...
 OA.Assist = {
 	available = false,
 	nextSpellID = nil,
-	queue = {}
+	queue = {},
+	aoeDetected = false
 }
 
 local warned = false
@@ -68,6 +69,18 @@ function OA.Assist.Update()
 		if spellID and not seen[spellID] then
 			table.insert(OA.Assist.queue, spellID)
 			seen[spellID] = true
+		end
+	end
+
+	-- Detect AoE: check if Blade Flurry appears in the normalized queue
+	-- Blizzard's engine recommends AoE when 2+ targets are present
+	OA.Assist.aoeDetected = false
+	if OA.SpellIDs and OA.SpellIDs.bladeFlurry then
+		for _, spellID in ipairs(OA.Assist.queue) do
+			if spellID == OA.SpellIDs.bladeFlurry then
+				OA.Assist.aoeDetected = true
+				break
+			end
 		end
 	end
 end

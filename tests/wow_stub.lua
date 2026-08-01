@@ -384,4 +384,38 @@ _G.C_AssistedCombat = {
 
 _G.SlashCmdList = {}
 
+-- Marker for secret values
+local SECRET_MARKER = "__is_secret_value"
+
+-- Secret value factory for testing WoW Midnight behavior
+function stub.makeSecret(value)
+  local secretMeta = {
+    __lt = function() error("attempt to compare secret") end,
+    __le = function() error("attempt to compare secret") end,
+    __eq = function() error("attempt to compare secret") end,
+    __add = function() error("attempt to arith secret") end,
+    __sub = function() error("attempt to arith secret") end,
+    __mul = function() error("attempt to arith secret") end,
+    __div = function() error("attempt to arith secret") end,
+    __len = function() error("attempt to get length of secret") end,
+    __concat = function(a, b) return tostring(a) .. tostring(b) end,
+    __tostring = function(a) return tostring(value) end,
+    [SECRET_MARKER] = true
+  }
+  local secret = {}
+  setmetatable(secret, secretMeta)
+  return secret
+end
+
+-- Global issecretvalue for Midnight API compliance testing
+function _G.issecretvalue(v)
+  if v and type(v) == "table" then
+    local mt = getmetatable(v)
+    if mt and mt[SECRET_MARKER] then
+      return true
+    end
+  end
+  return false
+end
+
 return stub

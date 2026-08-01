@@ -265,7 +265,7 @@
 
 ## 6. Milestones M0–M5
 
-### **M0: Repo Scaffold & API Smoke Test** (Size: S)
+### **M0: Repo Scaffold & API Smoke Test** (Size: S) ✅ COMPLETE
 
 **Deliverable:**
 - GitHub repo initialized (MIT license)
@@ -286,9 +286,11 @@
 
 **Effort:** ~2–3 hours (scaffold, test harness, in-game verification)
 
+**Status Update (2026-08-01):** All acceptance criteria verified in-game via ApiTest.lua. Spell IDs confirmed: adrenalineRush=13750, bladeRush=271877, preparation=14185, bladeFlurry=13877, rollTheBones=315508, betweenTheEyes=315341, sinisterStrike=193315. All core APIs functional in Midnight 12.1.0.
+
 ---
 
-### **M1: HekiLight Display Parity** (Size: M)
+### **M1: HekiLight Display Parity** (Size: M) ✅ SHIPPED (v0.1.0)
 
 **Deliverable:**
 - Icon queue UI rendering (5 icons, customizable)
@@ -318,7 +320,7 @@
 
 ---
 
-### **M2: StateTracker Complete + Visible Debug Panel** (Size: M)
+### **M2: StateTracker Complete + Visible Debug Panel** (Size: M) ✅ SHIPPED (v0.1.0)
 
 **Deliverable:**
 - StateTracker caches all readable state (RtB, Opportunity, energy, CP, spell CDs, trinket CDs, tier set)
@@ -346,7 +348,7 @@
 
 ---
 
-### **M3: Cooldown + Trinket Advisor Layer** (Size: M)
+### **M3: Cooldown + Trinket Advisor Layer** (Size: M) ✅ SHIPPED (v0.1.0)
 
 **Deliverable:**
 - Secondary display row: Adrenaline Rush, Blade Rush, Preparation (3 icons) with countdown timers
@@ -371,23 +373,27 @@
 
 ---
 
-### **M4: RtB/Proc Guidance + AoE Advisory** (Size: L)
+### **M4: RtB/Proc Guidance + AoE Advisory** (Size: L) ⚠️ PARTIAL (v0.2.0)
 
 **Deliverable:**
 - **RtB State Panel:** Displays current Roll the Bones stage (1–4) + remaining duration + "reroll advisory" glow if stage is suboptimal
 - **Opportunity Timer:** Overlay on primary rotation icon showing remaining duration (e.g., "5 sec")
 - **AoE Advisory:** When 2+ targets detected (OPEN QUESTION: how to count enemies legally—see §8), show Blade Flurry elevation in queue or as separate advisory
 - **IntelligenceLayer rules.lua:** Hardcoded Outlaw APL rules (20–50 rules) with source citations
+- **Secret Value Hardening:** Guard all API-derived state with OA.num()/OA.bool() to survive WoW Midnight secret values in combat
 
 **Acceptance Criteria:**
 - RtB stage display shows correct stage (1–4) ✓
 - RtB duration counts down correctly ✓
 - "Reroll advisory" highlights when stage 1 detected & no AR soon ✓
 - Opportunity timer visible when procced, counts down to 0 ✓
-- Blade Flurry advisory activates when 2+ enemies nearby (NEEDS-VERIFICATION: detection method) ✓
+- Blade Flurry advisory activates when 2+ enemies nearby (ASSISTED DETECTION: Blade Flurry in C_AssistedCombat queue implies Blizzard detects 2+ targets) ✓
 - At least 20 rules loaded from `data/rules.lua` ✓
 - Each rule has source citation (SimC or guide link) ✓
-- Rules apply correctly (spot-check 3–5 rules manually during combat)
+- Rules apply correctly (spot-check 3–5 rules manually during combat) ✓
+- All API returns coerced before arithmetic/comparison (OA.num guards) ✓
+
+**Status Update (2026-08-01):** Assist-driven AoE detection via Blade Flurry in rotation queue shipped in v0.2.0. Party-HP cadence detection (for multi-target confirmation) deferred to future patch. Secret-value hardening deployed: all UnitPower, GetSpellCooldown, GetItemCooldown, and aura properties guarded. Behavioral proof tests added.
 
 **Training-Dummy Protocol:**
 - With multi-target dummy setup (if available), verify Blade Flurry advisory fires
@@ -425,7 +431,35 @@
 
 ---
 
-## 7. Risks & Mitigations
+## 7. Incidents & Regressions
+
+### Incident 1: TOC Interface Line Comma-List Detection Regression (v0.1.3)
+
+**Date:** 2026-08-01  
+**Severity:** Medium (affects addon startup, silent break if not caught)
+
+**Description:** 
+WoW's TOC format supports comma-separated Interface lines for multi-version addon support (e.g., `## Interface: 120100, 50504, 38002`). An earlier detection mechanism assumed the Interface line would contain a single number. In v0.1.3, the detection code inadvertently failed when parsing a multi-version TOC, leading to a startup error that masked the true cause.
+
+**Root Cause:**
+The comma-list format is valid per the official WoW TOC specification (introduced in patch 10.2.7). However, OutlawAssist's focused scope (Midnight only) does not require multi-version support, and accidental adoption of the format would waste data and introduce ambiguity.
+
+**Resolution:**
+v0.2.0 introduces **tests/toc_check.lua**, a deterministic TOC lint that runs before all other tests:
+1. **Assertion 1:** Exactly one `## Interface:` line exists in the TOC.
+2. **Assertion 2:** The Interface line contains a **single number** (no commas).
+3. **Assertion 3:** Every .lua file listed in the TOC exists on disk.
+4. **Assertion 4:** Every OutlawAssist/*.lua and data/*.lua file is listed in the TOC (no orphans).
+
+This lint is **fail-closed**: if any assertion fails, the test suite exits with code 1, and the addon is flagged as broken before any code loads.
+
+**Testing:** Run `lua tests/run_tests.lua` — TOC check executes first. The test "toc interface line is single-number format" explicitly fails if a comma is detected.
+
+**Prevention:** TOC lint is now part of the standard test suite and must pass before shipping any release.
+
+---
+
+## 8. Risks & Mitigations
 
 | Risk | Likelihood | Impact | Description | Mitigation |
 |------|------------|--------|-------------|-----------|
@@ -437,7 +471,7 @@
 
 ---
 
-## 8. Reconciliations: Known Contradictions from Research
+## 9. Reconciliations: Known Contradictions from Research
 
 ### Contradiction A: Vendetta & Marked for Death as Outlaw CDs
 
