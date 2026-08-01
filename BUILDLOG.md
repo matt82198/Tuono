@@ -62,3 +62,19 @@ Append-only durable record of project milestones. Single entry per dated phase.
 - Release track: v0.1.0 → v0.1.3 → v0.2.0 → v0.2.2/v0.2.3 (converge close).
 
 **Next:** User in-game verdict on v0.2.3 (`/oa apitest`) → M4 completion (party-HP if legal) → M5 ship (CurseForge).
+## 2026-08-01 (late) - rotation engine hardening
+v1.2.1 -> v1.3.1 shipped. Convergence pass over the simulator found what the build itself
+could not: an expert Outlaw review showed 6 of 11 ability values were WRONG (Dispatch 25 vs
+35 energy, Keep It Rolling 15s vs 6min, Blade Rush/Killing Spree ~6x too fast) while the code
+comment falsely claimed they were transcribed from research - the research said "Varies".
+Ambush was defined in data but referenced by no rule, so the stealth opener never fired.
+Adversarial review found simulated cooldowns never started (keyed by rule name, not ability)
+and a shared mutable sentinel that one bad write corrupted for the session.
+Two defects came from live play and were both design errors: the simulation bailed out
+whenever aura data was degraded - which is ALWAYS true in Midnight combat - so the engine
+never ran when it mattered and the first icon showed Blizzard's frozen value; and the
+action-slot keybind map covered only 2 of ~8 bars.
+Guards added: ability-data assertions, placeholder-value rejection, no-back-to-back-duplicate
+in predicted sequences, TOC-version-vs-CHANGELOG gate.
+Lesson reinforced: agent-reported green was wrong 4x today; every merge was independently
+re-run before release. One lane merged red while claiming the Lua runtime was unavailable.
