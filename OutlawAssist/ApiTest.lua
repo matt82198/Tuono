@@ -171,6 +171,56 @@ local function apitest()
     end
   end)
 
+  test("C_NamePlate.GetNamePlates", function()
+    if not C_NamePlate or not C_NamePlate.GetNamePlates then
+      error("C_NamePlate.GetNamePlates not found")
+    end
+    local namePlates = C_NamePlate.GetNamePlates()
+    if not namePlates then return "nil" end
+    local count = #namePlates
+    if count == 0 then return "empty" end
+    local np = namePlates[1]
+    local token = np.namePlateUnitToken or "nameplate1"
+    local uf_str = tostring(np.UnitFrame or "nil")
+    local exists_str = tostring(UnitExists(token) or "nil")
+    local canAttack_str = tostring(UnitCanAttack("player", token) or "nil")
+    local inCombat_str = tostring(UnitAffectingCombat(token) or "nil")
+    local hasSecret = uf_str:find("SECRET") or exists_str:find("SECRET") or canAttack_str:find("SECRET") or inCombat_str:find("SECRET")
+    return "count=" .. count .. "|UnitFrame=" .. (hasSecret and "SECRET" or uf_str) .. "|Exists=" .. exists_str .. "|CanAttack=" .. canAttack_str .. "|InCombat=" .. inCombat_str
+  end)
+
+  test("UnitThreatSituation", function()
+    if not UnitThreatSituation then error("not found") end
+    local result = UnitThreatSituation("player", "nameplate1")
+    local resultStr = tostring(result or "nil")
+    return resultStr:find("SECRET") and "SECRET" or result
+  end)
+
+  test("IsEncounterInProgress + encounter context", function()
+    if not IsEncounterInProgress then error("not found") end
+    local inEnc = IsEncounterInProgress()
+    local hasScenario = C_Scenario ~= nil
+    local hasChallenge = C_ChallengeMode ~= nil and C_ChallengeMode.IsChallengeModeActive ~= nil
+    return "InEncounter=" .. tostring(inEnc) .. "|Scenario=" .. tostring(hasScenario) .. "|ChallengeMode=" .. tostring(hasChallenge)
+  end)
+
+  test("GetRotationSpells LIVENESS", function()
+    if not C_AssistedCombat or not C_AssistedCombat.GetRotationSpells then
+      error("not found")
+    end
+    local spells1 = C_AssistedCombat.GetRotationSpells()
+    local spells2 = C_AssistedCombat.GetRotationSpells()
+    if not spells1 then return "nil" end
+    local ids = {}
+    for i = 1, math.min(10, #spells1) do
+      local entry = spells1[i]
+      local id = type(entry) == "number" and entry or (type(entry) == "table" and entry.spellID)
+      if id then table.insert(ids, tostring(id)) end
+    end
+    OA.print("  -> LIVENESS: run /oa apitest on single dummy, then mid multi-target pull - compare lists (esp. Blade Flurry 13877)")
+    return table.concat(ids, ",")
+  end)
+
   OA.print(passed .. "/" .. total .. " PASS - paste this output into a GitHub issue if anything FAILs (SKIPs are OK)")
 end
 
