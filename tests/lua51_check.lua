@@ -19,15 +19,26 @@ local function fileExists(path)
   return false
 end
 
+-- Strip string literals and trailing comments so patterns only see CODE.
+-- (WoW color codes like "|cff00ccff" inside strings false-positive the bitwise scan.)
+local function stripStringsAndComments(line)
+  local s = line:gsub("\\\\", ""):gsub('\\"', ""):gsub("\\'", "")
+  s = s:gsub('"[^"]*"', '""'):gsub("'[^']*'", "''")
+  s = s:gsub("%[%[.-%]%]", "")
+  s = s:gsub("%-%-.*$", "")
+  return s
+end
+
 local function scanForBannedConstruct(content, filename)
   local violations = {}
 
   local lineNum = 0
-  for line in content:gmatch("[^\n]+") do
+  for rawLine in content:gmatch("[^\n]+") do
     lineNum = lineNum + 1
+    local line = stripStringsAndComments(rawLine)
 
     -- Skip lines that are comments
-    if not line:match("^%s*%-%-") then
+    if not line:match("^%s*%-%-") and #line > 0 then
       -- Check for goto statement (not ::label::)
       if line:match("goto%s+%w") then
         table.insert(violations, {line = lineNum, construct = "goto", line_text = line})
@@ -148,29 +159,8 @@ local function runLua51Check()
     end
   end)
 
-  -- Also scan tests directory (excluding run_tests.lua itself)
-  test("test files pass lua51 syntax check", function()
-    local testDir = "tests"
-    local p = io.popen("find " .. testDir .. " -name '*.lua' -type f")
-    if p then
-      for line in p:lines() do
-        -- Skip run_tests.lua (it's the harness)
-        if not line:match("run_tests%.lua$") then
-          local content = readFile(line)
-          if content then
-            local violations = scanForBannedConstruct(content, line)
-            if #violations > 0 then
-              for _, v in ipairs(violations) do
-                table.insert(allViolations, {file = line, line = v.line, construct = v.construct, text = v.line_text})
-              end
-              error("File " .. line .. " contains " .. #violations .. " Lua 5.2+ constructs")
-            end
-          end
-        end
-      end
-      p:close()
-    end
-  end)
+  -- NOTE: tests/ is deliberately NOT scanned — the harness runs under desktop Lua
+  -- (5.4), never inside the WoW client; only TOC-listed files ship to the 5.1 runtime.
 
   return testCount, passCount, allViolations
 end

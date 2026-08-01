@@ -1,18 +1,22 @@
 local ADDON_NAME, OA = ...
 
+OA.Display = OA.Display or {}
+
 local function GetSpellTexture(spellID)
 	if C_Spell and C_Spell.GetSpellTexture then
 		return C_Spell.GetSpellTexture(spellID)
 	end
-	if GetSpellTexture then
-		return _G.GetSpellTexture(spellID)
+	local g = _G.GetSpellTexture
+	if g then
+		return g(spellID)
 	end
 	return nil
 end
 
 local function GetInventoryItemTexture(unit, slot)
-	if GetInventoryItemTexture then
-		return _G.GetInventoryItemTexture(unit, slot)
+	local g = _G.GetInventoryItemTexture
+	if g then
+		return g(unit, slot)
 	end
 	return nil
 end

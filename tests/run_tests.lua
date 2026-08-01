@@ -37,14 +37,9 @@ local stub = require("tests.wow_stub")
 
 -- Global setup
 _G.ADDON_NAME = "OutlawAssist"
-local OA = {
-  Display = {},
-  Engine = {},
-  State = {},
-  Assist = {},
-  Rules = {},
-  defaults = {}
-}
+-- BARE table, exactly like the WoW client's addon-shared table: modules MUST create
+-- their own subtables. Pre-seeding here masked a real in-game load failure (Display).
+local OA = {}
 
 -- Inject stub into globals
 for k, v in pairs(stub) do
