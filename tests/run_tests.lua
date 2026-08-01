@@ -795,13 +795,13 @@ end)
 
 -- TEST: Pistol shot rule resolves spellID lazily
 test("pistol shot rule resolves spellID lazily at evaluate time", function()
-  -- Self-sufficient state setup
+  -- Self-sufficient: manual state AFTER RefreshFast (it recomputes from stub and clobbers)
+  OA.Assist.Update()
+  OA.State.RefreshFast()
   OA.State.inCombat = true
   OA.State.stealthed = false
   OA.State.buffs.opportunity.up = true
   OA.State.energy = 30
-  OA.Assist.Update()
-  OA.State.RefreshFast()
 
   local psRule = nil
   for _, rule in ipairs(OA.Rules or {}) do
@@ -834,13 +834,13 @@ end)
 
 -- TEST: Unified queue contains cooldown entry when AR ready
 test("unified queue: cooldown entry when AR ready + rule fires", function()
-  -- Self-sufficient state setup
+  -- Self-sufficient: manual state AFTER RefreshFast (it recomputes from stub and clobbers)
+  OA.Assist.Update()
+  OA.State.RefreshFast()
   OA.State.inCombat = true
   OA.State.stealthed = false
   OA.State.cooldowns.adrenalineRush.ready = true
   OA.State.comboPoints = 2
-  OA.Assist.Update()
-  OA.State.RefreshFast()
 
   local r = OA.Engine.Evaluate()
   local foundCooldown = false
@@ -874,12 +874,28 @@ end)
 
 -- TEST: RtB entry at stage 0
 test("unified queue: RtB entry at stage 0", function()
-  -- Self-sufficient state setup
+  -- Self-sufficient: manual state AFTER RefreshFast (it recomputes from stub and clobbers).
+  -- Must neutralize ALL other rule inputs: leftover hot state (AR buff, trinkets, low CP)
+  -- adds fold-entries that push the queue past 8 and truncate the RtB append (last rule).
+  OA.Assist.Update()
+  OA.State.RefreshFast()
   OA.State.inCombat = true
   OA.State.stealthed = false
   OA.State.buffs.rtb.stage = 0
-  OA.Assist.Update()
-  OA.State.RefreshFast()
+  OA.State.buffs.rtb.expires = 0
+  OA.State.buffs.adrenalineRush.up = false
+  OA.State.buffs.opportunity.up = false
+  OA.State.cooldowns.adrenalineRush.ready = false
+  OA.State.cooldowns.adrenalineRush.remaining = 60
+  OA.State.cooldowns.bladeRush.ready = false
+  OA.State.cooldowns.preparation.ready = false
+  OA.State.trinkets[13].ready = false
+  OA.State.trinkets[14].ready = false
+  OA.State.comboPoints = 4
+  OA.State.energy = 50
+  OA.State.energyMax = 100
+  OA.State.tier.twoPc = false
+  OA.State.tier.fourPc = false
 
   local r = OA.Engine.Evaluate()
   local foundRtb = false
@@ -908,10 +924,13 @@ end)
 
 -- TEST: Queue dedup by spellID
 test("unified queue: dedup by spellID", function()
-  OA.State.cooldowns.adrenalineRush.ready = true
-  OA.State.comboPoints = 2
+  -- Self-sufficient: manual state AFTER RefreshFast (it recomputes from stub and clobbers)
   OA.Assist.Update()
   OA.State.RefreshFast()
+  OA.State.inCombat = true
+  OA.State.stealthed = false
+  OA.State.cooldowns.adrenalineRush.ready = true
+  OA.State.comboPoints = 2
 
   local r = OA.Engine.Evaluate()
   local arCount = 0
