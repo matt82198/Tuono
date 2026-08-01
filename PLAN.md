@@ -265,7 +265,7 @@
 
 ## 6. Milestones M0–M5
 
-### **M0: Repo Scaffold & API Smoke Test** (Size: S) ✅ COMPLETE
+### **M0: Repo Scaffold & API Smoke Test** (Size: S) ✅ VERIFIED IN-GAME
 
 **Deliverable:**
 - GitHub repo initialized (MIT license)
@@ -286,7 +286,9 @@
 
 **Effort:** ~2–3 hours (scaffold, test harness, in-game verification)
 
-**Status Update (2026-08-01):** All acceptance criteria verified in-game via ApiTest.lua. Spell IDs confirmed: adrenalineRush=13750, bladeRush=271877, preparation=14185, bladeFlurry=13877, rollTheBones=315508, betweenTheEyes=315341, sinisterStrike=193315. All core APIs functional in Midnight 12.1.0.
+**Status Update (2026-08-01):** M0 VERIFIED IN-GAME via ApiTest.lua. All acceptance criteria pass. Spell IDs confirmed: adrenalineRush=13750, bladeRush=271877, preparation=14185, bladeFlurry=13877, rollTheBones=315508, betweenTheEyes=315341, sinisterStrike=193315. All core APIs functional in Midnight 12.1.0.
+
+**KEY ARCHITECTURAL FINDING:** Blizzard's `GetRotationSpells()` returns a STATIC list of the spec's rotational spells, not a live predicted queue. True multi-step lookahead ("your next 4 casts") is NOT possible through the sanctioned API. **Consequence:** Position 1 = Blizzard's live next-cast recommendation; positions 2+ = our own state-derived entries (ready cooldowns, trinket windows, RtB, opener). Describes addon capability accurately in README.
 
 ---
 
@@ -373,7 +375,7 @@
 
 ---
 
-### **M4: RtB/Proc Guidance + AoE Advisory** (Size: L) ✅ COMPLETE (v0.3.0)
+### **M4: RtB/Proc Guidance + AoE Advisory** (Size: L) ✅ IMPLEMENTED, PENDING LIVE VERIFICATION (v0.3.0)
 
 **Deliverable:**
 - **RtB State Panel:** Displays current Roll the Bones stage (1–4) + remaining duration + "reroll advisory" glow if stage is suboptimal
@@ -393,7 +395,7 @@
 - Rules apply correctly (spot-check 3–5 rules manually during combat) ✓
 - All API returns coerced before arithmetic/comparison (OA.num guards) ✓
 
-**Status Update (2026-08-01):** v0.3 shipped with unified rolling bar (kind-colored borders: cooldown orange, trinket purple, RtB gold, opener teal), per-icon keybind labels, `/oa icons <1-8>` support, reactive polling (fast in combat, event-forced on miscast/target-swap), threat-table AoE detection (2+ enemies, composite signal with `/oa aoe` manual override), and hardened aura tracking for Midnight secret values. Feature increments delivered: (1) unified bar layout, (2) keybind labeling, (3) polling reactivity, (4) AoE composite detection, (5) aura hardening. Validation ongoing in-game.
+**Status Update (2026-08-01):** v0.3 shipped with unified rolling bar (kind-colored borders: cooldown orange, trinket purple, RtB gold, opener teal), per-icon keybind labels, `/oa icons <1-8>` support, reactive polling (fast in combat, event-forced on miscast/target-swap), threat-table AoE detection (2+ enemies, composite signal with `/oa aoe` manual override), and hardened aura tracking for Midnight secret values. **AoE detection is implemented but pending live confirmation in actual raid/dungeon AoE scenarios.** Feature increments delivered: (1) unified bar layout, (2) keybind labeling, (3) polling reactivity, (4) AoE composite detection, (5) aura hardening. Awaiting `/oa watch` data from live play to confirm threat-table accuracy.
 
 **Training-Dummy Protocol:**
 - With multi-target dummy setup (if available), verify Blade Flurry advisory fires
@@ -544,6 +546,7 @@ This lint is **fail-closed**: if any assertion fails, the test suite exits with 
 | **Will PLAYER_EQUIPMENT_CHANGED fire on trinket swap mid-combat?** | MEDIUM (affects trinket cache freshness) | Test in M0: Equip, swap trinket OOC, swap back in combat, verify event fires. If event fires in combat, M2 can refresh cache; if not, stale IDs acceptable (trinket slots don't change mid-pull in practice). |
 | **Are all rule conditions deterministically verifiable from readable state?** | MEDIUM (M4 correctness) | Verify each of 20+ rules in `data/rules.lua` can be evaluated using only StateTracker outputs. If a rule needs "enemy health %" or "remaining fight time", flag as `FUTURE` (needs different legal surface). |
 | **Patch 12.1+ buff API changes impact proc tracking?** | MEDIUM (Opportunity timer in M4) | Research: "Curse of Ula'tek (Patch 12.1) introduced API changes" (hekilight-analysis.md §7.7). Verify whether `UnitBuff("player", "Opportunity")` still works. If blocked, use fallback: cache `UNIT_SPELLCAST_SUCCEEDED` timestamp + 20s hardcoded (less precise but functional). |
+| **AoE detection accuracy in live raid/dungeon scenarios?** | MEDIUM (M4 validation) | Threat-table composite signal implemented; awaiting `/oa watch` data from live M+ and raid play to confirm threat-count + nameplate accuracy in varied pull sizes and pull-chains. Initial implementation complete; live confirmation ongoing. |
 
 ---
 
