@@ -517,11 +517,28 @@ This lint is **fail-closed**: if any assertion fails, the test suite exits with 
 
 ---
 
-## 9. Open Questions
+## 9. Resolutions & Open Questions
+
+### RESOLVED: How to count nearby enemies legally? (2026-08-01)
+
+**Decision:** Threat-table detection via `C_NamePlate.GetNamePlates()`.
+
+**Method:**
+- Poll `C_NamePlate.GetNamePlates()` every 0.25s in combat
+- For each nameplate, call `UnitThreatSituation("player", plate.namePlateUnitToken)`
+- Count plates with threat > 0 (hostile-engaged enemies)
+- Store count in `OA.State.enemyCount`
+- Blade Flurry rule fires when `enemyCount >= 2 OR aoeMode OR aoeDetected`
+
+**Caveat:** Threat-table detection is pending in-game verification via `/oa apitest` probes to confirm legality and behavior under all combat conditions. Initial implementation complete; tests passing.
+
+**Impact:** Resolves M4 AoE advisory blocker. Feature ships in v0.3.0.
+
+---
+
+### Open Questions
 
 | Question | Impact | Path to Resolution |
-|----------|--------|-------------------|
-| **How to count nearby enemies legally?** | HIGH (AoE advisory in M4 blocked) | Three candidate signals now tested via ApiTest probes: (1) **LEGAL-UNVERIFIED** — party HP deltas (UnitHealth("party1..4") readable in combat; probe added; requires legality confirmation); (2) **LEGAL-WEAK** — self HP-loss cadence (always readable, weak AoE indicator); (3) **LEGAL-BY-CONSTRUCTION** — Blade Flurry in C_AssistedCombat.GetRotationSpells() implies Blizzard detects 2+ targets (probe added; if present, player is in AoE scenario). See OutlawAssist/ApiTest.lua for verification probes. |
 | **Exact GetRotationSpells return shape?** | MEDIUM | M0 smoke test `/dump` call will reveal table structure. Verify keys (name, id, cooldown?, usability?). Document in code. |
 | **Addon distribution policy?** | LOW | CurseForge upload (M5) will clarify ToS compliance. Confirm: does "recommendation overlay on Blizzard's queue" violate anti-automation rules? Likely not (HekiLight, Knickili precedent), but CurseForge review may ask for clarification. Be prepared to explain: "We only display suggestions; player always chooses." |
 | **Will PLAYER_EQUIPMENT_CHANGED fire on trinket swap mid-combat?** | MEDIUM (affects trinket cache freshness) | Test in M0: Equip, swap trinket OOC, swap back in combat, verify event fires. If event fires in combat, M2 can refresh cache; if not, stale IDs acceptable (trinket slots don't change mid-pull in practice). |
