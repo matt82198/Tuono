@@ -149,10 +149,13 @@ local function CreateIcon(parent, name, size, x, y)
 	cooldownText:Hide()
 	btn.cooldownText = cooldownText
 
-	-- Blizzard cooldown widget (shows visual cooldown overlay)
-	local cooldownWidget = CreateFrame("Cooldown", nil, btn, "CooldownFrameTemplate")
-	cooldownWidget:SetAllPoints(btn)
-	btn.cooldownWidget = cooldownWidget
+	-- Blizzard cooldown widget (visual sweep). Guarded: a client without the template
+	-- must not take the whole display down -- the numeric text is the fallback.
+	local okCD, cooldownWidget = pcall(CreateFrame, "Cooldown", nil, btn, "CooldownFrameTemplate")
+	if okCD and cooldownWidget and cooldownWidget.SetAllPoints then
+		pcall(cooldownWidget.SetAllPoints, cooldownWidget, btn)
+		btn.cooldownWidget = cooldownWidget
+	end
 
 	-- Keybind text in bottom-right (larger, more legible)
 	local keyText = btn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
