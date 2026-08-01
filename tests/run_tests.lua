@@ -350,11 +350,11 @@ test("unavailable advisory when assist not available", function()
   end
   assert_true(foundUnavail, "unavailable advisory present")
 
-  -- Restore
+  -- Restore with blade flurry included
   _G.C_AssistedCombat = {
     IsAvailable = function() return true end,
     GetNextCastSpell = function(b) return 193315 end,
-    GetRotationSpells = function() return {193315, 271877, 315341} end,
+    GetRotationSpells = function() return {193315, 271877, 315341, 13877} end,
     GetActionSpell = function(a) return 193315 end
   }
 end)
@@ -455,17 +455,29 @@ test("buff scan with UnitBuff fallback when C_UnitAuras unavailable", function()
   local originalC_UnitAuras = _G.C_UnitAuras
   local originalUnitBuff = _G.UnitBuff
 
+  -- Reset buff state from prior test (test 12b left adrenalineRush=true)
+  stub.state.buffs.adrenalineRush = false
+  stub.state.buffs.adrenalineRushExpires = 0
+  stub.state.buffs.opportunity = false
+  stub.state.buffs.opportunityExpires = 0
+  stub.state.buffs.rollTheBones = false
+  stub.state.buffs.rollTheBonesStage = 0
+  stub.state.buffs.rollTheBonesExpires = 0
+
   -- Temporarily disable C_UnitAuras to force fallback to UnitBuff
   _G.C_UnitAuras = nil
 
   -- Ensure UnitBuff is still available
   assert_true(_G.UnitBuff ~= nil, "UnitBuff fallback is available")
 
-  -- Set buff state in stub
+  -- Set buff state for opportunity
   stub.state.buffs.opportunity = true
   stub.state.buffs.opportunityExpires = stub.state.time + 50
 
-  -- Call RefreshBuffs
+  -- Advance time to bypass the lastBuffScan gate (need 0.5s elapsed for RefreshBuffs to run)
+  stub.Tick(1.0)
+
+  -- Call RefreshBuffs through RefreshFast
   OA.State.RefreshFast()
 
   -- Verify buff was detected via UnitBuff fallback
@@ -607,6 +619,10 @@ end)
 
 -- GAP TEST 1: aoeDetected path - stub returns blade flurry, assert detection
 test("aoeDetected path - detects blade flurry in queue", function()
+  -- Ensure C_AssistedCombat is properly restored and available
+  assert_true(_G.C_AssistedCombat ~= nil, "C_AssistedCombat is available")
+  assert_true(_G.C_AssistedCombat.GetRotationSpells ~= nil, "GetRotationSpells is available")
+
   -- The stub's GetRotationSpells includes 13877 (blade flurry)
   OA.Assist.Update()
 
