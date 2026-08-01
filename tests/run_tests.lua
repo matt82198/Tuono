@@ -914,12 +914,15 @@ test("unified queue: RtB entry at stage 0", function()
   local r = OA.Engine.Evaluate()
   local foundRtb = false
   for _, entry in ipairs(r.queue) do
-    if entry.spellID == OA.SpellIDs.rollTheBones and entry.kind == "rtb" then
+    -- Since v1.3.1 the simulator itself predicts Roll the Bones at stage 0, so the
+    -- separate rule-derived entry is deduped as redundant. What matters is that RtB is
+    -- RECOMMENDED at stage 0, not which subsystem produced it.
+    if entry.spellID == OA.SpellIDs.rollTheBones then
       foundRtb = true
       break
     end
   end
-  assert_true(foundRtb, "RtB entry in queue with kind=rtb at stage 0")
+  assert_true(foundRtb, "RtB recommended at stage 0 (from simulation or rule)")
 end)
 
 -- TEST: Opener pins when OOC+unstealthed
@@ -2332,11 +2335,23 @@ test("rotation simulator: predict returns array at full energy", function()
 end)
 
 -- Test: Predict with degraded state returns nil
-test("rotation simulator: predict returns nil when state degraded", function()
+test("rotation simulator: degraded aura data still predicts (lower confidence)", function()
+  -- v1.3.1: bailing out on degraded meant the simulation NEVER RAN in combat, because
+  -- Midnight hides aura data there -- so the bar fell back to Blizzard's frozen pick and
+  -- the first icon never changed in live play. Energy/CP/cooldowns remain readable and
+  -- drive most of the priority list, so predict anyway and mark confidence down.
+  OA.State.inCombat = true
+  OA.State.stealthed = false
+  OA.State.energy = 100
+  OA.State.energyMax = 100
+  OA.State.comboPoints = 3
+  OA.State.comboPointsMax = 6
   OA.State.buffs.degraded = true
 
-  local pred = OA.Rotation.Predict(OA.State, 4)
-  assert_true(pred == nil, "Predict returns nil when state is degraded")
+  local pred = OA.Rotation.Predict(OA.State, 3)
+  assert_true(pred ~= nil, "prediction still produced while degraded")
+  assert_true(#pred > 0, "degraded prediction is non-empty")
+  assert_true(pred[1].confidence ~= "high", "degraded prediction is not high confidence")
 
   OA.State.buffs.degraded = false
 end)
@@ -2367,6 +2382,7 @@ end)
 test("rotation simulator: confidence high for steps 1-3", function()
   OA.State.inCombat = true
   OA.State.stealthed = false
+  OA.State.buffs.degraded = false  -- "high" requires readable aura data
   OA.State.energy = 100
   OA.State.energyMax = 100
   OA.State.comboPoints = 0

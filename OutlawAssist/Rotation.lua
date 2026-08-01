@@ -248,9 +248,15 @@ end
 -- steps: number of steps to predict (default 4, capped at 8)
 -- returns: array of {spellID, confidence, reason} or nil if degraded
 function OA.Rotation.Predict(state, steps)
-	if not state or state.buffs.degraded then
-		return nil  -- Fall back to Blizzard
-	end
+	if not state then return nil end
+
+	-- DEGRADED AURA DATA MUST NOT DISABLE THE ROTATION.
+	-- In real combat Midnight hides aura spellIds/names, so buffs.degraded is often TRUE.
+	-- Bailing out here meant the simulation never ran in combat and the bar fell back to
+	-- Blizzard's static pick -- which is why the first icon never changed in live play.
+	-- Energy, combo points and cooldowns are all still readable, and they drive most of
+	-- the priority list, so we predict anyway and only lower confidence.
+	local degraded = state.buffs and state.buffs.degraded
 
 	steps = steps or 4
 	if steps > 8 then steps = 8 end
@@ -298,6 +304,10 @@ function OA.Rotation.Predict(state, steps)
 		local confidence = "high"
 		if step >= 4 then
 			confidence = "low"
+		end
+		-- Buff-dependent decisions are guesses while aura data is hidden.
+		if degraded and confidence == "high" then
+			confidence = "medium"
 		end
 
 		-- Record prediction

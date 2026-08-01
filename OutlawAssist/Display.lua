@@ -44,6 +44,26 @@ local function AbbreviateKey(keyStr)
 	return keyStr
 end
 
+-- Action-slot -> binding-name map. The previous inline version covered only slots
+-- 1-12 and 61-72 and mislabelled 73+, so a spell on any other bar silently produced
+-- no keybind -- which is why keybinds appeared on only some icons in live play.
+-- Canonical layout: 1-12 main, 13-24 main page 2 (shares ACTIONBUTTON bindings),
+-- 25-36 MultiBarRight(3), 37-48 MultiBarLeft(4), 49-60 MultiBarBottomRight(2),
+-- 61-72 MultiBarBottomLeft(1), 73-120 bars 5-7.
+local function bindingNameForSlot(slot)
+	if type(slot) ~= "number" then return nil end
+	if slot >= 1 and slot <= 12 then return "ACTIONBUTTON" .. slot end
+	if slot >= 13 and slot <= 24 then return "ACTIONBUTTON" .. (slot - 12) end
+	if slot >= 25 and slot <= 36 then return "MULTIACTIONBAR3BUTTON" .. (slot - 24) end
+	if slot >= 37 and slot <= 48 then return "MULTIACTIONBAR4BUTTON" .. (slot - 36) end
+	if slot >= 49 and slot <= 60 then return "MULTIACTIONBAR2BUTTON" .. (slot - 48) end
+	if slot >= 61 and slot <= 72 then return "MULTIACTIONBAR1BUTTON" .. (slot - 60) end
+	if slot >= 73 and slot <= 84 then return "MULTIACTIONBAR5BUTTON" .. (slot - 72) end
+	if slot >= 85 and slot <= 96 then return "MULTIACTIONBAR6BUTTON" .. (slot - 84) end
+	if slot >= 97 and slot <= 108 then return "MULTIACTIONBAR7BUTTON" .. (slot - 96) end
+	return nil
+end
+
 local function GetKeybindText(spellID)
 	if not spellID then return nil end
 
@@ -60,18 +80,7 @@ local function GetKeybindText(spellID)
 		local ok, buttons = OA.safe(function() return C_ActionBar.FindSpellActionButtons(spellID) end)
 		if ok and buttons and #buttons > 0 then
 			local slot = buttons[1]
-			local bindingName = nil
-			if slot >= 1 and slot <= 12 then
-				bindingName = "ACTIONBUTTON" .. slot
-			elseif slot >= 61 and slot <= 72 then
-				bindingName = "MULTIACTIONBAR1BUTTON" .. (slot - 60)
-			elseif slot >= 73 and slot <= 84 then
-				bindingName = "MULTIACTIONBAR2BUTTON" .. (slot - 72)
-			elseif slot >= 85 and slot <= 96 then
-				bindingName = "MULTIACTIONBAR3BUTTON" .. (slot - 84)
-			elseif slot >= 97 and slot <= 108 then
-				bindingName = "MULTIACTIONBAR4BUTTON" .. (slot - 96)
-			end
+			local bindingName = bindingNameForSlot(slot)
 
 			if bindingName and GetBindingKey then
 				local key = GetBindingKey(bindingName)
@@ -88,18 +97,7 @@ local function GetKeybindText(spellID)
 			local actionType, actionID, _ = GetActionInfo(slot)
 			-- Check both spell and potentially talent/override variants
 			if actionID == spellID and (actionType == "spell" or actionType == "talent" or actionType == "action") then
-				local bindingName = nil
-				if slot >= 1 and slot <= 12 then
-					bindingName = "ACTIONBUTTON" .. slot
-				elseif slot >= 61 and slot <= 72 then
-					bindingName = "MULTIACTIONBAR1BUTTON" .. (slot - 60)
-				elseif slot >= 73 and slot <= 84 then
-					bindingName = "MULTIACTIONBAR2BUTTON" .. (slot - 72)
-				elseif slot >= 85 and slot <= 96 then
-					bindingName = "MULTIACTIONBAR3BUTTON" .. (slot - 84)
-				elseif slot >= 97 and slot <= 108 then
-					bindingName = "MULTIACTIONBAR4BUTTON" .. (slot - 96)
-				end
+			local bindingName = bindingNameForSlot(slot)
 
 				if bindingName and GetBindingKey then
 					local key = GetBindingKey(bindingName)

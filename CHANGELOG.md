@@ -2,6 +2,17 @@
 
 All notable changes to OutlawAssist are documented here.
 
+## [1.3.1] - 2026-08-01
+
+### Fixed
+- First icon never changed in combat: the simulation bailed out whenever aura data was
+  degraded, and Midnight hides aura data in combat, so it never ran and the bar fell back
+  to Blizzard's static pick. It now predicts from energy/combo points/cooldowns (all still
+  readable) and only lowers confidence.
+- Keybinds appeared on only some icons: the action-slot to binding-name map covered slots
+  1-12 and 61-72 and mislabelled 73+, so spells on most action bars resolved no keybind.
+  Replaced with the full canonical mapping.
+
 ## [1.3.0] - 2026-08-01
 
 ### Fixed
