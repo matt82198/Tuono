@@ -405,6 +405,10 @@ test("secret value handling - full tick without error", function()
   assert_true(type(OA.State.energy) == "number", "energy coerced to number despite secret input")
   assert_true(type(OA.State.comboPoints) == "number", "comboPoints coerced to number despite secret input")
 
+  -- CRITICAL: Verify values are NOT secrets (this is the key test that proves OA.num guards work)
+  assert_false(_G.issecretvalue(OA.State.energy), "energy must not be a secret value")
+  assert_false(_G.issecretvalue(OA.State.comboPoints), "comboPoints must not be a secret value")
+
   -- Restore original UnitPower
   _G.UnitPower = originalUnitPower
 end)
