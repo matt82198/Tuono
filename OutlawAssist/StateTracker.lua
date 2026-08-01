@@ -9,7 +9,9 @@ OA.SpellIDs = {
 	sinisterStrike = 193315, -- TODO(M0): verify in-game
 	bladeFlurry = 13877, -- TODO(M0): verify in-game
 	stealth = 1784, -- TODO(M0): verify in-game
-	pistolShot = 185763 -- TODO(M0): verify in-game
+	pistolShot = 185763, -- TODO(M0): verify in-game
+	opportunity = 195627, -- VERIFIED: Opportunity buff (enables free Pistol Shot), hardcoded 3x in StateTracker before fix
+	ambush = 8676 -- VERIFIED: Stealth opener ability, primary damage button from Stealth
 }
 
 OA.RTB_BUFF_NAMES = {
@@ -255,14 +257,15 @@ local function ProcessAuraDelta(updateInfo)
 	end
 end
 
--- TIER 3: Fallback full scan (when delta tracking fails)
+-- TIER 3: Fallback full scan (only as last-resort when delta tracking yielded nothing for RtB)
+-- PRECEDENCE: applications/stage (from modern delta tracking) is AUTHORITATIVE.
+-- Legacy RTB_BUFF_NAMES scan only runs if RtB stage is still 0 and should mark degraded.
+-- SAFETY: Guard all field reads with issecretvalue, mark degraded on any fallback use.
 local function RefreshBuffsFallback()
 	local now = GetTime()
-	wipe(OA.State.buffs.rtb.names)
-	OA.State.buffs.rtb.stage = 0
-	OA.State.buffs.opportunity.up = false
-	OA.State.buffs.adrenalineRush.up = false
-	OA.State.stealthed = false
+	-- NOTE: Do NOT wipe state unconditionally. Only use this as fallback when delta tracking found nothing.
+	-- Only refresh RtB legacy names if stage is still 0 (modern aura not found by delta tracking).
+	local rtbStageFromModern = OA.State.buffs.rtb.stage
 
 	if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
 		local i = 1
@@ -270,33 +273,26 @@ local function RefreshBuffsFallback()
 			local aura = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
 			if not aura then break end
 
-			local auraSpellId = OA.num(aura.spellId, 0)
-			if auraSpellId == OA.SpellIDs.rollTheBones then
+			-- Guard against secret values in aura.spellId
+			local auraSpellId = 0
+			if aura.spellId and not _G.issecretvalue(aura.spellId) then
+				auraSpellId = OA.num(aura.spellId, 0)
+			end
+
+			-- Modern path: spell IDs take precedence; only update if delta didn't already set it
+			if auraSpellId == OA.SpellIDs.rollTheBones and rtbStageFromModern == 0 then
 				OA.State.buffs.rtb.stage = OA.num(aura.applications, 1)
 				OA.State.buffs.rtb.expires = OA.num(aura.expirationTime, now)
-				table.insert(OA.State.buffs.rtb.names, "Roll the Bones")
 			end
 
-			if auraSpellId == OA.SpellIDs.adrenalineRush then
-				OA.State.buffs.adrenalineRush.up = true
-				OA.State.buffs.adrenalineRush.expires = OA.num(aura.expirationTime, now)
-			end
-
-			if auraSpellId == 195627 then
-				OA.State.buffs.opportunity.up = true
-				OA.State.buffs.opportunity.expires = OA.num(aura.expirationTime, now)
-			end
-
-			if auraSpellId == OA.SpellIDs.stealth then
-				OA.State.stealthed = true
-			end
-
+			-- Legacy name scan: ONLY if stage is still 0 (modern spellID path didn't find it)
 			local auraName = aura.name or ""
-			for _, buffName in ipairs(OA.RTB_BUFF_NAMES) do
-				if auraName == buffName and auraSpellId ~= OA.SpellIDs.rollTheBones then
-					table.insert(OA.State.buffs.rtb.names, buffName)
-					if OA.State.buffs.rtb.stage == 0 then
+			if rtbStageFromModern == 0 then
+				for _, buffName in ipairs(OA.RTB_BUFF_NAMES) do
+					if auraName == buffName and auraSpellId ~= OA.SpellIDs.rollTheBones then
+						table.insert(OA.State.buffs.rtb.names, buffName)
 						OA.State.buffs.rtb.stage = 1
+						OA.State.buffs.degraded = true  -- Mark degraded when using legacy fallback
 					end
 				end
 			end
@@ -304,39 +300,26 @@ local function RefreshBuffsFallback()
 			i = i + 1
 		end
 	elseif UnitBuff then
+		-- Classic UnitBuff fallback (when C_UnitAuras unavailable)
 		local i = 1
 		while true do
 			local name = UnitBuff("player", i)
 			if not name then break end
 
-			if name == "Roll the Bones" then
+			if name == "Roll the Bones" and rtbStageFromModern == 0 then
 				local _, _, count, _, duration, expTime = UnitBuff("player", i)
 				OA.State.buffs.rtb.stage = OA.num(count, 1)
 				OA.State.buffs.rtb.expires = OA.num(expTime, now)
 				table.insert(OA.State.buffs.rtb.names, name)
 			end
 
-			if name == "Adrenaline Rush" then
-				local _, _, _, _, _, expTime = UnitBuff("player", i)
-				OA.State.buffs.adrenalineRush.up = true
-				OA.State.buffs.adrenalineRush.expires = OA.num(expTime, now)
-			end
-
-			if name == "Opportunity" then
-				local _, _, _, _, _, expTime = UnitBuff("player", i)
-				OA.State.buffs.opportunity.up = true
-				OA.State.buffs.opportunity.expires = OA.num(expTime, now)
-			end
-
-			if name == "Stealth" then
-				OA.State.stealthed = true
-			end
-
-			for _, buffName in ipairs(OA.RTB_BUFF_NAMES) do
-				if name == buffName and name ~= "Roll the Bones" then
-					table.insert(OA.State.buffs.rtb.names, name)
-					if OA.State.buffs.rtb.stage == 0 then
+			-- Legacy name scan: ONLY if stage is still 0
+			if rtbStageFromModern == 0 then
+				for _, buffName in ipairs(OA.RTB_BUFF_NAMES) do
+					if name == buffName and name ~= "Roll the Bones" then
+						table.insert(OA.State.buffs.rtb.names, name)
 						OA.State.buffs.rtb.stage = 1
+						OA.State.buffs.degraded = true  -- Mark degraded when using legacy fallback
 					end
 				end
 			end
@@ -448,8 +431,11 @@ function OA.State.RefreshFast()
 	RefreshCooldowns()
 
 	local now = GetTime()
-	if (now - lastBuffScan) >= 0.5 then
-		-- Periodic fallback scan in case delta tracking lost sync
+	-- TIER 3 Fallback: only safe to run NOT in combat (aura scanning can throw on secret values in combat)
+	-- When inCombat=true, skip Tier 3 and trust Tier 1 delta tracking.
+	-- If Tier 1 failed (degraded), stay degraded; Tier 3 won't fix it mid-combat.
+	if (now - lastBuffScan) >= 0.5 and not OA.State.inCombat then
+		-- Periodic fallback scan in case delta tracking lost sync (out of combat only)
 		RefreshBuffsFallback()
 		lastBuffScan = now
 	end

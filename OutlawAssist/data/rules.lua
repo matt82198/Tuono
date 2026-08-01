@@ -10,9 +10,9 @@ OA.Rules = {
     spellID = 13750,
     itemSlot = nil,
     when = function(S, A)
-      return S.comboPoints <= 2 and S.cooldowns.adrenalineRush.ready
+      return S.inCombat and S.comboPoints <= 2 and S.cooldowns.adrenalineRush.ready
     end,
-    source = "outlaw-rotation.md §1 (Priority Order: 'Use on cooldown with 2 or fewer Combo Points'); §2 (APL syntax: adrenaline_rush,if=combo_points<=2)"
+    source = "outlaw-rotation.md §1 (Priority Order: 'Use on cooldown with 2 or fewer Combo Points'); §2 (APL syntax: adrenaline_rush,if=combo_points<=2); FIX: gated on S.inCombat to prevent pre-pull override of stealth opener"
   },
 
   -- Mandatory Rule 2: Between the Eyes PIN at high combo points
@@ -229,20 +229,6 @@ OA.Rules = {
     source = "outlaw-rotation.md §4 (Tier Set Bonuses: '4-Piece Bonus: Blade Rush cooldown reduced by 6 seconds')"
   },
 
-  -- Additional Rule 18: Adrenaline Rush and energy resource interaction
-  {
-    name = "ar_energy_management",
-    desc = "Track Adrenaline Rush buff to optimize energy spending",
-    action = "ADVISE",
-    kind = "cooldown",
-    spellID = 13750,
-    itemSlot = nil,
-    when = function(S, A)
-      return S.buffs.adrenalineRush.up and S.buffs.adrenalineRush.expires < 5
-    end,
-    source = "outlaw-rotation.md §2 (Adrenaline Rush: 'Increases Energy Regen, maximum Energy, and Attack Speed')"
-  },
-
   -- Additional Rule 20: Tier set 2-piece Blade Rush damage boost
   {
     name = "blade_rush_tier2pc",
@@ -300,5 +286,19 @@ OA.Rules = {
       return not S.inCombat and not S.stealthed
     end,
     source = "v0.3 unified queue engine - stealthing before opening"
+  },
+
+  -- Additional Rule 24: Ambush when stealthed (primary stealth opener)
+  {
+    name = "opener_ambush",
+    desc = "Ambush from stealth - primary damage opener",
+    action = "PIN",
+    kind = "opener",
+    spellID = OA.SpellIDs and OA.SpellIDs.ambush or 8676,
+    itemSlot = nil,
+    when = function(S, A)
+      return S.stealthed
+    end,
+    source = "outlaw-rotation.md §1 (Opener: 'Ambush when available to cast from stealth - primary stealth-locked damage button'); VERIFIED against current guides (Method.gg, Icy Veins)"
   },
 }
