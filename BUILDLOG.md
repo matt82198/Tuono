@@ -39,3 +39,26 @@ Append-only durable record of project milestones. Single entry per dated phase.
 **Releases:** v0.1.0 (17/17 core tests, M0–M3 feature-complete) → v0.1.3 (TOC parse regression fixed, lint gate added) → v0.2.0 (M4 partial, secret hardening + AoE, 20/20 tests).
 
 **Next:** User in-game verdict on party-HP readability → M4 completion → M5 (CurseForge packaging, docs polish, sim-data refresh automation).
+
+---
+
+## 2026-08-01 — Converge Pass: PRs #12–#16, v0.2.2/v0.2.3 Released (CLEAN)
+
+**Converge Phase Scope:** Adversarial review + regression sweep from v0.2.0 baseline → zero verified defects.
+
+**Lens Findings Summary:**
+- **2 P0s confirmed + fixed:** (1) Display off-by-one on icon-strip layout edge case (ruled out false-green from missing spec-ID check). (2) Rules evaluation short-circuit on empty rotation (AoE gate missing nil-guard). Both caught by orchestrator adversarial re-run; not caught by initial fix-forward.
+- **Rules refresh:** Converged on 33 comprehensive decision rules (up from 20 in v0.2.0; de-tautologized redundant path coverage). SimC cross-check passed; guide consensus alignment verified.
+- **Test hardening:** 20→33 behavioral tests; eliminated tautological tests (self-verifying stubs); added edge cases (empty queue, nil aura, GCD overlap, multi-target transitions).
+- **One false-green caught:** Orchestrator re-run (after initial fix-forward) found: original test runner had race condition on trinket cache initialization (stale state leaking between test cases). Fix: added cache clear in test harness reset. Suite now 33/33 deterministic.
+
+**Releases:**
+- v0.2.2 (commit TBD): First fix-forward (P0s + rules refresh). Tests 33/33 passing on first re-run.
+- v0.2.3 (converge close): Consolidated release; orchestrator re-run verified clean + false-green remedied. Suite 33/33 deterministic on live.
+
+**Control Files:**
+- STATE.md: Frozen at v0.2.3; interface pin 120007 (live 12.0.7); converge status = CLEAN.
+- BUILDLOG.md: This entry (append-only).
+- Release track: v0.1.0 → v0.1.3 → v0.2.0 → v0.2.2/v0.2.3 (converge close).
+
+**Next:** User in-game verdict on v0.2.3 (`/oa apitest`) → M4 completion (party-HP if legal) → M5 ship (CurseForge).
