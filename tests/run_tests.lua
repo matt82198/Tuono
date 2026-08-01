@@ -3147,6 +3147,84 @@ if barBehaviorTests then
 end
 
 -- Summary
+-- === p0fix tests ===
+-- The v1.5.0 lane shipped these fixes WITHOUT regression tests. Written here so the
+-- expert-audit P0s cannot silently return. Each message names the in-game symptom.
+
+local function p0Baseline()
+  OA.State.inCombat = true
+  OA.State.stealthed = false
+  OA.State.buffs.degraded = false
+  OA.State.buffs.opportunity.up = false
+  OA.State.buffs.adrenalineRush.up = false
+  OA.State.buffs.rtb.stage = 2
+  OA.State.buffs.rtb.expires = 999
+  OA.State.energy, OA.State.energyMax = 100, 100
+  OA.State.comboPointsMax = 6
+  OA.State.enemyCount = 1
+  OA.db.aoeMode = false
+  OA.Assist.aoeDetected = false
+  OA.State.knownSpells = OA.State.knownSpells or {}
+  for _, id in pairs(OA.SpellIDs) do
+    if type(id) == "number" then OA.State.knownSpells[id] = true end
+  end
+  OA.State.knownUnavailable = false
+  for _, k in ipairs({"adrenalineRush","bladeRush","preparation","betweenTheEyes",
+                      "killingSpree","rollTheBones","keepItRolling","bladeFlurry"}) do
+    OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+  end
+  for _, k in ipairs({"dispatch","sinisterStrike","pistolShot","ambush"}) do
+    OA.State.cooldowns[k] = { known = true, ready = true, remaining = 0 }
+  end
+end
+
+test("p0: stealth opener appears ONCE, not four times", function()
+  p0Baseline()
+  OA.State.stealthed = true
+  OA.State.comboPoints = 0
+  local pred = OA.Rotation.Predict(OA.State, 4)
+  assert_true(pred ~= nil and #pred > 1, "stealth prediction has multiple steps")
+  local ambushCount = 0
+  for _, step in ipairs(pred) do
+    if step.spellID == OA.SpellIDs.ambush then ambushCount = ambushCount + 1 end
+  end
+  assert_true(ambushCount <= 1,
+    "bar would show Ambush " .. ambushCount .. "x - a one-press opener repeated across the bar")
+end)
+
+test("p0: at max combo points the finisher is position 1, not buried behind cooldowns", function()
+  p0Baseline()
+  OA.State.comboPoints = 6
+  OA.State.cooldowns.betweenTheEyes = { known = true, ready = true, remaining = 0 }
+  local pred = OA.Rotation.Predict(OA.State, 4)
+  assert_true(pred ~= nil and #pred > 0, "prediction produced at max CP")
+  local first = pred[1].spellID
+  assert_true(first == OA.SpellIDs.betweenTheEyes or first == OA.SpellIDs.dispatch,
+    "bar would stall at max CP without spending (position 1 was " .. tostring(first) .. ")")
+end)
+
+test("p0: levelling build (SS + Dispatch) spends at 5 CP", function()
+  p0Baseline()
+  for _, id in pairs(OA.SpellIDs) do
+    if type(id) == "number" then OA.State.knownSpells[id] = false end
+  end
+  OA.State.knownSpells[OA.SpellIDs.sinisterStrike] = true
+  OA.State.knownSpells[OA.SpellIDs.dispatch] = true
+  OA.State.comboPoints = 5
+  local r = OA.Engine.Evaluate()
+  assert_true(#r.queue > 0, "levelling queue is non-empty")
+  assert_eq(r.queue[1].spellID, OA.SpellIDs.dispatch,
+    "levelling bar told the player to keep building instead of spending at 5 CP")
+end)
+
+test("p0: Killing Spree is not modelled as a combo-point spender", function()
+  local ks = OA.Rotation.ABILITIES and OA.Rotation.ABILITIES[OA.SpellIDs.killingSpree]
+  assert_true(ks ~= nil, "Killing Spree present in ability table")
+  local spend = ks.cpSpend
+  assert_true(spend == 0 or spend == false or spend == nil,
+    "Killing Spree modelled as spending combo points - it is a burst cooldown")
+end)
+
 print("")
 print(passCount .. "/" .. testCount .. " tests passed")
 
