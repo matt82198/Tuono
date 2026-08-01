@@ -421,6 +421,72 @@ test("issecretvalue detects secret values correctly", function()
   assert_false(_G.issecretvalue("42"), "issecretvalue returns false for strings")
 end)
 
+-- TEST: Rule 16 blade_rush_tier_priority uses ready condition
+test("rule 16 blade_rush_tier_priority exists and uses ready", function()
+  local found = false
+  local rule = nil
+  for _, r in ipairs(OA.Rules or {}) do
+    if r.name == "blade_rush_tier_priority" then
+      found = true
+      rule = r
+      break
+    end
+  end
+  assert_true(found, "blade_rush_tier_priority rule must exist")
+  -- Verify the rule condition uses ready, not remaining < 2
+  assert_true(type(rule.when) == "function", "rule condition must be a function")
+  OA.State.tier.fourPc = true
+  OA.State.cooldowns.bladeRush.ready = true
+  assert_true(rule.when(OA.State, {}), "rule fires when 4PC + ready")
+end)
+
+-- TEST: Deleted rules no longer exist
+test("combo_point_priority rule deleted", function()
+  local found = false
+  for _, rule in ipairs(OA.Rules or {}) do
+    if rule.name == "combo_point_priority" then
+      found = true
+      break
+    end
+  end
+  assert_false(found, "combo_point_priority rule must not exist")
+end)
+
+test("bte_stun_immunity rule deleted", function()
+  local found = false
+  for _, rule in ipairs(OA.Rules or {}) do
+    if rule.name == "bte_stun_immunity" then
+      found = true
+      break
+    end
+  end
+  assert_false(found, "bte_stun_immunity rule must not exist")
+end)
+
+-- TEST: New roll_the_bones_open rule exists and fires
+test("roll_the_bones_open rule exists", function()
+  local found = false
+  for _, rule in ipairs(OA.Rules or {}) do
+    if rule.name == "roll_the_bones_open" then
+      found = true
+      break
+    end
+  end
+  assert_true(found, "roll_the_bones_open rule must exist")
+end)
+
+-- TEST: New pistol_shot_low_energy rule exists
+test("pistol_shot_low_energy rule exists", function()
+  local found = false
+  for _, rule in ipairs(OA.Rules or {}) do
+    if rule.name == "pistol_shot_low_energy" then
+      found = true
+      break
+    end
+  end
+  assert_true(found, "pistol_shot_low_energy rule must exist")
+end)
+
 -- Summary
 print("")
 print(passCount .. "/" .. testCount .. " tests passed")
