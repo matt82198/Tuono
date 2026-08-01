@@ -245,7 +245,7 @@ The Great Vault has three rows. Complete **objectives** to unlock choices:
 
 **Target by Aug 11:** ~280–290 ilvl (Veteran-to-low-Champion tier)
 
-### Week 1 of Season 2 (Aug 11–18): Patch 12.1, Pre-Mythic+
+### Patch Week (Aug 11–18) — pre-season
 
 **Available Aug 11 (Patch Day):**
 - Mythic 0 dungeons unlock
@@ -319,7 +319,7 @@ The Great Vault has three rows. Complete **objectives** to unlock choices:
 **Why Passive Pair?** Outlaw has no impactful on-use cooldowns, so two passive trinkets sustain your already-high sustained DPS better than on-use combinations.
 
 **Acquisition Path:**
-1. **Week 1–2 (Aug 18–25):** Use Voidforg Nebulous Cores to target Venomous Abyss drops → run Raid Finder 1 boss to unlock Gaze/Umbral at base ilvl.
+1. **Week 1–2 (Aug 18–25):** Use Voidforge Nebulous Cores to target Venomous Abyss drops → run Raid Finder 1 boss to unlock Gaze/Umbral at base ilvl.
 2. **Week 2+ (Aug 25+):** Push Heroic/Mythic raids or spend Voidforges on Voidforge cores to upgrade trinket ilvl.
 3. **Fallback:** If Mythic raid is unavailable, grab Solarflare Prism + Ranger-Captain's Insignia from dungeon loot or crafting.
 
