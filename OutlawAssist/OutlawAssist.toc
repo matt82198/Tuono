@@ -1,0 +1,15 @@
+## Interface: 120001
+## Title: Outlaw Assist
+## Notes: Smart rotation assistance for Outlaw Rogues
+## Author: Matt Culliton
+## Version: 0.1.0
+## SavedVariables: OutlawAssistDB
+
+Core.lua
+data/rules.lua
+StateTracker.lua
+AssistReader.lua
+IntelligenceLayer.lua
+Display.lua
+Config.lua
+ApiTest.lua
