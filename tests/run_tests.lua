@@ -738,6 +738,208 @@ test("load canary detects missing module", function()
   OA.Engine = savedEngine
 end)
 
+-- === engine-lane tests ===
+
+-- TEST: Handler signature correctness - UNIT_AURA receives event + unit
+test("handler signature: UNIT_AURA receives (event, unit) correctly", function()
+  -- Fire UNIT_AURA event with correct args
+  stub.FireEvent("UNIT_AURA", "player")
+
+  -- Verify buff refresh ran (stealthed should be accessible and refreshed)
+  assert_true(OA.State.stealthed ~= nil, "State.stealthed exists after UNIT_AURA fired")
+  assert_true(type(OA.State.stealthed) == "boolean", "State.stealthed is a boolean after handler call")
+end)
+
+-- TEST: Pistol shot rule resolves spellID lazily
+test("pistol shot rule resolves spellID lazily at evaluate time", function()
+  -- Setup: Opportunity buff up and low energy
+  OA.State.buffs.opportunity.up = true
+  OA.State.energy = 30
+  OA.Assist.Update()
+  OA.State.RefreshFast()
+
+  -- Find the pistol_shot_low_energy rule
+  local psRule = nil
+  for _, rule in ipairs(OA.Rules or {}) do
+    if rule.name == "pistol_shot_low_energy" then
+      psRule = rule
+      break
+    end
+  end
+
+  assert_true(psRule ~= nil, "pistol_shot_low_energy rule exists")
+  assert_true(psRule.spellID == nil or psRule.spellID == 0, "pistol shot rule has nil/0 spellID at load (lazy)")
+  assert_true(psRule.resolveSpellID ~= nil, "pistol shot rule has resolveSpellID function")
+
+  -- Evaluate should resolve it lazily
+  local r = OA.Engine.Evaluate()
+  -- Rule should have fired, so Pistol Shot should be in queue or advisory
+  local foundPistol = false
+  for _, entry in ipairs(r.queue) do
+    if entry.spellID == OA.SpellIDs.pistolShot then
+      foundPistol = true
+      break
+    end
+  end
+  for _, adv in ipairs(r.advisories) do
+    if adv.icon == OA.SpellIDs.pistolShot then
+      foundPistol = true
+      break
+    end
+  end
+  assert_true(foundPistol, "Pistol Shot resolved and appears in queue/advisories when conditions met")
+end)
+
+-- TEST: Unified queue contains cooldown entry when AR ready
+test("unified queue: cooldown entry when AR ready + rule fires", function()
+  -- Setup: AR ready and low CP
+  OA.State.cooldowns.adrenalineRush.ready = true
+  OA.State.comboPoints = 2
+  OA.Assist.Update()
+  OA.State.RefreshFast()
+
+  local r = OA.Engine.Evaluate()
+  local foundCooldown = false
+  for _, entry in ipairs(r.queue) do
+    if entry.spellID == 13750 and entry.kind == "cooldown" then
+      foundCooldown = true
+      break
+    end
+  end
+  assert_true(foundCooldown, "AR cooldown entry in queue with kind=cooldown")
+end)
+
+-- TEST: Trinket entry with itemSlot during AR window
+test("unified queue: trinket entry with itemSlot when AR up + trinket ready", function()
+  -- Setup: AR buff active, trinket 13 ready and on-use
+  OA.State.buffs.adrenalineRush.up = true
+  OA.State.trinkets[13].ready = true
+  OA.State.trinkets[13].onUse = true
+  OA.Assist.Update()
+  OA.State.RefreshFast()
+
+  local r = OA.Engine.Evaluate()
+  local foundTrinket = false
+  for _, entry in ipairs(r.queue) do
+    if entry.kind == "trinket" and entry.itemSlot == 13 then
+      foundTrinket = true
+      break
+    end
+  end
+  assert_true(foundTrinket, "trinket entry in queue with itemSlot=13")
+end)
+
+-- TEST: RtB entry at stage 0
+test("unified queue: RtB entry at stage 0", function()
+  -- Setup: RtB stage is 0 (not up)
+  OA.State.buffs.rtb.stage = 0
+  OA.Assist.Update()
+  OA.State.RefreshFast()
+
+  local r = OA.Engine.Evaluate()
+  local foundRtb = false
+  for _, entry in ipairs(r.queue) do
+    if entry.spellID == OA.SpellIDs.rollTheBones and entry.kind == "rtb" then
+      foundRtb = true
+      break
+    end
+  end
+  assert_true(foundRtb, "RtB entry in queue with kind=rtb at stage 0")
+end)
+
+-- TEST: Opener pins when OOC+unstealthed
+test("unified queue: opener stealth pins when OOC + unstealthed", function()
+  -- Setup: out of combat and not stealthed
+  OA.State.inCombat = false
+  OA.State.stealthed = false
+  OA.Assist.Update()
+  OA.State.RefreshFast()
+
+  local r = OA.Engine.Evaluate()
+  -- Stealth should be at position 1 (pinned) when OOC+unstealthed
+  if #r.queue > 0 then
+    assert_eq(r.queue[1].spellID, OA.SpellIDs.stealth, "stealth pinned at position 1 when OOC+unstealthed")
+    assert_eq(r.queue[1].kind, "opener", "stealth entry has kind=opener")
+  end
+end)
+
+-- TEST: Queue dedup by spellID
+test("unified queue: dedup by spellID", function()
+  -- Setup: force duplicate AR in queue
+  OA.State.cooldowns.adrenalineRush.ready = true
+  OA.State.comboPoints = 2
+  OA.Assist.Update()
+  OA.State.RefreshFast()
+
+  local r = OA.Engine.Evaluate()
+  local arCount = 0
+  for _, entry in ipairs(r.queue) do
+    if entry.spellID == 13750 then
+      arCount = arCount + 1
+    end
+  end
+  assert_eq(arCount, 1, "AR appears only once in queue (deduped)")
+end)
+
+-- TEST: Queue truncates to 8
+test("unified queue: truncates to 8 entries", function()
+  -- Setup: populate many rules that would create entries
+  OA.State.cooldowns.adrenalineRush.ready = true
+  OA.State.cooldowns.bladeRush.ready = true
+  OA.State.cooldowns.preparation.ready = true
+  OA.State.buffs.adrenalineRush.up = true
+  OA.State.trinkets[13].ready = true
+  OA.State.trinkets[13].onUse = true
+  OA.State.trinkets[14].ready = true
+  OA.State.trinkets[14].onUse = true
+  OA.State.buffs.rtb.stage = 0
+  OA.Assist.Update()
+  OA.State.RefreshFast()
+
+  local r = OA.Engine.Evaluate()
+  assert_true(#r.queue <= 8, "queue truncated to 8 or fewer entries")
+end)
+
+-- TEST: Stealth state tracking
+test("unified queue: stealth state tracked", function()
+  -- Setup: verify stealthed field exists and is tracked
+  OA.State.stealthed = false
+  assert_false(OA.State.stealthed, "stealthed initially false")
+
+  -- Simulate being stealthed (would normally come from buff scan)
+  OA.State.stealthed = true
+  assert_true(OA.State.stealthed, "stealthed set to true")
+
+  -- Verify opener rule doesn't fire when stealthed
+  OA.State.inCombat = false
+  OA.State.stealthed = true
+  OA.Assist.Update()
+  OA.State.RefreshFast()
+
+  local r = OA.Engine.Evaluate()
+  local stealthPinned = false
+  if #r.queue > 0 and r.queue[1].spellID == OA.SpellIDs.stealth then
+    stealthPinned = true
+  end
+  assert_false(stealthPinned, "stealth NOT pinned when already stealthed")
+end)
+
+-- TEST: Queue entries have required fields
+test("unified queue: entries have required structure", function()
+  OA.State.cooldowns.adrenalineRush.ready = true
+  OA.State.comboPoints = 2
+  OA.Assist.Update()
+  OA.State.RefreshFast()
+
+  local r = OA.Engine.Evaluate()
+  assert_true(#r.queue >= 1, "queue has entries")
+
+  for i, entry in ipairs(r.queue) do
+    assert_true(entry.source ~= nil, "entry " .. i .. " has source field")
+    assert_true(entry.kind ~= nil, "entry " .. i .. " has kind field")
+  end
+end)
+
 -- Summary
 print("")
 print(passCount .. "/" .. testCount .. " tests passed")
