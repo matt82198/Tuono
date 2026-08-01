@@ -353,28 +353,37 @@ test("intelligence layer queue reflects specific spell IDs based on combo point 
 end)
 
 -- Test 7: Assist unavailable advisory
-test("unavailable advisory when assist not available", function()
-  _G.C_AssistedCombat = nil
-  OA.Assist.Update()
-  OA.State.RefreshFast()
-  local r = OA.Engine.Evaluate()
-
-  assert_eq(#r.queue, 0, "queue empty when assist unavailable")
-  local foundUnavail = false
-  for _, adv in ipairs(r.advisories) do
-    if adv.text:find("unavailable") then
-      foundUnavail = true
-      break
-    end
+test("assist unavailable - own predictions still drive the queue", function()
+  -- This test nils a global. If an assertion throws before the restore line, EVERY
+  -- later test sees a missing C_AssistedCombat -- that single cascade caused most of
+  -- a 15-failure run. So: guarded body, restore always, re-raise after.
+  local function restore()
+    _G.C_AssistedCombat = {
+      IsAvailable = function() return true end,
+      GetNextCastSpell = function(b) return 193315 end,
+      GetRotationSpells = function() return {193315, 271877, 315341, 13877} end,
+      GetActionSpell = function(a) return 193315 end
+    }
   end
-  assert_true(foundUnavail, "unavailable advisory present")
 
-  _G.C_AssistedCombat = {
-    IsAvailable = function() return true end,
-    GetNextCastSpell = function(b) return 193315 end,
-    GetRotationSpells = function() return {193315, 271877, 315341, 13877} end,
-    GetActionSpell = function(a) return 193315 end
-  }
+  _G.C_AssistedCombat = nil
+  local ok, err = pcall(function()
+    OA.Assist.Update()
+    OA.State.RefreshFast()
+    local r = OA.Engine.Evaluate()
+
+    -- v1.2 design: Blizzard's assist is NOT the queue source (proven static in live
+    -- combat). With it absent we must still emit OUR predicted sequence.
+    assert_true(#r.queue > 0, "own predicted sequence present when assist unavailable")
+    for _, entry in ipairs(r.queue) do
+      -- trinket entries carry itemSlot instead of spellID, by contract
+      assert_true(entry.spellID ~= nil or entry.itemSlot ~= nil,
+        "queue entry is actionable (spellID or itemSlot)")
+    end
+  end)
+
+  restore()
+  if not ok then error(err) end
 end)
 
 -- Test 8: StateTracker RefreshFast
@@ -1593,20 +1602,20 @@ test("live-queue: position 1 always tracks live GetNextCastSpell every tick", fu
   OA.State.inCombat = true
   OA.State.stealthed = false
 
-  -- Poll 1: GetNextCastSpell = 193315
+  -- v1.2 DESIGN CHANGE: Blizzard's value was proven STATIC in live combat (52 samples,
+  -- 0 changes), so it is no longer the queue source. Position 1 is OUR prediction; we
+  -- only still poll Blizzard to record agreement. What must hold now: the polled value
+  -- is tracked, and position 1 is a real actionable entry regardless of what they say.
   OA.Assist.Update()
   local r1 = OA.Engine.Evaluate()
-  assert_eq(r1.queue[1].spellID, 193315, "position 1 = 193315 at first poll")
+  assert_eq(OA.Assist.nextSpellID, 193315, "assist value polled at first tick")
+  assert_true(r1.queue[1] ~= nil and r1.queue[1].spellID ~= nil, "position 1 actionable")
 
-  -- Poll 2: GetNextCastSpell = 1234 (should change position 1)
   OA.Assist.Update()
-  local r2 = OA.Engine.Evaluate()
-  assert_eq(r2.queue[1].spellID, 1234, "position 1 = 1234 at second poll (changed)")
+  assert_eq(OA.Assist.nextSpellID, 1234, "assist value re-polled (no caching)")
 
-  -- Poll 3: GetNextCastSpell = 5678 (should change again)
   OA.Assist.Update()
-  local r3 = OA.Engine.Evaluate()
-  assert_eq(r3.queue[1].spellID, 5678, "position 1 = 5678 at third poll (changed again)")
+  assert_eq(OA.Assist.nextSpellID, 5678, "assist value re-polled again")
 
   -- Restore to default
   _G.C_AssistedCombat.GetNextCastSpell = function(b) return 193315 end
@@ -1621,8 +1630,10 @@ test("live-queue: positions 2+ contain no entries from static rotation list", fu
   OA.Assist.Update()
   local r = OA.Engine.Evaluate()
 
-  -- Verify position 1 is from Blizzard
-  assert_eq(r.queue[1].source, "blizzard", "position 1 source is blizzard")
+  -- v1.2: position 1 comes from OUR simulation, never from Blizzard's static list.
+  assert_true(r.queue[1] ~= nil, "queue has a position 1")
+  assert_true(r.queue[1].source ~= "blizzard",
+    "position 1 is our prediction, not Blizzard's static pick")
 
   -- Positions 2+ must be from rules, not blizzard rotation
   for i = 2, #r.queue do
@@ -1796,10 +1807,17 @@ test("v1.1.0: position 1 from Blizzard allowed through even if cooldown unknown"
 
   local r = OA.Engine.Evaluate()
 
-  -- AR should be at position 1 (authoritative from Blizzard)
-  assert_true(#r.queue > 0, "queue has entries")
-  assert_eq(r.queue[1].spellID, OA.SpellIDs.adrenalineRush, "position 1 is Blizzard AR even with unknown cooldown")
-  assert_eq(r.queue[1].source, "blizzard", "position 1 source is blizzard")
+  -- v1.2: Blizzard no longer owns position 1 (its value is static in live combat).
+  -- What must still hold: an unknown cooldown never produces a NORMAL queue entry --
+  -- that was the fail-open bug that recommended Adrenaline Rush while it was on CD.
+  -- Blizzard's value may only appear as an explicitly-labelled static fallback.
+  assert_true(#r.queue > 0, "queue still has entries")
+  for _, entry in ipairs(r.queue) do
+    if entry.spellID == OA.SpellIDs.adrenalineRush then
+      assert_true(entry.source == "blizzard" or entry.confidence == "static-fallback",
+        "AR with unknown cooldown only allowed as a labelled fallback, never as our own pick")
+    end
+  end
 end)
 
 -- TEST: Bar renders out-of-combat (persistent)
@@ -1965,12 +1983,14 @@ test("v1.1.0: engine filter removes non-position-1 entries with unknown cooldown
 
   local r = OA.Engine.Evaluate()
 
-  -- Position 1 should be AR from Blizzard (survives filter)
-  assert_eq(r.queue[1].spellID, OA.SpellIDs.adrenalineRush, "position 1 AR survives filter")
-
-  -- Check that no subsequent BR entries are present (would be filtered)
-  for i = 2, #r.queue do
-    assert_true(r.queue[i].spellID ~= OA.SpellIDs.bladeRush, "BR with unknown cooldown filtered out")
+  -- v1.2: the filter's real job -- an ability whose cooldown we cannot confirm is NEVER
+  -- presented as our own recommendation. (Fail-open here is what put Adrenaline Rush on
+  -- the bar while it was on cooldown in live play.)
+  for _, entry in ipairs(r.queue) do
+    if entry.spellID == OA.SpellIDs.bladeRush or entry.spellID == OA.SpellIDs.adrenalineRush then
+      assert_true(entry.source == "blizzard" or entry.confidence == "static-fallback",
+        "unknown-cooldown ability only ever appears as a labelled fallback")
+    end
   end
 end)
 
@@ -2045,10 +2065,14 @@ test("v1.1.0: position 1 from Blizzard allowed even if spell unknown", function(
 
   local r = OA.Engine.Evaluate()
 
-  -- BR should be at position 1 (Blizzard's recommendation is authoritative)
-  assert_true(#r.queue > 0, "queue has entries")
-  assert_eq(r.queue[1].spellID, OA.SpellIDs.bladeRush, "position 1 BR allowed even if unknown spell")
-  assert_eq(r.queue[1].source, "blizzard", "position 1 source is blizzard")
+  -- v1.2: an untalented ability must never be OUR pick. The user is levelling and does
+  -- not have every talent, so this is the common case, not an edge case.
+  for _, entry in ipairs(r.queue) do
+    if entry.spellID == OA.SpellIDs.bladeRush then
+      assert_true(entry.source == "blizzard" or entry.confidence == "static-fallback",
+        "untalented ability only ever appears as a labelled fallback")
+    end
+  end
 end)
 
 -- TEST: Known API unavailable - fail-open (all spells allowed)
@@ -2419,6 +2443,12 @@ test("rotation simulator: finisher applies Restless Blades CDR", function()
   OA.State.cooldowns.bladeRush.ready = false
   OA.State.cooldowns.bladeRush.remaining = 30
   OA.State.cooldowns.preparation.ready = false
+  -- BtE has a real cooldown and the engine fails CLOSED on not-ready, so a finisher
+  -- test must declare it ready; otherwise falling back to the builder is CORRECT.
+  OA.State.cooldowns.betweenTheEyes = { known = true, ready = true, remaining = 0 }
+  -- Self-sufficient talent state: earlier tests flip knownSpells entries to false.
+  OA.State.knownSpells = OA.State.knownSpells or {}
+  OA.State.knownSpells[OA.SpellIDs.betweenTheEyes] = true
 
   local pred = OA.Rotation.Predict(OA.State, 2)
   assert_true(pred ~= nil, "prediction returned with high CP")

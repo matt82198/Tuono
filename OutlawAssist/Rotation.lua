@@ -187,7 +187,10 @@ local function buildActivePriorityList(priorityList, knownSpells)
 	local active = {}
 	for _, rule in ipairs(priorityList) do
 		-- Include rule if no talent requirement OR talent is known
-		if not rule.requiresSpell or knownSpells[rule.requiresSpell] then
+		-- Exclude ONLY when we explicitly probed and learned the player lacks it.
+		-- nil means "never probed" (no API, or not tracked) -> fail OPEN, because hiding
+		-- a player's whole rotation on a missing probe is far worse than one stray icon.
+		if not rule.requiresSpell or knownSpells[rule.requiresSpell] ~= false then
 			table.insert(active, rule)
 		end
 	end
