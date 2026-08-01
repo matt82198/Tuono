@@ -5,6 +5,15 @@ probes PASS except the deliberately-SKIPped legacy UnitBuff fallback. Spell IDs 
 verified by an Outlaw specialist. Remaining live unknown: whether GetRotationSpells is static or
 live (run /oa watch on a dummy; decides whether a true multi-step sequence is possible at all).
 
+**VERIFIED IN LIVE COMBAT 2026-08-01 (/oa watch, 52 samples):** C_AssistedCombat.GetNextCastSpell
+is STATIC — 1 distinct value, 0 changes across the window; GetRotationSpells never changed. It does
+not react to procs and does not switch to a finisher at max combo points. CONSEQUENCE: wrapping
+Blizzard's recommendation cannot produce a live sequence. The forward-simulating rotation engine
+(docs/research/rotation-model.md) is the sequence source; Blizzard is a static fallback only, and
+must be labeled as such wherever shown. OPEN: v1.1.1 probe enumerates alternative accessors
+(GetNextCastSpell(true), GetActionSpell, C_ActionBar assisted queries, ASSISTED_* events) to see
+whether any accessor IS proc-aware — Blizzard's own UI highlight reportedly reacts to procs.
+
 **Date:** 2026-08-01  
 **Current Version:** v0.2.3 (consolidated)  
 **Interface Pin:** 120007 (live 12.0.7)  
