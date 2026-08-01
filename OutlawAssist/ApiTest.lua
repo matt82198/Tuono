@@ -100,6 +100,54 @@ local function apitest()
     return spec
   end)
 
+  test("UnitHealth (player)", function()
+    local health = UnitHealth("player")
+    return health
+  end)
+
+  test("UnitHealthMax (player)", function()
+    local maxHealth = UnitHealthMax("player")
+    return maxHealth
+  end)
+
+  test("UnitHealth (party1)", function()
+    if UnitExists("party1") then
+      local health = UnitHealth("party1")
+      OA.print("  -> party1 exists, health = " .. tostring(health))
+      return health
+    else
+      OA.print("  -> SKIP: no party member at party1")
+      return "SKIP"
+    end
+  end)
+
+  test("Blade Flurry in GetRotationSpells", function()
+    if not C_AssistedCombat or not C_AssistedCombat.GetRotationSpells then
+      error("C_AssistedCombat.GetRotationSpells not found")
+    end
+    local spells = C_AssistedCombat.GetRotationSpells()
+    if not spells then error("GetRotationSpells returned nil") end
+
+    local bladeFlurrySpellID = OA.SpellIDs and OA.SpellIDs.bladeFlurry
+    if not bladeFlurrySpellID then
+      error("OA.SpellIDs.bladeFlurry not defined")
+    end
+
+    local found = false
+    for _, spellID in ipairs(spells) do
+      if spellID == bladeFlurrySpellID then
+        found = true
+        break
+      end
+    end
+
+    if found then
+      return "Blade Flurry found in queue"
+    else
+      return "Blade Flurry NOT in current queue"
+    end
+  end)
+
   OA.print(passed .. "/" .. total .. " PASS - paste this output into a GitHub issue if anything FAILs")
 end
 
