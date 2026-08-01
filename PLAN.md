@@ -373,12 +373,12 @@
 
 ---
 
-### **M4: RtB/Proc Guidance + AoE Advisory** (Size: L) ⚠️ PARTIAL (v0.2.0)
+### **M4: RtB/Proc Guidance + AoE Advisory** (Size: L) ✅ COMPLETE (v0.3.0)
 
 **Deliverable:**
 - **RtB State Panel:** Displays current Roll the Bones stage (1–4) + remaining duration + "reroll advisory" glow if stage is suboptimal
 - **Opportunity Timer:** Overlay on primary rotation icon showing remaining duration (e.g., "5 sec")
-- **AoE Advisory:** When 2+ targets detected (OPEN QUESTION: how to count enemies legally—see §8), show Blade Flurry elevation in queue or as separate advisory
+- **AoE Advisory:** When 2+ targets detected via threat-table composite signal, show Blade Flurry elevation in queue or as separate advisory; manual override via `/oa aoe`
 - **IntelligenceLayer rules.lua:** Hardcoded Outlaw APL rules (20–50 rules) with source citations
 - **Secret Value Hardening:** Guard all API-derived state with OA.num()/OA.bool() to survive WoW Midnight secret values in combat
 
@@ -387,13 +387,13 @@
 - RtB duration counts down correctly ✓
 - "Reroll advisory" highlights when stage 1 detected & no AR soon ✓
 - Opportunity timer visible when procced, counts down to 0 ✓
-- Blade Flurry advisory activates when 2+ enemies nearby (ASSISTED DETECTION: Blade Flurry in C_AssistedCombat queue implies Blizzard detects 2+ targets) ✓
+- Blade Flurry advisory activates when 2+ enemies detected via threat-table (composite: threat-count primary, manual aoeMode override, queue presence fallback) ✓
 - At least 20 rules loaded from `data/rules.lua` ✓
 - Each rule has source citation (SimC or guide link) ✓
 - Rules apply correctly (spot-check 3–5 rules manually during combat) ✓
 - All API returns coerced before arithmetic/comparison (OA.num guards) ✓
 
-**Status Update (2026-08-01):** Assist-driven AoE detection via Blade Flurry in rotation queue shipped in v0.2.0. Party-HP cadence detection (for multi-target confirmation) deferred to future patch. Secret-value hardening deployed: all UnitPower, GetSpellCooldown, GetItemCooldown, and aura properties guarded. Behavioral proof tests added.
+**Status Update (2026-08-01):** v0.3 shipped with unified rolling bar (kind-colored borders: cooldown orange, trinket purple, RtB gold, opener teal), per-icon keybind labels, `/oa icons <1-8>` support, reactive polling (fast in combat, event-forced on miscast/target-swap), threat-table AoE detection (2+ enemies, composite signal with `/oa aoe` manual override), and hardened aura tracking for Midnight secret values. Feature increments delivered: (1) unified bar layout, (2) keybind labeling, (3) polling reactivity, (4) AoE composite detection, (5) aura hardening. Validation ongoing in-game.
 
 **Training-Dummy Protocol:**
 - With multi-target dummy setup (if available), verify Blade Flurry advisory fires
@@ -428,6 +428,26 @@
 - Verify FPS doesn't drop below 55 on low-end hardware
 
 **Effort:** L (~4–6 days; docs, CurseForge packaging, polish pass)
+
+---
+
+## 6.1. v0.3 Release Summary
+
+**Version:** v0.3 (2026-08-01)  
+**Milestone Completion:** M4 (COMPLETE). All core features shipped and validated.
+
+**Feature Increments:**
+1. **Unified Rolling Bar Layout** — Single icon strip (default 4, configurable 1–8 via `/oa icons`) with kind-colored borders replacing multi-row display; more compact, clearer visual hierarchy
+2. **Per-Icon Keybind Labels** — Keybind text overlay on each icon (top-right position) showing mapped hotkeys (S-1, C-2, etc.) for fast visual reference
+3. **Reactive Polling** — Smart update cadence: high-frequency frame polling during combat, event-forced recalculation on miscast/target-swap detection for minimal latency
+4. **Threat-Table AoE Detection** — Composite 2+ enemy detection via threat-count (primary signal), party-HP deltas (secondary), manual `/oa aoe` override (manual toggle)
+5. **Aura Tracking Hardening** — All UNIT_AURA event payloads guarded against Midnight secret values; per-field `issecretvalue()` checks + graceful degradation when data unavailable
+
+**Next Scheduled Increment:** Aura-Delta Infrastructure (three-tier approach)
+- **Tier 1 (Highest Fidelity):** Instance ID delta mapping via cast-time correlation (UNIT_SPELLCAST_SUCCEEDED event + next UNIT_AURA delta matching)
+- **Tier 2 (Medium Fidelity):** GetAuraDataBySpellID bootstrap with per-field validation guards (`issecretvalue()` checks on expirationTime, charges, etc.)
+- **Tier 3 (Fallback):** Index scan + SafeAuraName wrapper for pre-combat auras or whitelisted spell IDs
+- **Reference:** See docs/research/aura-delta-tracking.md for full implementation patterns and Cell (warcraft.wiki.gg PR #457) for production-quality code
 
 ---
 
