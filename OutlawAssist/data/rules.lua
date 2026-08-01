@@ -221,23 +221,9 @@ OA.Rules = {
     spellID = 271877,
     itemSlot = nil,
     when = function(S, A)
-      return S.tier.fourPc and S.cooldowns.bladeRush.remaining < 2
+      return S.tier.fourPc and S.cooldowns.bladeRush.ready
     end,
     source = "outlaw-rotation.md §4 (Tier Set Bonuses: '4-Piece Bonus: Blade Rush cooldown reduced by 6 seconds')"
-  },
-
-  -- Additional Rule 17: Between the Eyes stun immunity crit value
-  {
-    name = "bte_stun_immunity",
-    desc = "Between the Eyes at 6+ CP for stun immunity on crit",
-    action = "PIN",
-    kind = "finisher",
-    spellID = 315341,
-    itemSlot = nil,
-    when = function(S, A)
-      return S.comboPoints >= 6 and S.cooldowns.adrenalineRush.remaining < 1
-    end,
-    source = "outlaw-rotation.md §1 (Between the Eyes: 'grants stun immunity on crit and applies crit-damage debuff to boss')"
   },
 
   -- Additional Rule 18: Adrenaline Rush and energy resource interaction
@@ -254,20 +240,6 @@ OA.Rules = {
     source = "outlaw-rotation.md §2 (Adrenaline Rush: 'Increases Energy Regen, maximum Energy, and Attack Speed')"
   },
 
-  -- Additional Rule 19: Combo point generation priority
-  {
-    name = "combo_point_priority",
-    desc = "Generate combo points when pool is low",
-    action = "PREFER",
-    kind = "builder",
-    spellID = 193315,
-    itemSlot = nil,
-    when = function(S, A)
-      return S.comboPoints <= 3
-    end,
-    source = "outlaw-rotation.md §1 (Sinister Strike: 'Bread-and-butter combo-point generator at 5 or fewer Combo Points')"
-  },
-
   -- Additional Rule 20: Tier set 2-piece Blade Rush damage boost
   {
     name = "blade_rush_tier2pc",
@@ -277,8 +249,39 @@ OA.Rules = {
     spellID = 271877,
     itemSlot = nil,
     when = function(S, A)
-      return S.tier.twoPc and S.comboPoints >= 4
+      return S.tier.twoPc and S.cooldowns.bladeRush.ready
     end,
     source = "outlaw-rotation.md §4 (Tier Set Bonuses: '2-Piece Bonus: Blade Rush damage increased by 30%')"
+  },
+
+  -- Additional Rule 21: Roll the Bones initial cast
+  {
+    name = "roll_the_bones_open",
+    desc = "Roll the Bones - no buff active, cast it",
+    action = "ADVISE",
+    kind = "rtb",
+    spellID = nil,
+    itemSlot = nil,
+    when = function(S, A)
+      return S.buffs.rtb.stage == 0 and not (S.buffs.rtb.expires > 0)
+    end,
+    source = "outlaw-rotation.md §1 (Roll the Bones Mechanics: 'Use on cooldown unless already at Stage 2+')"
+  },
+
+  -- Additional Rule 22: Pistol Shot fallback at low energy
+  {
+    name = "pistol_shot_low_energy",
+    desc = "Use Pistol Shot as fallback builder when energy low",
+    action = "PREFER",
+    kind = "builder",
+    spellID = OA.SpellIDs and OA.SpellIDs.pistolShot or nil,
+    itemSlot = nil,
+    when = function(S, A)
+      if not (OA.SpellIDs and OA.SpellIDs.pistolShot) then
+        return false
+      end
+      return S.energy < 40 and S.buffs.opportunity.up
+    end,
+    source = "outlaw-rotation.md §1 (Opportunity & Audacity Procs: 'enables free Pistol Shot without Energy cost') and (Priority Order: 'Pistol Shot – Secondary generator with lower priority than Sinister Strike')"
   },
 }
