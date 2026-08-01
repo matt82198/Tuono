@@ -460,6 +460,10 @@ test("buff scan with UnitBuff fallback when C_UnitAuras unavailable", function()
   local originalC_UnitAuras = _G.C_UnitAuras
   local originalUnitBuff = _G.UnitBuff
 
+  -- Tier 3 (legacy index scan) is deliberately OOC-only: in combat those field reads
+  -- can hit secret values. This test exercises the OOC path, so pin inCombat=false.
+  OA.State.inCombat = false
+
   stub.state.buffs.adrenalineRush = false
   stub.state.buffs.adrenalineRushExpires = 0
   stub.state.buffs.opportunity = false
@@ -1365,6 +1369,11 @@ end)
 
 -- AURA TEST 4: isFullUpdate rebuilds via tier 2
 test("aura-infra: isFullUpdate rebuilds via tier 2 bootstrap", function()
+  -- Self-sufficient: an earlier test nils C_UnitAuras to exercise the legacy path;
+  -- tier 2 is a C_UnitAuras query, so restore the real stub table before asserting.
+  _G.C_UnitAuras = stub.C_UnitAuras or _G.C_UnitAuras
+  OA.State.inCombat = false
+
   OA.State.buffs.adrenalineRush.up = false
   OA.State.buffs.adrenalineRush.expires = 0
   OA.State.buffs.degraded = false

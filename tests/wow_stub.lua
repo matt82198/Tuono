@@ -385,6 +385,9 @@ end
 _G.C_UnitAuras = {
   GetAuraDataByIndex = C_UnitAuras_GetAuraDataByIndex,
   GetAuraDataBySpellID = C_UnitAuras_GetAuraDataBySpellID,
+  -- Real client exposes GetPlayerAuraBySpellID; alias it so tests exercise the
+  -- name the addon prefers (a stub that models only our assumption proves nothing).
+  GetPlayerAuraBySpellID = C_UnitAuras_GetAuraDataBySpellID,
   GetAuraDataByAuraInstanceID = C_UnitAuras_GetAuraDataByAuraInstanceID
 }
 

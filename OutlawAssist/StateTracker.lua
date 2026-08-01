@@ -108,8 +108,12 @@ local function BootstrapBuffState()
 	wipe(instanceMap)
 	OA.State.buffs.degraded = false
 
-	-- Try to seed instanceMap via GetPlayerAuraBySpellID for all tracked spells
-	if C_UnitAuras and C_UnitAuras.GetAuraDataBySpellID then
+	-- Query-by-ID bootstrap. The live client exposes GetPlayerAuraBySpellID; some
+	-- builds/docs also carry GetAuraDataBySpellID. Prefer the former, accept either --
+	-- calling only one name is how a rename silently disables this whole tier.
+	local queryByID = C_UnitAuras and
+		(C_UnitAuras.GetPlayerAuraBySpellID or C_UnitAuras.GetAuraDataBySpellID)
+	if queryByID then
 		local trackedSpells = {
 			{ spellID = OA.SpellIDs.adrenalineRush, key = "adrenalineRush" },
 			{ spellID = OA.SpellIDs.rollTheBones, key = "rtb" },
@@ -119,7 +123,7 @@ local function BootstrapBuffState()
 
 		local foundAny = false
 		for _, item in ipairs(trackedSpells) do
-			local aura = C_UnitAuras.GetAuraDataBySpellID("player", item.spellID)
+			local aura = queryByID("player", item.spellID)
 			if aura then
 				foundAny = true
 				local instanceID = OA.num(aura.auraInstanceID, 0)
@@ -285,6 +289,19 @@ local function RefreshBuffsFallback()
 				OA.State.buffs.rtb.expires = OA.num(aura.expirationTime, now)
 			end
 
+			-- Non-RtB tracked auras: fill only what the modern tiers did NOT already set.
+			if auraSpellId == OA.SpellIDs.adrenalineRush and not OA.State.buffs.adrenalineRush.up then
+				OA.State.buffs.adrenalineRush.up = true
+				OA.State.buffs.adrenalineRush.expires = OA.num(aura.expirationTime, now)
+			end
+			if auraSpellId == OA.SpellIDs.opportunity and not OA.State.buffs.opportunity.up then
+				OA.State.buffs.opportunity.up = true
+				OA.State.buffs.opportunity.expires = OA.num(aura.expirationTime, now)
+			end
+			if auraSpellId == OA.SpellIDs.stealth then
+				OA.State.stealthed = true
+			end
+
 			-- Legacy name scan: ONLY if stage is still 0 (modern spellID path didn't find it)
 			local auraName = aura.name or ""
 			if rtbStageFromModern == 0 then
@@ -311,6 +328,25 @@ local function RefreshBuffsFallback()
 				OA.State.buffs.rtb.stage = OA.num(count, 1)
 				OA.State.buffs.rtb.expires = OA.num(expTime, now)
 				table.insert(OA.State.buffs.rtb.names, name)
+			end
+
+			-- Non-RtB tracked auras by name. Names are localization-dependent, so anything
+			-- learned here marks degraded: it is the least-trusted source we have.
+			if name == "Adrenaline Rush" and not OA.State.buffs.adrenalineRush.up then
+				local _, _, _, _, _, expTime = UnitBuff("player", i)
+				OA.State.buffs.adrenalineRush.up = true
+				OA.State.buffs.adrenalineRush.expires = OA.num(expTime, now)
+				OA.State.buffs.degraded = true
+			end
+			if name == "Opportunity" and not OA.State.buffs.opportunity.up then
+				local _, _, _, _, _, expTime = UnitBuff("player", i)
+				OA.State.buffs.opportunity.up = true
+				OA.State.buffs.opportunity.expires = OA.num(expTime, now)
+				OA.State.buffs.degraded = true
+			end
+			if name == "Stealth" then
+				OA.State.stealthed = true
+				OA.State.buffs.degraded = true
 			end
 
 			-- Legacy name scan: ONLY if stage is still 0
