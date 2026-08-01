@@ -53,6 +53,33 @@ function OA.safe(fn, ...)
   return result
 end
 
+-- Coerce WoW API returns to safe number type, guarding against secret values
+-- Returns default (default 0) if v is nil, issecretvalue(v) is true, or type(v) ~= "number"
+function OA.num(v, default)
+  default = default or 0
+  if v == nil then return default end
+  if type(v) == "number" then return v end
+  -- Check for secret values (issecretvalue exists in Midnight)
+  if _G.issecretvalue and _G.issecretvalue(v) then return default end
+  -- Try string coercion as fallback
+  if type(v) == "string" then
+    local n = tonumber(v)
+    if n then return n end
+  end
+  return default
+end
+
+-- Coerce WoW API returns to safe boolean type, guarding against secret values
+-- Returns default (default false) if v is nil, issecretvalue(v) is true, or type(v) ~= "boolean"
+function OA.bool(v, default)
+  default = default or false
+  if v == nil then return default end
+  if type(v) == "boolean" then return v end
+  -- Check for secret values
+  if _G.issecretvalue and _G.issecretvalue(v) then return default end
+  return default
+end
+
 function OA.RegisterSlash(subcmd, fn, helptext)
   if not OA.slashCommands then
     OA.slashCommands = {}

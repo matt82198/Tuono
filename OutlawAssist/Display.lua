@@ -130,6 +130,12 @@ function OA.Display.Init()
 	advisory:SetText("")
 	anchor.advisory = advisory
 
+	local aoeIndicator = anchor:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+	aoeIndicator:SetPoint("TOPRIGHT", anchor, "TOPRIGHT", -5, -5)
+	aoeIndicator:SetTextColor(1, 0.8, 0, 1)
+	aoeIndicator:SetText("")
+	anchor.aoeIndicator = aoeIndicator
+
 	OA.Display.anchor = anchor
 end
 
@@ -191,8 +197,9 @@ function OA.Display.Render(result)
 				cdIcon.texture:SetTexture(tex)
 				cdIcon:Show()
 
-				if cd.remaining and cd.remaining > 0 then
-					cdIcon.cooldownText:SetText(string.format("%.0f", cd.remaining))
+				local remaining = OA.num(cd.remaining, 0)
+				if remaining and remaining > 0 then
+					cdIcon.cooldownText:SetText(string.format("%.0f", remaining))
 					cdIcon.cooldownText:Show()
 				else
 					cdIcon.cooldownText:Hide()
@@ -216,8 +223,9 @@ function OA.Display.Render(result)
 				trinIcon.texture:SetTexture(tex)
 				trinIcon:Show()
 
-				if tri.remaining and tri.remaining > 0 then
-					trinIcon.cooldownText:SetText(string.format("%.0f", tri.remaining))
+				local remaining = OA.num(tri.remaining, 0)
+				if remaining and remaining > 0 then
+					trinIcon.cooldownText:SetText(string.format("%.0f", remaining))
 					trinIcon.cooldownText:Show()
 				else
 					trinIcon.cooldownText:Hide()
@@ -234,8 +242,8 @@ function OA.Display.Render(result)
 
 	if show.rtb and OA.State and OA.State.buffs and OA.State.buffs.rtb then
 		local rtb = OA.State.buffs.rtb
-		local stage = rtb.stage or 0
-		local expires = rtb.expires or 0
+		local stage = OA.num(rtb.stage, 0)
+		local expires = OA.num(rtb.expires, 0)
 		local remaining = math.max(0, expires - GetTime())
 		local mins = math.floor(remaining / 60)
 		local secs = remaining - (mins * 60)
@@ -256,5 +264,12 @@ function OA.Display.Render(result)
 		anchor.advisory:SetText(advisoryText)
 	else
 		anchor.advisory:SetText("")
+	end
+
+	-- Render AoE indicator
+	if OA.Assist and OA.Assist.aoeDetected then
+		anchor.aoeIndicator:SetText("AoE")
+	else
+		anchor.aoeIndicator:SetText("")
 	end
 end
