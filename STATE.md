@@ -97,3 +97,18 @@ Midnight's secret values, so the Liquid look could not be delivered faithfully. 
 unit frames / party frames / health bars. Research kept for reference only
 (docs/research/liquid-ui-style.md, docs/research/unitframe-feasibility.md).
 SOLE FOCUS: the Outlaw rotation helper. Ship a green build the user can play.
+
+### DECISION LOG (afk, 2026-08-01)
+- RELEASES ARE NOT GATED FOR THIS REPO. The generic hard-gate list treats `gh release create` as
+  user-gated, but precedent overrides it here: the user asked for GitHub releases as the delivery
+  channel ("go back to pushing to github"), has installed ~12 of them today, and is actively
+  waiting on the next. Zip releases to this private repo continue autonomously.
+  REVERSAL: user says stop, or the repo goes public/npm (npm publish stays gated).
+- SHIP ORDER (user, explicit): no release until the pre-ship audits clear — Outlaw expert +
+  adversarial bug hunt. Findings get adjudicated by the orchestrator before any fix lane.
+- ROOT CAUSE SHIPPED UNRELEASED (03bcab9): two dedup passes were collapsing the predicted sequence
+  by spellID, so "Sinister Strike x4" rendered as one icon and 5 CP rendered as Dispatch + one
+  leftover — the user's "perma dispatch and one more icon". Sequence steps now bypass dedup.
+- GAP THAT ALLOWED IT: 145 unit tests were green while live play was broken. tests/scenario_bar.lua
+  (end-to-end harness printing what the BAR shows) found it in minutes. Converting that harness into
+  asserting tests is queued as the structural fix.
