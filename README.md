@@ -2,9 +2,9 @@
 
 A World of Warcraft Midnight (12.0+) addon that provides Hekili-grade rotation guidance for Outlaw Rogue DPS using Blizzard's `C_AssistedCombat` API as a legal substrate.
 
-**What it does:** Midnight blocks third-party combat state introspection (the "secret values" system), so traditional rotation simulators like Hekili cannot exist. Instead, OutlawAssist reads Blizzard's built-in rotation recommendations via `C_AssistedCombat.GetNextCastSpell()` and layers Outlaw-specific intelligence on top: Roll the Bones stage tracking, cooldown coordination, trinket usage timing, and proc management. The addon displays suggestions alongside Blizzard's queue so you always know which source recommends what. Player always chooses—addon recommends.
+**What it does:** Midnight blocks third-party combat state introspection (the "secret values" system), so traditional rotation simulators like Hekili cannot exist. Instead, OutlawAssist reads Blizzard's built-in rotation recommendations via `C_AssistedCombat.GetNextCastSpell()` and layers Outlaw-specific intelligence on top: Roll the Bones stage tracking, cooldown coordination, trinket usage timing, and proc management. The addon displays a unified rolling bar with kind-colored borders (cooldown orange, trinket purple, RtB gold, opener teal), per-icon keybind labels, reactive polling (fast in combat, event-forced on miscast/target-swap), and threat-table AoE detection (2+ enemies, composite signal with manual `/oa aoe` override). Aura tracking is hardened for Midnight secret values. Player always chooses—addon recommends.
 
-**Status:** v0.1.x experimental. Core APIs verified in-game (M0 complete). Hardening Midnight secret values compliance in progress.
+**Status:** v0.3 released. Core APIs verified in-game. Feature-complete for M4 (AoE detection shipped beyond spec; threat-count primary). Validation ongoing in-game.
 
 ## Installation
 
@@ -49,6 +49,7 @@ A World of Warcraft Midnight (12.0+) addon that provides Hekili-grade rotation g
 - `/oa lock` — Lock the display in place (disable dragging)
 - `/oa unlock` — Unlock the display for repositioning
 - `/oa scale <0.5-2>` — Adjust display scale (default: 1)
+- `/oa icons <1-8>` — Set icon count in unified rolling bar (default: 4)
 - `/oa toggle <queue|cds|trinkets|rtb|procs|ooc>` — Toggle a display row on/off
   - `queue` — Rotation queue (Blizzard's suggestions + our priority hints)
   - `cds` — Cooldown layer (Adrenaline Rush, Blade Rush, Preparation)
@@ -58,7 +59,7 @@ A World of Warcraft Midnight (12.0+) addon that provides Hekili-grade rotation g
   - `ooc` — Show display out-of-combat (default: hidden OOC)
 
 **Features:**
-- `/oa aoe` — Toggle AoE mode (prefers Blade Flurry when active)
+- `/oa aoe` — Toggle AoE mode (manual override for Blade Flurry; threat-table detection is primary, composite 2+ enemies)
 - `/oa reset` — Reset all settings to defaults and reposition display
 
 **Diagnostics:**
