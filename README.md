@@ -4,7 +4,7 @@ A World of Warcraft Midnight (12.0+) addon that provides Hekili-grade rotation g
 
 **What it does:** Midnight blocks third-party combat state introspection (the "secret values" system), so traditional rotation simulators like Hekili cannot exist. Instead, OutlawAssist reads Blizzard's built-in rotation recommendations via `C_AssistedCombat.GetNextCastSpell()` and layers Outlaw-specific intelligence on top: Roll the Bones stage tracking, cooldown coordination, trinket usage timing, and proc management. The addon displays a unified rolling bar with kind-colored borders (cooldown orange, trinket purple, RtB gold, opener teal), per-icon keybind labels, reactive polling (fast in combat, event-forced on miscast/target-swap), and threat-table AoE detection (2+ enemies, composite signal with manual `/oa aoe` override). Aura tracking is hardened for Midnight secret values. Player always chooses—addon recommends.
 
-**Status:** v0.3 released. Core APIs verified in-game. Feature-complete for M4 (AoE detection shipped beyond spec; threat-count primary). Validation ongoing in-game.
+**Status:** Core APIs verified in-game. Feature-complete for M4 (AoE detection shipped beyond spec; threat-count primary). See [Releases](https://github.com/matt82198/outlaw-assist/releases) for current version and changelog.
 
 ## Installation
 

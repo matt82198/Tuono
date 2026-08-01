@@ -109,6 +109,23 @@ local function HandleStatus()
 	OA.print("AoE mode: " .. (OA.db.aoeMode and "ON" or "OFF"))
 end
 
+local function HandleHelp()
+	OA.print("=== OutlawAssist Commands ===")
+	OA.print("Display & Layout:")
+	OA.print("  /oa lock — Lock display (disable dragging)")
+	OA.print("  /oa unlock — Unlock display (enable dragging)")
+	OA.print("  /oa scale <0.5-2> — Adjust scale")
+	OA.print("  /oa icons <1-8> — Set icon count")
+	OA.print("  /oa toggle <queue|cds|trinkets|rtb|procs|ooc> — Toggle display rows")
+	OA.print("  /oa reset — Reset to defaults and reposition display")
+	OA.print("Features:")
+	OA.print("  /oa aoe — Toggle AoE mode")
+	OA.print("Diagnostics:")
+	OA.print("  /oa status — Print current settings")
+	OA.print("  /oa apitest — Verify API compatibility")
+	OA.print("  /oa debug — Print state dump")
+end
+
 local function HandleIcons(arg)
 	if not arg or arg == "" then
 		OA.print("Usage: /oa icons <1-8>")
@@ -144,3 +161,4 @@ OA.RegisterSlash("toggle", HandleToggle, "Toggle a feature: queue|cds|trinkets|r
 OA.RegisterSlash("aoe", HandleAoe, "Toggle AoE mode.")
 OA.RegisterSlash("reset", HandleReset, "Reset config to defaults.")
 OA.RegisterSlash("status", HandleStatus, "Print current status.")
+OA.RegisterSlash("help", HandleHelp, "List all commands.")
