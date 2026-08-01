@@ -2,37 +2,26 @@ local ADDON_NAME, OA = ...
 
 OA.Rotation = OA.Rotation or {}
 
--- Spell IDs not present in OA.SpellIDs (owned by StateTracker). Local constants keep
--- this module loadable; using OA.SpellIDs.<missing> as a table key made the key nil and
--- killed the whole file at load. TODO(verify): confirm these IDs in-game via /oa apitest.
-local ID_KILLING_SPREE = 51690
-local ID_DISPATCH = 2098
-local ID_KEEP_IT_ROLLING = 381989
-
--- ABILITIES TABLE: transcribed from research/rotation-model.md
--- Format: { energyCost, cpGenerated, cpSpender (bool), cooldown, triggersGCD, talentGated }
+-- ABILITIES TABLE: transcribed from research/rotation-model.md § 3 Ability Table
+-- Format: { cost, cpGen, cpSpend (0 if not spender, else CP cost), cd (base cooldown), gcd }
 local ABILITIES = {
-	[OA.SpellIDs.sinisterStrike] = { cost=45, cpGen=1, cpSpend=false, cd=0, gcd=true, talent=false },
-	[OA.SpellIDs.ambush] = { cost=0, cpGen=2, cpSpend=false, cd=0, gcd=false, talent=false },
-	[OA.SpellIDs.bladeRush] = { cost=25, cpGen=1, cpSpend=false, cd=0, gcd=true, talent=false },
-	[OA.SpellIDs.rollTheBones] = { cost=25, cpGen=0, cpSpend=false, cd=0, gcd=true, talent=false },
-	[OA.SpellIDs.betweenTheEyes] = { cost=25, cpGen=0, cpSpend=6, cd=0, gcd=true, talent=false },
-	[ID_KILLING_SPREE] = { cost=25, cpGen=0, cpSpend=6, cd=0, gcd=true, talent=false },
-	[ID_DISPATCH] = { cost=25, cpGen=0, cpSpend=5, cd=0, gcd=true, talent=false },
-	[OA.SpellIDs.pistolShot] = { cost=40, cpGen=1, cpSpend=false, cd=0, gcd=true, talent=false },
-	[OA.SpellIDs.adrenalineRush] = { cost=0, cpGen=0, cpSpend=false, cd=0, gcd=false, talent=false },
-	[OA.SpellIDs.bladeFlurry] = { cost=0, cpGen=0, cpSpend=false, cd=0, gcd=false, talent=false },
-	[OA.SpellIDs.preparation] = { cost=0, cpGen=0, cpSpend=false, cd=0, gcd=false, talent=true },
-	[ID_KEEP_IT_ROLLING] = { cost=0, cpGen=0, cpSpend=false, cd=0, gcd=false, talent=true },
+	[OA.SpellIDs.sinisterStrike] = { cost=45, cpGen=1, cpSpend=0, cd=0, gcd=true },
+	[OA.SpellIDs.ambush] = { cost=0, cpGen=2, cpSpend=0, cd=0, gcd=false },
+	[OA.SpellIDs.bladeRush] = { cost=25, cpGen=1, cpSpend=0, cd=10, gcd=true },
+	[OA.SpellIDs.rollTheBones] = { cost=25, cpGen=0, cpSpend=0, cd=45, gcd=true },
+	[OA.SpellIDs.betweenTheEyes] = { cost=25, cpGen=0, cpSpend=6, cd=30, gcd=true },
+	[OA.SpellIDs.killingSpree] = { cost=25, cpGen=0, cpSpend=6, cd=30, gcd=true },
+	[OA.SpellIDs.dispatch] = { cost=25, cpGen=0, cpSpend=5, cd=0, gcd=true },
+	[OA.SpellIDs.pistolShot] = { cost=40, cpGen=1, cpSpend=0, cd=0, gcd=true },
+	[OA.SpellIDs.adrenalineRush] = { cost=0, cpGen=0, cpSpend=0, cd=180, gcd=false },
+	[OA.SpellIDs.bladeFlurry] = { cost=0, cpGen=0, cpSpend=0, cd=30, gcd=false },
+	[OA.SpellIDs.preparation] = { cost=0, cpGen=0, cpSpend=0, cd=30, gcd=false },
+	[OA.SpellIDs.keepItRolling] = { cost=0, cpGen=0, cpSpend=0, cd=15, gcd=false },
 }
 
--- Killing Spree spell ID; using reference to avoid direct constant
-local KILLING_SPREE_ID = 51690 -- TODO(M0): verify in-game
-
--- Defensive cooldown accessor: StateTracker only tracks a few cooldowns, so a rule
--- referencing an untracked ability used to index nil and kill the module. Untracked ->
--- known=false so callers can decide; ready defaults true so a core ability (RtB) is not
--- silently suppressed. TODO: track every rotation ability's cooldown in StateTracker.
+-- Defensive cooldown accessor: StateTracker now tracks all ability cooldowns, so a rule
+-- referencing any rotation ability gets valid cooldown data. This accessor is a safety
+-- belt for any future abilities; if a cooldown is not tracked, it returns ready=true.
 local UNTRACKED_CD = { known = false, ready = true, remaining = 0 }
 local function cdOf(S, key)
 	local t = S and S.cooldowns and S.cooldowns[key]
@@ -41,95 +30,104 @@ local function cdOf(S, key)
 end
 
 -- PRIORITY LIST: SINGLE-TARGET (research/rotation-model.md §1b)
--- Ordered rules; first condition match wins
+-- Each rule: { name, spellID, requiresSpell (or nil for basic builder), when(S, A) -> bool }
+-- Ordered; first condition match wins. Talent-gating via requiresSpell.
+-- Rules filter dynamically based on OA.State.knownSpells; unlearned abilities are skipped.
 local PRIORITY_SINGLE = {
-	-- Rule 1: Roll the Bones at stage < 2 (reroll to progress)
-	function(S, A)
-		if S.buffs.rtb.stage < 2 and cdOf(S, "rollTheBones").ready and S.energy >= 25 then
-			return OA.SpellIDs.rollTheBones, "RtB_reroll_low_stage"
+	{
+		name = "RtB_reroll_low_stage",
+		spellID = OA.SpellIDs.rollTheBones,
+		requiresSpell = OA.SpellIDs.rollTheBones,
+		when = function(S, A)
+			return S.buffs.rtb.stage < 2 and cdOf(S, "rollTheBones").ready and S.energy >= 25
 		end
-		return nil
-	end,
-	-- Rule 2: Keep It Rolling at stage >= 3 (maintain buff)
-	function(S, A)
-		if S.buffs.rtb.stage >= 3 and S.energy >= 0 then
-			-- Note: KIR ID is not in SpellIDs; skip if unavailable
-			return nil
+	},
+	{
+		name = "KIR_maintain_buff",
+		spellID = OA.SpellIDs.keepItRolling,
+		requiresSpell = OA.SpellIDs.keepItRolling,
+		when = function(S, A)
+			return S.buffs.rtb.stage >= 3 and cdOf(S, "keepItRolling").ready and S.energy >= 0
 		end
-		return nil
-	end,
-	-- Rule 3: Adrenaline Rush on cooldown
-	function(S, A)
-		if cdOf(S, "adrenalineRush").ready then
-			return OA.SpellIDs.adrenalineRush, "AR_on_cooldown"
+	},
+	{
+		name = "AR_on_cooldown",
+		spellID = OA.SpellIDs.adrenalineRush,
+		requiresSpell = OA.SpellIDs.adrenalineRush,
+		when = function(S, A)
+			return cdOf(S, "adrenalineRush").ready
 		end
-		return nil
-	end,
-	-- Rule 4: Blade Rush on cooldown (builder/mobility)
-	function(S, A)
-		if cdOf(S, "bladeRush").ready and S.energy >= 25 then
-			return OA.SpellIDs.bladeRush, "BR_on_cooldown"
+	},
+	{
+		name = "BR_on_cooldown",
+		spellID = OA.SpellIDs.bladeRush,
+		requiresSpell = OA.SpellIDs.bladeRush,
+		when = function(S, A)
+			return cdOf(S, "bladeRush").ready and S.energy >= 25
 		end
-		return nil
-	end,
-	-- Rule 5: Between the Eyes at 6 CP
-	function(S, A)
-		if S.comboPoints >= 6 and cdOf(S, "betweenTheEyes").ready and S.energy >= 25 then
-			return OA.SpellIDs.betweenTheEyes, "BtE_finisher_6cp"
+	},
+	{
+		name = "BtE_finisher_6cp",
+		spellID = OA.SpellIDs.betweenTheEyes,
+		requiresSpell = OA.SpellIDs.betweenTheEyes,
+		when = function(S, A)
+			return S.comboPoints >= 6 and cdOf(S, "betweenTheEyes").ready and S.energy >= 25
 		end
-		return nil
-	end,
-	-- Rule 6: Killing Spree at 6 CP (when BtE on CD)
-	function(S, A)
-		if S.comboPoints >= 6 and cdOf(S, "killingSpree").ready and S.energy >= 25 then
-			return KILLING_SPREE_ID, "KS_finisher_6cp"
+	},
+	{
+		name = "KS_finisher_6cp",
+		spellID = OA.SpellIDs.killingSpree,
+		requiresSpell = OA.SpellIDs.killingSpree,
+		when = function(S, A)
+			return S.comboPoints >= 6 and cdOf(S, "killingSpree").ready and S.energy >= 25
 		end
-		return nil
-	end,
-	-- Rule 7: Dispatch at 5-6 CP (fallback finisher)
-	function(S, A)
-		if S.comboPoints >= 5 and S.energy >= 25 then
-			return OA.SpellIDs.dispatch, "Dispatch_finisher"
+	},
+	{
+		name = "Dispatch_finisher",
+		spellID = OA.SpellIDs.dispatch,
+		requiresSpell = OA.SpellIDs.dispatch,
+		when = function(S, A)
+			return S.comboPoints >= 5 and S.energy >= 25
 		end
-		return nil
-	end,
-	-- Rule 8: Pistol Shot with Opportunity (only recommend at 6 stacks + high energy)
-	function(S, A)
-		if S.buffs.opportunity.up and S.energy >= 40 then
-			return OA.SpellIDs.pistolShot, "PS_opportunity"
+	},
+	{
+		name = "PS_opportunity",
+		spellID = OA.SpellIDs.pistolShot,
+		requiresSpell = OA.SpellIDs.pistolShot,
+		when = function(S, A)
+			return S.buffs.opportunity.up and S.energy >= 40
 		end
-		return nil
-	end,
-	-- Rule 9: Sinister Strike as default builder
-	function(S, A)
-		if S.energy >= 45 then
-			return OA.SpellIDs.sinisterStrike, "SS_default_builder"
+	},
+	{
+		name = "SS_default_builder",
+		spellID = OA.SpellIDs.sinisterStrike,
+		requiresSpell = nil,
+		when = function(S, A)
+			return S.energy >= 45
 		end
-		return nil
-	end,
+	},
 }
 
 -- PRIORITY LIST: MULTI-TARGET (AoE when 2+ enemies or aoeMode=true)
 -- Insert Blade Flurry after Adrenaline Rush
 local PRIORITY_AOE = {
-	-- Rules 1-3: same as single-target (RtB, Keep It Rolling, AR)
-	PRIORITY_SINGLE[1],
-	PRIORITY_SINGLE[2],
-	PRIORITY_SINGLE[3],
-	-- Rule 3.5: Blade Flurry on cooldown when 2+ targets at low CP
-	function(S, A)
-		if cdOf(S, "bladeFlurry").ready and S.comboPoints < 5 then
-			return OA.SpellIDs.bladeFlurry, "BF_aoe_low_cp"
+	PRIORITY_SINGLE[1], -- RtB_reroll_low_stage
+	PRIORITY_SINGLE[2], -- KIR_maintain_buff
+	PRIORITY_SINGLE[3], -- AR_on_cooldown
+	{
+		name = "BF_aoe_low_cp",
+		spellID = OA.SpellIDs.bladeFlurry,
+		requiresSpell = nil,
+		when = function(S, A)
+			return cdOf(S, "bladeFlurry").ready and S.comboPoints < 5
 		end
-		return nil
-	end,
-	-- Rest of the list
-	PRIORITY_SINGLE[4],
-	PRIORITY_SINGLE[5],
-	PRIORITY_SINGLE[6],
-	PRIORITY_SINGLE[7],
-	PRIORITY_SINGLE[8],
-	PRIORITY_SINGLE[9],
+	},
+	PRIORITY_SINGLE[4], -- BR_on_cooldown
+	PRIORITY_SINGLE[5], -- BtE_finisher_6cp
+	PRIORITY_SINGLE[6], -- KS_finisher_6cp
+	PRIORITY_SINGLE[7], -- Dispatch_finisher
+	PRIORITY_SINGLE[8], -- PS_opportunity
+	PRIORITY_SINGLE[9], -- SS_default_builder
 }
 
 -- Deep copy a state table for simulation (no side effects on real state)
@@ -184,6 +182,18 @@ local function calcEnergyRegen(arUp, hasVigor)
 	return base
 end
 
+-- Filter priority list based on known talents/spells
+local function buildActivePriorityList(priorityList, knownSpells)
+	local active = {}
+	for _, rule in ipairs(priorityList) do
+		-- Include rule if no talent requirement OR talent is known
+		if not rule.requiresSpell or knownSpells[rule.requiresSpell] then
+			table.insert(active, rule)
+		end
+	end
+	return active
+end
+
 -- Main prediction function
 -- state: readable state table from OA.State
 -- steps: number of steps to predict (default 4, capped at 8)
@@ -201,10 +211,14 @@ function OA.Rotation.Predict(state, steps)
 	local S = deepCopyState(state)
 
 	-- Determine priority list based on enemy count
-	local priorityList = PRIORITY_SINGLE
+	local basePriorityList = PRIORITY_SINGLE
 	if S.enemyCount and S.enemyCount >= 2 then
-		priorityList = PRIORITY_AOE
+		basePriorityList = PRIORITY_AOE
 	end
+
+	-- Build active priority list (filter by known talents)
+	local priorityList = buildActivePriorityList(basePriorityList, state.knownSpells or {})
+	OA.Rotation.activeRuleCount = #priorityList
 
 	local result = {}
 	local maxEnergy = 100
@@ -219,10 +233,9 @@ function OA.Rotation.Predict(state, steps)
 		local reason = nil
 
 		for _, rule in ipairs(priorityList) do
-			local id, ruleReason = rule(S, OA.Assist)
-			if id then
-				spellID = id
-				reason = ruleReason
+			if rule.when(S, OA.Assist) then
+				spellID = rule.spellID
+				reason = rule.name
 				break
 			end
 		end
@@ -263,21 +276,14 @@ function OA.Rotation.Predict(state, steps)
 				cdOf(S, "bladeRush").remaining = math.max(0, cdOf(S, "bladeRush").remaining - cdr)
 				cdOf(S, "bladeFlurry").remaining = math.max(0, cdOf(S, "bladeFlurry").remaining - cdr)
 				cdOf(S, "rollTheBones").remaining = math.max(0, cdOf(S, "rollTheBones").remaining - cdr)
+				cdOf(S, "betweenTheEyes").remaining = math.max(0, cdOf(S, "betweenTheEyes").remaining - cdr)
+				cdOf(S, "killingSpree").remaining = math.max(0, cdOf(S, "killingSpree").remaining - cdr)
+				cdOf(S, "keepItRolling").remaining = math.max(0, cdOf(S, "keepItRolling").remaining - cdr)
 			end
 
-			-- Start cooldown (if ability has one)
-			if spellID == OA.SpellIDs.adrenalineRush then
-				cdOf(S, "adrenalineRush").remaining = 180
-			elseif spellID == OA.SpellIDs.bladeRush then
-				cdOf(S, "bladeRush").remaining = 30  -- Approximate base CD
-			elseif spellID == OA.SpellIDs.betweenTheEyes then
-				S.cooldowns.betweenTheEyes = S.cooldowns.betweenTheEyes or {}
-				cdOf(S, "betweenTheEyes").remaining = 60  -- Approximate base CD
-			elseif spellID == KILLING_SPREE_ID then
-				S.cooldowns.killingSpree = S.cooldowns.killingSpree or {}
-				cdOf(S, "killingSpree").remaining = 60  -- Approximate base CD
-			elseif spellID == OA.SpellIDs.bladeFlurry then
-				cdOf(S, "bladeFlurry").remaining = 30  -- Approximate base CD
+			-- Start cooldown (if ability has one; use ability.cd)
+			if ability.cd and ability.cd > 0 then
+				cdOf(S, reason or "unknown").remaining = ability.cd
 			end
 
 			-- Advance virtual time by GCD (if applicable)

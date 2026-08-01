@@ -2,6 +2,18 @@
 
 All notable changes to OutlawAssist are documented here.
 
+## [1.2.1] - 2026-08-01
+
+### Fixed
+- **Ability data** — Transcribed real cooldown values, energy costs, and combo-point generation/consumption from rotation-model.md research doc. All abilities now have accurate cd, cpGen, and cpSpend values (previously all set to 0).
+- **Cooldown tracking** — StateTracker now tracks cooldowns for all rotation abilities (Adrenaline Rush, Blade Rush, Between the Eyes, Blade Flurry, Roll the Bones, Killing Spree, Dispatch, Keep It Rolling, Preparation), not just AR/Blade Rush/Prep. Eliminated fallback UNTRACKED_CD behavior.
+- **Talent-driven rotation** — Rotation priorities now filter dynamically based on player's known talents/spells via `OA.State.knownSpells`. Talent-gated abilities (Preparation, Keep It Rolling, Killing Spree if not talented) are excluded from the active priority list. Respec or talent change (via SPELLS_CHANGED / PLAYER_TALENT_UPDATE / etc.) rebuilds the active list without requiring `/reload`.
+
+### Added
+- **Missing spell IDs** — StateTracker.lua now defines `OA.SpellIDs.killingSpree`, `dispatch`, `keepItRolling` (previously only local constants in Rotation.lua, causing nil-table-key load failures).
+- `OA.Rotation.activeRuleCount` — Exposes the count of active (talent-filtered) rules in the priority list; shown in `/oa debug` output for observability.
+- Tests validating that rotation recommendations change when talents change without reload, and that disabled talent rules are never evaluated.
+
 ## [1.2.0] - 2026-08-01
 
 ### Added
