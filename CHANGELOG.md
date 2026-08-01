@@ -2,6 +2,31 @@
 
 All notable changes to OutlawAssist are documented here.
 
+## [1.4.0] - 2026-08-01
+
+### Added
+- **Rotation decision rules** — Implemented missing strategic decisions to reduce DPS loss:
+  - Preparation reset: `Prep_reset_cooldowns` rule casts Preparation when AR/BtE/Blade Rush are down (P1-7, docs/research/rotation-model.md §1b rule 6)
+  - CP pooling before finishers: `SS_at_5cp_if_6cp_finisher_coming` pools 1 CP when a 6-CP finisher will be ready within ~1 GCD (P1-1, docs/research/rotation-model.md § finisher priority)
+  - Improved finisher fallback chain: Dispatch only casts at 5-6 CP when both BtE and KS are unavailable, preventing low-CP finishers from blocking better high-CP options
+  - Opportunity buff simulation fix: `buffs.opportunity.up` is now cleared after virtual Pistol Shot to prevent multi-step predictions from double-casting on a single proc (P1-3)
+- **Energy pooling** — Prediction now advances virtual time (1 GCD per attempt, up to 3 GCDs) when no ability is castable due to energy starvation, instead of terminating early. Fixes "only 2 icons showing" issue where sequences terminated after running out of energy.
+- **Central affordability checker** — Added `canAfford(S, spellID)` helper that derives energy costs from ABILITIES table, eliminating hardcoded thresholds that could drift. All 13 priority rules now use it, guaranteeing consistency when costs change (prevents repeat of Dispatch 25→35 energy desync bug).
+
+### Fixed
+- **Stuck Dispatch icon** — Dispatch rule checked `S.energy >= 25` but real cost is 35; rules now use `canAfford()` helper, fixing the energy desync that left icons stuck recommending uncastable spells.
+- **KS energy check corrected** — Killing Spree rule checked `S.energy >= 25` but costs 45; now uses `canAfford()` which reads from ABILITIES table.
+- **BR energy check corrected** — Blade Rush rule checked `S.energy >= 25` but costs 0; now uses `canAfford()`.
+- **Empty predictions at low energy** — Sequences now pool energy instead of breaking early; 4-step predictions return 4 steps (was returning 2).
+
+### Tests Added
+- `decisions: CP pooling — SS at 5 CP if BtE will be ready within ~1 GCD` — Verifies pooling triggers when a finisher is coming up soon
+- `decisions: Dispatch fallback — cast at 5 CP when both 6-CP finishers unavailable` — Confirms finisher fallback chain works
+- `decisions: Preparation reset — fires when AR/BtE/BR down` — Tests Preparation reset condition
+- `decisions: Opportunity buff cleared after PS — no double-cast in simulation` — Ensures Opportunity doesn't reproc for free in predictions
+- `decisions: leveling build — SS + Dispatch loop at low level` — Validates minimal-spell builds (2-3 abilities) still work
+- `decisions: Dispatch at 6 CP — only when both BtE/KS unavailable` — Confirms high-CP finisher preference
+
 ## [1.3.1] - 2026-08-01
 
 ### Fixed
