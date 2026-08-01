@@ -3137,6 +3137,15 @@ test("decisions: Dispatch at 6 CP — only when both BtE/KS unavailable", functi
   end
 end)
 
+-- Load and run bar behavior end-to-end tests
+local barBehaviorTests = loadfile("tests/bar_behavior.lua")
+if barBehaviorTests then
+  local runTests = barBehaviorTests()
+  if runTests and type(runTests) == "function" then
+    runTests(OA, stub, assert_eq, assert_true, assert_false, test)
+  end
+end
+
 -- Summary
 print("")
 print(passCount .. "/" .. testCount .. " tests passed")

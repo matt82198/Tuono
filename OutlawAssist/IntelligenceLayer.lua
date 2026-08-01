@@ -27,7 +27,10 @@ end
 local function rebuildQueueSet()
   wipeSet(queueSet)
   for i, entry in ipairs(resultQueue) do
-    if entry.spellID then
+    -- FIRST occurrence wins. The predicted sequence may repeat an ability, and
+    -- last-wins made PIN/PREFER move the LAST copy instead of the one at the front --
+    -- reordering the wrong entry and corrupting the sequence the user reads first.
+    if entry.spellID and not queueSet[entry.spellID] then
       queueSet[entry.spellID] = i
     end
   end

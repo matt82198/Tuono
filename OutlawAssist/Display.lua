@@ -26,6 +26,10 @@ local TRINKET_SLOTS = { 13, 14 }
 
 -- Keybind cache: spellID -> "S-1" (already abbreviated, ready to display)
 -- Module-local to avoid per-tick allocations; invalidated only on binding changes
+-- Sentinel for "looked up, found nothing". Storing plain nil means the cache never
+-- populates, so every icon re-scanned up to 120 action slots EVERY TICK at 10Hz. This
+-- name was used below but never defined in this file -- it was nil the whole time.
+local KEYBIND_MISS = {}
 local spellIDtoKeytext = {}
 local function InvalidateKeybindCache()
 	-- Wipe cache in-place; reuse same table to avoid allocating new table
@@ -70,7 +74,7 @@ local function GetKeybindText(spellID)
 	-- Cache hit: return already-abbreviated string or sentinel (not nil, which would re-lookup)
 	local cached = spellIDtoKeytext[spellID]
 	if cached ~= nil then
-		return (cached == trinketCacheSentinel) and nil or cached
+		return (cached == KEYBIND_MISS) and nil or cached
 	end
 
 	local foundKey = nil
@@ -111,7 +115,7 @@ local function GetKeybindText(spellID)
 	end
 
 	-- Cache result (use sentinel for nil so we retry later, not poison the cache)
-	spellIDtoKeytext[spellID] = foundKey or trinketCacheSentinel
+	spellIDtoKeytext[spellID] = foundKey or KEYBIND_MISS
 	return foundKey
 end
 
