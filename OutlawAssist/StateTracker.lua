@@ -43,7 +43,7 @@ OA.State = {
 	inCombat = false
 }
 
-local lastBuffScan = 0
+local lastBuffScan = -1
 local trinketSpellCache = {}
 
 local function NormalizeCooldown(startTime, duration, isEnabled)
@@ -170,8 +170,13 @@ local function RefreshTrinkets()
 		OA.State.trinkets[slot].itemID = itemID
 
 		if itemID then
-			local cd_start, cd_duration = C_Item and C_Item.GetItemCooldown and C_Item.GetItemCooldown(itemID) or GetItemCooldown(itemID)
-			if cd_start and cd_duration then
+			local cd_start, cd_duration
+			if C_Item and C_Item.GetItemCooldown then
+				cd_start, cd_duration = C_Item.GetItemCooldown(itemID)
+			else
+				cd_start, cd_duration = GetItemCooldown(itemID)
+			end
+			if cd_start ~= nil and cd_duration ~= nil then
 				local now = GetTime()
 				if cd_start == 0 or cd_duration == 0 then
 					OA.State.trinkets[slot].ready = true

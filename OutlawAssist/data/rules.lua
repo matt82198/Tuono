@@ -207,7 +207,7 @@ OA.Rules = {
     spellID = nil,
     itemSlot = nil,
     when = function(S, A)
-      return S.energy >= S.energyMax - 10
+      return S.energyMax > 0 and S.energy >= S.energyMax - 10
     end,
     source = "outlaw-rotation.md §1 (Energy & Combo Point Management: 'Baseline Energy Pool: 100 (200 with Vigor talent, 250 during Adrenaline Rush)')"
   },

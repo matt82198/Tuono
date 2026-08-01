@@ -210,7 +210,7 @@ function OA.Display.Render(result)
 	if show.trinkets and OA.State and OA.State.trinkets then
 		for _, trinIcon in ipairs(anchor.trinketIcons) do
 			local slot = trinIcon.slot
-			local tri = OA.State.trinkets[tostring(slot)]
+			local tri = OA.State.trinkets[slot]
 			if tri and tri.itemID then
 				local tex = GetInventoryItemTexture("player", slot) or FALLBACK_TEXTURE
 				trinIcon.texture:SetTexture(tex)
