@@ -6,6 +6,9 @@ OA.updateHandlers = {}
 OA.errorsSeen = {}
 OA.errorCount = 0
 
+-- Module-local flag for forced immediate update (set by event handlers)
+local forceNext = false
+
 local function deepMerge(target, source)
   if type(source) ~= "table" then
     return source
@@ -33,6 +36,10 @@ end
 
 function OA.RegisterUpdate(fn, interval)
   table.insert(OA.updateHandlers, { fn = fn, interval = interval, elapsed = 0 })
+end
+
+function OA.RequestImmediateUpdate()
+  forceNext = true
 end
 
 function OA.print(msg)
@@ -121,11 +128,26 @@ end)
 
 OA.frame:SetScript("OnUpdate", function(self, elapsed)
   for _, handler in ipairs(OA.updateHandlers) do
+    -- Compute dynamic interval: 0.1s in combat, 0.5s otherwise
+    -- Read inCombat at tick time; keep override (updateInterval) optional for COMBAT interval only
+    local dynamicInterval = handler.interval
+    if OA.State and OA.State.inCombat then
+      dynamicInterval = 0.1
+    else
+      dynamicInterval = handler.interval or 0.5
+    end
+
     handler.elapsed = handler.elapsed + elapsed
-    if handler.elapsed >= handler.interval then
+    -- Run immediately if forceNext, or on throttle timer
+    if forceNext or handler.elapsed >= dynamicInterval then
       OA.safe(handler.fn)
       handler.elapsed = 0
     end
+  end
+
+  -- Clear forceNext after processing all handlers
+  if forceNext then
+    forceNext = false
   end
 end)
 
@@ -150,7 +172,7 @@ OA.RegisterEvent("PLAYER_LOGIN", function()
     OA.safe(OA.Display.Init)
   end
 
-  -- Register update handler with saved interval (or default 0.1)
+  -- Register update handler with saved interval (or default 0.5 idle, dynamic to 0.1 combat)
   OA.RegisterUpdate(function()
     OA.safe(function()
       if OA.State and OA.State.RefreshFast then
@@ -167,7 +189,32 @@ OA.RegisterEvent("PLAYER_LOGIN", function()
         OA.Display.Render(r)
       end
     end)
-  end, OA.db and OA.db.updateInterval or 0.1)
+  end, OA.db and OA.db.updateInterval or 0.5)
+
+  -- Register event-forced re-evaluate triggers
+  -- UNIT_SPELLCAST_SUCCEEDED: detect if player cast what was recommended or deviated
+  OA.RegisterEvent("UNIT_SPELLCAST_SUCCEEDED", function(event, unit, ...)
+    if unit == "player" then
+      OA.RequestImmediateUpdate()
+    end
+  end)
+
+  -- UNIT_SPELLCAST_INTERRUPTED: recover from interrupt, force re-poll for next viable spell
+  OA.RegisterEvent("UNIT_SPELLCAST_INTERRUPTED", function(event, unit, ...)
+    if unit == "player" then
+      OA.RequestImmediateUpdate()
+    end
+  end)
+
+  -- PLAYER_TARGET_CHANGED: target switch invalidates range/threat checks
+  OA.RegisterEvent("PLAYER_TARGET_CHANGED", function(event, ...)
+    OA.RequestImmediateUpdate()
+  end)
+
+  -- SPELL_UPDATE_COOLDOWN: spell availability changed
+  OA.RegisterEvent("SPELL_UPDATE_COOLDOWN", function(event, ...)
+    OA.RequestImmediateUpdate()
+  end)
 
   -- Load canary: verify all expected module tables are present
   local expectedModules = {"State", "Assist", "Engine", "Rules", "Display", "defaults"}
