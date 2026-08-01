@@ -8,6 +8,7 @@ stub.state = {
   comboPoints = 2,
   comboPointsMax = 6,
   inCombat = false,
+  combatSecrets = false, -- Mode: when true, UnitPower/cooldown APIs return secret values
   buffs = {
     adrenalineRush = false,
     adrenalineRushExpires = 0,
@@ -194,8 +195,14 @@ end
 function UnitPower(unit, powerType)
   if unit == "player" then
     if powerType == 3 then -- Energy
+      if stub.state.combatSecrets then
+        return stub.makeSecret(stub.state.energy)
+      end
       return stub.state.energy
     elseif powerType == 4 then -- ComboPoints
+      if stub.state.combatSecrets then
+        return stub.makeSecret(stub.state.comboPoints)
+      end
       return stub.state.comboPoints
     end
   end
@@ -224,6 +231,13 @@ function C_Spell_GetSpellCooldown(spellID)
   if not _G.C_Spell then return nil end
   local cd = stub.state.cooldowns[spellID]
   if cd then
+    if stub.state.combatSecrets then
+      return {
+        startTime = stub.makeSecret(cd.startTime),
+        duration = stub.makeSecret(cd.duration),
+        isEnabled = true
+      }
+    end
     return {
       startTime = cd.startTime,
       duration = cd.duration,
@@ -243,6 +257,9 @@ _G.C_Spell = {
 function GetSpellCooldown(spellID)
   local cd = stub.state.cooldowns[spellID]
   if cd then
+    if stub.state.combatSecrets then
+      return stub.makeSecret(cd.startTime), stub.makeSecret(cd.duration), true
+    end
     return cd.startTime, cd.duration, true
   end
   return 0, 0, true
@@ -375,7 +392,8 @@ _G.C_AssistedCombat = {
     return 193315 -- Sinister Strike
   end,
   GetRotationSpells = function()
-    return {193315, 271877, 315341}
+    -- Include both number and table entry forms, and blade flurry for aoeDetected testing
+    return {193315, 271877, 315341, 13877}
   end,
   GetActionSpell = function(actionID)
     return 193315
