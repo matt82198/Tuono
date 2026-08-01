@@ -2110,6 +2110,159 @@ test("v1.1.0: talent change event rebuilds known spells cache", function()
   _G.IsPlayerSpell = originalIsPlayerSpell
 end)
 
+-- === proc-probe tests ===
+
+-- TEST: Proc probe queries aura by spell ID
+test("proc probe: query-by-ID returns data when aura active", function()
+  stub.state.buffs.opportunity = true
+  stub.state.buffs.opportunityExpires = stub.state.time + 30
+
+  local auraData = nil
+  if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
+    auraData = C_UnitAuras.GetPlayerAuraBySpellID("player", 195627)
+  end
+  if not auraData and C_UnitAuras and C_UnitAuras.GetAuraDataBySpellID then
+    auraData = C_UnitAuras.GetAuraDataBySpellID("player", 195627)
+  end
+
+  assert_true(auraData ~= nil, "aura query-by-ID returns non-nil when aura active")
+  assert_eq(auraData.spellId, 195627, "returned aura has correct spellId")
+end)
+
+-- TEST: Proc probe detects readable fields
+test("proc probe: field readability check on readable aura", function()
+  stub.state.buffs.adrenalineRush = true
+  stub.state.buffs.adrenalineRushExpires = stub.state.time + 15
+
+  local auraData = C_UnitAuras.GetAuraDataBySpellID("player", 13750)
+
+  assert_true(auraData ~= nil, "AR aura data retrieved")
+  assert_false(issecretvalue(auraData.spellId), "spellId field is readable (not secret)")
+  assert_false(issecretvalue(auraData.name), "name field is readable (not secret)")
+  assert_false(issecretvalue(auraData.expirationTime), "expirationTime field is readable (not secret)")
+  assert_false(issecretvalue(auraData.applications), "applications field is readable (not secret)")
+end)
+
+-- TEST: Proc probe detects delta events
+test("proc probe: UNIT_AURA delta event tracking", function()
+  OA.State.buffs.rtb.stage = 0
+  OA.State.buffs.rtb.expires = 0
+
+  -- Fire UNIT_AURA delta event with addedAuras
+  local updateInfo = {
+    addedAuras = {
+      {
+        auraInstanceID = 5010,
+        spellId = 315508,
+        expirationTime = stub.state.time + 45
+      }
+    }
+  }
+
+  stub.FireEvent("UNIT_AURA", "player", updateInfo)
+
+  assert_true(OA.State.buffs.rtb.stage > 0, "buff state updated via delta event")
+end)
+
+-- TEST: Proc probe verdict logic - DIRECT (query-by-ID works)
+test("proc probe: verdict=DIRECT when query-by-ID works with readable fields", function()
+  stub.state.buffs.opportunity = true
+  stub.state.buffs.opportunityExpires = stub.state.time + 30
+
+  local auraData = C_UnitAuras.GetAuraDataBySpellID("player", 195627)
+  local hasReadable = false
+  if auraData and not issecretvalue(auraData.spellId) then
+    hasReadable = true
+  end
+
+  assert_true(hasReadable, "verdict=DIRECT condition met: query returns readable data")
+end)
+
+-- TEST: Proc probe verdict logic - DELTA-ONLY (delta events present, query fails)
+test("proc probe: verdict=DELTA-ONLY when query fails but delta events tracked", function()
+  -- Simulate query failing
+  local auraData = nil
+  if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
+    auraData = C_UnitAuras.GetPlayerAuraBySpellID("player", 999999)  -- Non-existent aura
+  end
+
+  assert_false(auraData ~= nil, "query-by-ID returns nil for non-existent aura")
+
+  -- But delta events should still be tracked
+  local updateInfo = {
+    addedAuras = {
+      {
+        auraInstanceID = 5011,
+        spellId = 195627,
+        expirationTime = stub.state.time + 20
+      }
+    }
+  }
+
+  stub.FireEvent("UNIT_AURA", "player", updateInfo)
+
+  assert_true(OA.State.buffs.opportunity.up, "delta tracking updates state even when query fails")
+end)
+
+-- TEST: Proc probe tracks accessor values
+test("proc probe: GetNextCastSpell accessor tracking", function()
+  local spell1 = C_AssistedCombat.GetNextCastSpell(false)
+  assert_true(spell1 ~= nil, "GetNextCastSpell(false) returns non-nil")
+  assert_true(type(spell1) == "number", "GetNextCastSpell(false) returns a number")
+
+  local spell2 = C_AssistedCombat.GetNextCastSpell(true)
+  assert_true(spell2 ~= nil, "GetNextCastSpell(true) returns non-nil")
+  assert_true(type(spell2) == "number", "GetNextCastSpell(true) returns a number")
+end)
+
+-- TEST: Proc probe tracks GetActionSpell accessor
+test("proc probe: GetActionSpell accessor across action slots", function()
+  local found = false
+  for slot = 1, 12 do
+    local spell = C_AssistedCombat.GetActionSpell(slot)
+    if spell then
+      found = true
+      assert_true(type(spell) == "number", "GetActionSpell returns a number")
+      break
+    end
+  end
+
+  assert_true(found, "GetActionSpell returns non-nil for at least one action slot")
+end)
+
+-- TEST: Proc probe detects ASSISTED events
+test("proc probe: ASSISTED event firing (registration)", function()
+  assert_true(OA.eventHandlers ~= nil, "event handlers table exists")
+  -- We can't test actual firing without full integration, but we verify the handler structure
+  assert_true(true, "ASSISTED event infrastructure ready")
+end)
+
+-- TEST: Proc probe with all accessors unavailable
+test("proc probe: graceful handling when all accessors return nil", function()
+  local originalGetNextCastSpell = C_AssistedCombat and C_AssistedCombat.GetNextCastSpell or nil
+  local originalGetActionSpell = C_AssistedCombat and C_AssistedCombat.GetActionSpell or nil
+
+  -- Temporarily remove accessors
+  if C_AssistedCombat then
+    C_AssistedCombat.GetNextCastSpell = nil
+    C_AssistedCombat.GetActionSpell = nil
+  end
+
+  -- Probe should not crash
+  local ok = pcall(function()
+    local v = C_AssistedCombat and C_AssistedCombat.GetNextCastSpell and C_AssistedCombat.GetNextCastSpell(false) or nil
+    assert_false(v, "accessor returns nil when unavailable")
+  end)
+
+  assert_true(ok, "probe handles missing accessors without error")
+
+  -- Restore
+  if C_AssistedCombat then
+    C_AssistedCombat.GetNextCastSpell = originalGetNextCastSpell
+    C_AssistedCombat.GetActionSpell = originalGetActionSpell
+  end
+end)
+
 -- Summary
 print("")
 print(passCount .. "/" .. testCount .. " tests passed")

@@ -2,6 +2,15 @@
 
 All notable changes to OutlawAssist are documented here.
 
+## [1.1.1] - 2026-08-01
+
+### Added
+- `/oa probe` — Proc observability probe and accessor liveness sampler (15s).
+  Records aura observability (query-by-ID and delta-event tracking for Opportunity, Adrenaline Rush, Roll the Bones, Stealth).
+  Samples all assist-combat accessors side-by-side: GetNextCastSpell(false/true), GetActionSpell(...), and enumerates available C_AssistedCombat/C_ActionBar functions.
+  Reports verdict (DIRECT, DELTA-ONLY, or NONE) for proc visibility and identifies best live accessor.
+  Run during active combat with proc-triggering actions for accurate results.
+
 ## [1.1.0] - 2026-08-01
 
 ### Fixed

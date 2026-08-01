@@ -446,6 +446,352 @@ local function watch()
   OA.print("Run this during combat or while casting off-rotation for best results")
 end
 
+-- === Proc Observability Probe ===
+local procProbeState = nil
+
+local function procProbe()
+  if procProbeState and procProbeState.active then
+    OA.print("Proc probe already running - wait for current run to finish or restart WoW")
+    return
+  end
+
+  procProbeState = {
+    active = true,
+    startTime = GetTime(),
+    endTime = GetTime() + 15,
+    auras = {},
+    deltaEvents = 0,
+    deltaFullUpdate = 0,
+    sampleCount = 0,
+    lastSampleTime = GetTime() - 0.25,
+    -- Accessor tracking
+    accessors = {
+      getNextSpellFalse = { values = {}, lastValue = nil, changes = 0, lastChangeTime = 0 },
+      getNextSpellTrue = { values = {}, lastValue = nil, changes = 0, lastChangeTime = 0 },
+      getActionSpells = { values = {}, lastValue = nil, changes = 0, lastChangeTime = 0 },
+      actionBarFuncs = {}
+    },
+    assistedEvents = 0,
+    procTimes = {}
+  }
+
+  -- Initialize aura tracking
+  local auraList = {
+    { name = "opportunity", spellID = 195627 },
+    -- Audacity: talent-based proc, spell ID not found in docs; skipping per task instruction
+    { name = "adrenalineRush", spellID = 13750 },
+    { name = "rollTheBones", spellID = 315508 },
+    { name = "stealth", spellID = 1784 }
+  }
+
+  for _, aura in ipairs(auraList) do
+    procProbeState.auras[aura.name] = {
+      spellID = aura.spellID,
+      queryWorks = false,
+      fieldsReadable = 0,
+      fieldsSecret = 0,
+      fieldsMixed = false,
+      deltaAddedCount = 0,
+      deltaRemovedCount = 0,
+      deltaAddedReadable = 0,
+      deltaAddedSecret = 0,
+      lastProc = 0
+    }
+  end
+
+  -- Install probe UNIT_AURA interceptor to track proc timing
+  local function probeUnitAuraHandler(event, unit, updateInfo)
+    if not procProbeState.active or unit ~= "player" then return end
+
+    if updateInfo then
+      if updateInfo.isFullUpdate then
+        procProbeState.deltaFullUpdate = procProbeState.deltaFullUpdate + 1
+      end
+
+      if updateInfo.addedAuras then
+        for _, auraData in ipairs(updateInfo.addedAuras) do
+          for _, aura in ipairs(auraList) do
+            if auraData.spellId == aura.spellID then
+              procProbeState.auras[aura.name].deltaAddedCount = procProbeState.auras[aura.name].deltaAddedCount + 1
+              procProbeState.auras[aura.name].lastProc = GetTime()
+              if issecretvalue(auraData.spellId) then
+                procProbeState.auras[aura.name].deltaAddedSecret = procProbeState.auras[aura.name].deltaAddedSecret + 1
+              else
+                procProbeState.auras[aura.name].deltaAddedReadable = procProbeState.auras[aura.name].deltaAddedReadable + 1
+              end
+              table.insert(procProbeState.procTimes, GetTime())
+              break
+            end
+          end
+        end
+        procProbeState.deltaEvents = procProbeState.deltaEvents + 1
+      end
+
+      if updateInfo.removedAuraInstanceIDs then
+        procProbeState.deltaEvents = procProbeState.deltaEvents + 1
+      end
+    end
+  end
+
+  if not OA.eventHandlers then OA.eventHandlers = {} end
+  if not OA.eventHandlers["UNIT_AURA"] then OA.eventHandlers["UNIT_AURA"] = {} end
+  table.insert(OA.eventHandlers["UNIT_AURA"], probeUnitAuraHandler)
+
+  -- Track ASSISTED events
+  local assistedEventHandler = function(event, ...)
+    if procProbeState.active and event:find("ASSISTED") then
+      procProbeState.assistedEvents = procProbeState.assistedEvents + 1
+    end
+  end
+  if not OA.eventHandlers["ASSISTED_COMBAT_ACTION_CHANGED"] then
+    OA.eventHandlers["ASSISTED_COMBAT_ACTION_CHANGED"] = {}
+  end
+  table.insert(OA.eventHandlers["ASSISTED_COMBAT_ACTION_CHANGED"], assistedEventHandler)
+
+  -- Enumerate available API functions
+  local assistedFuncs = {}
+  if C_AssistedCombat then
+    for k in pairs(C_AssistedCombat) do
+      table.insert(assistedFuncs, k)
+    end
+  end
+  local actionBarFuncs = {}
+  if C_ActionBar then
+    for k in pairs(C_ActionBar) do
+      if type(k) == "string" and k:find("Assisted", 1, true) then
+        table.insert(actionBarFuncs, k)
+      end
+    end
+  end
+
+  -- Wrap Assist.Update to collect samples
+  local originalUpdate = OA.Assist.Update
+  function OA.Assist.Update()
+    originalUpdate()
+
+    local now = GetTime()
+    if not procProbeState.active then return end
+
+    -- Sample every 0.25s
+    if (now - procProbeState.lastSampleTime) >= 0.25 then
+      procProbeState.lastSampleTime = now
+      procProbeState.sampleCount = procProbeState.sampleCount + 1
+
+      -- Sample accessors
+      pcall(function()
+        local v1 = C_AssistedCombat and C_AssistedCombat.GetNextCastSpell(false) or nil
+        if v1 and v1 ~= procProbeState.accessors.getNextSpellFalse.lastValue then
+          procProbeState.accessors.getNextSpellFalse.changes = procProbeState.accessors.getNextSpellFalse.changes + 1
+          procProbeState.accessors.getNextSpellFalse.lastChangeTime = now
+        end
+        procProbeState.accessors.getNextSpellFalse.lastValue = v1
+        procProbeState.accessors.getNextSpellFalse.values[v1 or 0] = true
+      end)
+
+      pcall(function()
+        local v2 = C_AssistedCombat and C_AssistedCombat.GetNextCastSpell(true) or nil
+        if v2 and v2 ~= procProbeState.accessors.getNextSpellTrue.lastValue then
+          procProbeState.accessors.getNextSpellTrue.changes = procProbeState.accessors.getNextSpellTrue.changes + 1
+          procProbeState.accessors.getNextSpellTrue.lastChangeTime = now
+        end
+        procProbeState.accessors.getNextSpellTrue.lastValue = v2
+        procProbeState.accessors.getNextSpellTrue.values[v2 or 0] = true
+      end)
+
+      -- Sample GetActionSpell across slots
+      pcall(function()
+        local actionVals = {}
+        for slot = 1, 12 do
+          local v = C_AssistedCombat and C_AssistedCombat.GetActionSpell(slot) or nil
+          if v then
+            actionVals[slot] = v
+          end
+        end
+        local actionStr = ""
+        for slot = 1, 12 do
+          if actionVals[slot] then
+            actionStr = actionStr .. slot .. ":" .. actionVals[slot] .. ";"
+          end
+        end
+        if actionStr ~= procProbeState.accessors.getActionSpells.lastValue then
+          procProbeState.accessors.getActionSpells.changes = procProbeState.accessors.getActionSpells.changes + 1
+          procProbeState.accessors.getActionSpells.lastChangeTime = now
+        end
+        procProbeState.accessors.getActionSpells.lastValue = actionStr
+        if actionStr ~= "" then
+          procProbeState.accessors.getActionSpells.values[actionStr] = true
+        end
+      end)
+
+      -- Query each aura by spell ID
+      for _, aura in ipairs(auraList) do
+        pcall(function()
+          local auraData = nil
+          if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
+            auraData = C_UnitAuras.GetPlayerAuraBySpellID("player", aura.spellID)
+          end
+          if not auraData and C_UnitAuras and C_UnitAuras.GetAuraDataBySpellID then
+            auraData = C_UnitAuras.GetAuraDataBySpellID("player", aura.spellID)
+          end
+
+          if auraData then
+            procProbeState.auras[aura.name].queryWorks = true
+
+            -- Check field readability
+            local readableCount = 0
+            local secretCount = 0
+            if auraData.spellId and not issecretvalue(auraData.spellId) then
+              readableCount = readableCount + 1
+            elseif auraData.spellId and issecretvalue(auraData.spellId) then
+              secretCount = secretCount + 1
+            end
+
+            if auraData.name and not issecretvalue(auraData.name) then
+              readableCount = readableCount + 1
+            elseif auraData.name and issecretvalue(auraData.name) then
+              secretCount = secretCount + 1
+            end
+
+            if auraData.expirationTime and not issecretvalue(auraData.expirationTime) then
+              readableCount = readableCount + 1
+            elseif auraData.expirationTime and issecretvalue(auraData.expirationTime) then
+              secretCount = secretCount + 1
+            end
+
+            if auraData.applications and not issecretvalue(auraData.applications) then
+              readableCount = readableCount + 1
+            elseif auraData.applications and issecretvalue(auraData.applications) then
+              secretCount = secretCount + 1
+            end
+
+            procProbeState.auras[aura.name].fieldsReadable = math.max(procProbeState.auras[aura.name].fieldsReadable, readableCount)
+            procProbeState.auras[aura.name].fieldsSecret = math.max(procProbeState.auras[aura.name].fieldsSecret, secretCount)
+            if readableCount > 0 and secretCount > 0 then
+              procProbeState.auras[aura.name].fieldsMixed = true
+            end
+          end
+        end)
+      end
+    end
+
+    if now >= procProbeState.endTime then
+      procProbeState.active = false
+
+      -- Restore original Update and handlers
+      OA.Assist.Update = originalUpdate
+      if OA.eventHandlers and OA.eventHandlers["UNIT_AURA"] then
+        for i = #OA.eventHandlers["UNIT_AURA"], 1, -1 do
+          if OA.eventHandlers["UNIT_AURA"][i] == probeUnitAuraHandler then
+            table.remove(OA.eventHandlers["UNIT_AURA"], i)
+          end
+        end
+      end
+      if OA.eventHandlers and OA.eventHandlers["ASSISTED_COMBAT_ACTION_CHANGED"] then
+        for i = #OA.eventHandlers["ASSISTED_COMBAT_ACTION_CHANGED"], 1, -1 do
+          if OA.eventHandlers["ASSISTED_COMBAT_ACTION_CHANGED"][i] == assistedEventHandler then
+            table.remove(OA.eventHandlers["ASSISTED_COMBAT_ACTION_CHANGED"], i)
+          end
+        end
+      end
+
+      -- Report results
+      OA.print("=== /oa watch proc-observability probe (15 second sample) ===")
+      OA.print("")
+
+      -- Aura observability section
+      local verdict = "NONE"
+      local directWorks = false
+      local deltaWorks = false
+
+      for _, aura in ipairs(auraList) do
+        local auraState = procProbeState.auras[aura.name]
+        local observable = auraState.queryWorks and "yes" or "no"
+        local fields = "unknown"
+        if auraState.fieldsReadable > 0 and auraState.fieldsSecret == 0 then
+          fields = "readable"
+          if auraState.queryWorks then directWorks = true end
+        elseif auraState.fieldsSecret > 0 and auraState.fieldsReadable == 0 then
+          fields = "secret"
+        elseif auraState.fieldsReadable > 0 and auraState.fieldsSecret > 0 then
+          fields = "mixed"
+        end
+
+        OA.print(string.format("%s: observable=%s, fields=%s, delta_added=%d(readable=%d,secret=%d)",
+          aura.name, observable, fields,
+          auraState.deltaAddedCount, auraState.deltaAddedReadable, auraState.deltaAddedSecret))
+
+        if auraState.deltaAddedCount > 0 or auraState.deltaAddedReadable > 0 or auraState.deltaAddedSecret > 0 then
+          deltaWorks = true
+        end
+      end
+
+      OA.print("")
+      OA.print(string.format("Delta events: total=%d, fullUpdate=%d", procProbeState.deltaEvents, procProbeState.deltaFullUpdate))
+
+      if directWorks then
+        verdict = "DIRECT"
+      elseif deltaWorks then
+        verdict = "DELTA-ONLY"
+      end
+
+      OA.print("PROC OBSERVABILITY: " .. verdict)
+
+      -- Accessor liveness section
+      OA.print("")
+      OA.print("=== Accessor Liveness ===")
+
+      local distinctFalse = 0
+      for _ in pairs(procProbeState.accessors.getNextSpellFalse.values) do
+        distinctFalse = distinctFalse + 1
+      end
+      OA.print(string.format("GetNextCastSpell(false): distinct=%d, changes=%d", distinctFalse, procProbeState.accessors.getNextSpellFalse.changes))
+
+      local distinctTrue = 0
+      for _ in pairs(procProbeState.accessors.getNextSpellTrue.values) do
+        distinctTrue = distinctTrue + 1
+      end
+      OA.print(string.format("GetNextCastSpell(true): distinct=%d, changes=%d", distinctTrue, procProbeState.accessors.getNextSpellTrue.changes))
+
+      local distinctActions = 0
+      for _ in pairs(procProbeState.accessors.getActionSpells.values) do
+        distinctActions = distinctActions + 1
+      end
+      OA.print(string.format("GetActionSpell(...): distinct=%d, changes=%d", distinctActions, procProbeState.accessors.getActionSpells.changes))
+
+      -- API inventory
+      OA.print("")
+      OA.print("C_AssistedCombat functions: " .. table.concat(assistedFuncs, ", "))
+      if #actionBarFuncs > 0 then
+        OA.print("C_ActionBar Assisted-related functions: " .. table.concat(actionBarFuncs, ", "))
+      else
+        OA.print("C_ActionBar Assisted-related functions: (none found)")
+      end
+      OA.print("ASSISTED-prefixed events: " .. procProbeState.assistedEvents)
+
+      -- Determine best accessor
+      local liveAccessor = "NONE"
+      if procProbeState.accessors.getNextSpellTrue.changes > procProbeState.accessors.getNextSpellFalse.changes then
+        liveAccessor = "GetNextCastSpell(true)"
+      elseif procProbeState.accessors.getNextSpellFalse.changes > 0 then
+        liveAccessor = "GetNextCastSpell(false)"
+      end
+      if procProbeState.accessors.getActionSpells.changes > 0 and procProbeState.accessors.getActionSpells.changes > (procProbeState.accessors.getNextSpellTrue.changes or 0) then
+        liveAccessor = "GetActionSpell(...)"
+      end
+
+      OA.print("")
+      OA.print("LIVE ACCESSOR: " .. liveAccessor)
+      OA.print("Paste this output to Claude")
+
+      procProbeState = nil
+    end
+  end
+
+  OA.print("Proc probe started - sampling aura observability and accessor liveness for 15 seconds")
+  OA.print("Run this during active combat with proc-triggering actions for best results")
+end
+
 OA.RegisterSlash("apitest", apitest, "Run API compatibility probe")
 OA.RegisterSlash("debug", debug, "Print one-shot state dump")
 OA.RegisterSlash("watch", watch, "Sample queue liveness for 15s; run during combat when queue frozen")
+OA.RegisterSlash("probe", procProbe, "Sample proc observability for 15s; run during combat")
