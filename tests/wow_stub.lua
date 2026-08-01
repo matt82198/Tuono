@@ -311,8 +311,81 @@ function C_UnitAuras_GetAuraDataByIndex(unit, index, filter)
   return auras[index]
 end
 
+function C_UnitAuras_GetAuraDataBySpellID(unit, spellID)
+  if unit ~= "player" then return nil end
+
+  local auras = {}
+  if stub.state.buffs.adrenalineRush then
+    table.insert(auras, {
+      spellId = 13750,
+      auraInstanceID = 1001,
+      name = "Adrenaline Rush",
+      expirationTime = stub.state.buffs.adrenalineRushExpires,
+      applications = 1
+    })
+  end
+  if stub.state.buffs.opportunity then
+    table.insert(auras, {
+      spellId = 195627,
+      auraInstanceID = 1002,
+      name = "Opportunity",
+      expirationTime = stub.state.buffs.opportunityExpires,
+      applications = 1
+    })
+  end
+  if stub.state.buffs.rollTheBones then
+    table.insert(auras, {
+      spellId = 315508,
+      auraInstanceID = 1003,
+      name = "Roll the Bones",
+      expirationTime = stub.state.buffs.rollTheBonesExpires,
+      applications = stub.state.buffs.rollTheBonesStage
+    })
+  end
+
+  for _, aura in ipairs(auras) do
+    if aura.spellId == spellID then
+      return aura
+    end
+  end
+  return nil
+end
+
+function C_UnitAuras_GetAuraDataByAuraInstanceID(unit, instanceID)
+  if unit ~= "player" then return nil end
+
+  -- Map instanceID to buff state for update refresh
+  local auras = {
+    [1001] = {
+      spellId = 13750,
+      auraInstanceID = 1001,
+      name = "Adrenaline Rush",
+      expirationTime = stub.state.buffs.adrenalineRushExpires,
+      applications = 1
+    },
+    [1002] = {
+      spellId = 195627,
+      auraInstanceID = 1002,
+      name = "Opportunity",
+      expirationTime = stub.state.buffs.opportunityExpires,
+      applications = 1
+    },
+    [1003] = {
+      spellId = 315508,
+      auraInstanceID = 1003,
+      name = "Roll the Bones",
+      expirationTime = stub.state.buffs.rollTheBonesExpires,
+      applications = stub.state.buffs.rollTheBonesStage
+    }
+  }
+
+  return auras[instanceID]
+end
+
 _G.C_UnitAuras = {
-  GetAuraDataByIndex = C_UnitAuras_GetAuraDataByIndex
+  GetAuraDataByIndex = C_UnitAuras_GetAuraDataByIndex,
+  GetAuraDataBySpellID = C_UnitAuras_GetAuraDataBySpellID,
+  GetAuraDataByAuraInstanceID = C_UnitAuras_GetAuraDataByAuraInstanceID
 }
 
 function UnitBuff(unit, index)

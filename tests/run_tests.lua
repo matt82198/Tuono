@@ -1282,6 +1282,159 @@ test("threat detector: blade_flurry fires when ANY signal true (aoeDetected=true
   assert_true(foundBladeFlurry, "blade flurry fires when aoeDetected=true")
 end)
 
+-- === aura-infra tests ===
+
+-- AURA TEST 1: Delta add with readable spellId maps + sets state
+test("aura-infra: delta add with readable spellId maps + sets state", function()
+  OA.State.buffs.adrenalineRush.up = false
+  OA.State.buffs.adrenalineRush.expires = 0
+  OA.State.buffs.degraded = false
+
+  local updateInfo = {
+    addedAuras = {
+      {
+        auraInstanceID = 5001,
+        spellId = 13750,
+        expirationTime = stub.state.time + 30
+      }
+    }
+  }
+
+  stub.FireEvent("UNIT_AURA", "player", updateInfo)
+
+  assert_true(OA.State.buffs.adrenalineRush.up, "adrenalineRush.up set to true after delta add")
+  assert_true(OA.State.buffs.adrenalineRush.expires > stub.state.time, "adrenalineRush.expires set to future time")
+  assert_false(OA.State.buffs.degraded, "degraded not set when readable spellId matched")
+end)
+
+-- AURA TEST 2: Delta add with SECRET spellId + recent matching cast correlates
+test("aura-infra: delta add with SECRET spellId + cast correlation", function()
+  OA.State.buffs.rtb.stage = 0
+  OA.State.buffs.rtb.expires = 0
+  OA.State.buffs.degraded = false
+
+  -- Simulate lastCast from UNIT_SPELLCAST_SUCCEEDED (fired just before delta)
+  stub.FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-guid-123", 315508)
+
+  local secretSpellID = stub.makeSecret(315508)
+  local updateInfo = {
+    addedAuras = {
+      {
+        auraInstanceID = 5002,
+        spellId = secretSpellID,
+        applications = 1,
+        expirationTime = stub.state.time + 45
+      }
+    }
+  }
+
+  stub.FireEvent("UNIT_AURA", "player", updateInfo)
+
+  assert_true(OA.State.buffs.rtb.stage > 0, "rtb.stage set after correlation")
+  assert_false(OA.State.buffs.degraded, "degraded not set when cast-correlation succeeded")
+end)
+
+-- AURA TEST 3: Removal clears state
+test("aura-infra: removal clears state", function()
+  OA.State.buffs.opportunity.up = false
+  OA.State.buffs.opportunity.expires = 0
+
+  -- First add the aura so it gets tracked in the map
+  local addInfo = {
+    addedAuras = {
+      {
+        auraInstanceID = 5003,
+        spellId = 195627,
+        expirationTime = stub.state.time + 20
+      }
+    }
+  }
+  stub.FireEvent("UNIT_AURA", "player", addInfo)
+
+  assert_true(OA.State.buffs.opportunity.up, "opportunity added successfully")
+
+  -- Now remove it
+  local removeInfo = {
+    removedAuraInstanceIDs = { 5003 }
+  }
+  stub.FireEvent("UNIT_AURA", "player", removeInfo)
+
+  assert_false(OA.State.buffs.opportunity.up, "opportunity.up cleared on removal")
+  assert_eq(OA.State.buffs.opportunity.expires, 0, "opportunity.expires reset to 0 on removal")
+end)
+
+-- AURA TEST 4: isFullUpdate rebuilds via tier 2
+test("aura-infra: isFullUpdate rebuilds via tier 2 bootstrap", function()
+  OA.State.buffs.adrenalineRush.up = false
+  OA.State.buffs.adrenalineRush.expires = 0
+  OA.State.buffs.degraded = false
+
+  stub.state.buffs.adrenalineRush = true
+  stub.state.buffs.adrenalineRushExpires = stub.state.time + 30
+
+  local updateInfo = {
+    isFullUpdate = true
+  }
+
+  stub.FireEvent("UNIT_AURA", "player", updateInfo)
+
+  assert_true(OA.State.buffs.adrenalineRush.up, "adrenalineRush restored after isFullUpdate bootstrap")
+end)
+
+-- AURA TEST 5: All-secret + no cast → degraded=true and no error
+test("aura-infra: all-secret auras without cast → degraded=true", function()
+  OA.State.buffs.degraded = false
+
+  -- Advance time beyond correlation window (0.8s) to ensure any prior cast is out of window
+  stub.Tick(1.0)
+
+  local secretSpellID = stub.makeSecret(99999)
+  local updateInfo = {
+    addedAuras = {
+      {
+        auraInstanceID = 5004,
+        spellId = secretSpellID,
+        expirationTime = stub.state.time + 20
+      }
+    }
+  }
+
+  stub.FireEvent("UNIT_AURA", "player", updateInfo)
+
+  assert_true(OA.State.buffs.degraded, "degraded=true when secret aura has no correlation")
+  assert_true(true, "no error thrown with degraded secret aura")
+end)
+
+-- AURA TEST 6: Full tick green under stub combatSecrets mode
+test("aura-infra: full tick under combatSecrets mode without error", function()
+  stub.state.combatSecrets = true
+  OA.State.inCombat = true
+
+  -- Fire realistic combat events
+  stub.FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", "combat-cast-1", 13750)
+  local secretSpellID = stub.makeSecret(13750)
+  stub.FireEvent("UNIT_AURA", "player", {
+    addedAuras = {
+      {
+        auraInstanceID = 5005,
+        spellId = secretSpellID,
+        expirationTime = stub.state.time + 20
+      }
+    }
+  })
+
+  OA.Assist.Update()
+  OA.State.RefreshFast()
+  local r = OA.Engine.Evaluate()
+  OA.Display.Render(r)
+
+  -- Verify full tick completed without error
+  assert_true(OA.State.buffs.adrenalineRush.up or OA.State.buffs.degraded, "AR tracked or degraded flag set")
+  assert_false(_G.issecretvalue(OA.State.energy), "State.energy not a secret value")
+
+  stub.state.combatSecrets = false
+end)
+
 -- Summary
 print("")
 print(passCount .. "/" .. testCount .. " tests passed")

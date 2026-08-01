@@ -30,7 +30,8 @@ OA.State = {
 	buffs = {
 		rtb = { stage = 0, expires = 0, names = {} },
 		opportunity = { up = false, expires = 0 },
-		adrenalineRush = { up = false, expires = 0 }
+		adrenalineRush = { up = false, expires = 0 },
+		degraded = false
 	},
 	cooldowns = {
 		adrenalineRush = { known = false, ready = false, remaining = 0 },
@@ -51,6 +52,12 @@ local lastBuffScan = -1
 local lastEnemyCountRefresh = -1
 local trinketSpellCache = {}
 local trinketCacheSentinel = {}
+
+-- TIER 1: Instance ID delta-map (auraInstanceID -> tracked-aura key)
+local instanceMap = {}
+-- TIER 1: Last cast tracking for correlation (~0.8s window)
+local lastCast = { spellID = nil, t = 0 }
+local castCorrelationWindow = 0.8
 
 local function NormalizeCooldown(startTime, duration)
 	startTime = OA.num(startTime, 0)
@@ -93,7 +100,163 @@ local function RefreshCooldowns()
 	end
 end
 
-local function RefreshBuffs()
+-- TIER 2: Bootstrap/rescan via GetPlayerAuraBySpellID
+local function BootstrapBuffState()
+	local now = GetTime()
+	wipe(instanceMap)
+	OA.State.buffs.degraded = false
+
+	-- Try to seed instanceMap via GetPlayerAuraBySpellID for all tracked spells
+	if C_UnitAuras and C_UnitAuras.GetAuraDataBySpellID then
+		local trackedSpells = {
+			{ spellID = OA.SpellIDs.adrenalineRush, key = "adrenalineRush" },
+			{ spellID = OA.SpellIDs.rollTheBones, key = "rtb" },
+			{ spellID = 195627, key = "opportunity" },
+			{ spellID = OA.SpellIDs.stealth, key = "stealthed" }
+		}
+
+		local foundAny = false
+		for _, item in ipairs(trackedSpells) do
+			local aura = C_UnitAuras.GetAuraDataBySpellID("player", item.spellID)
+			if aura then
+				foundAny = true
+				local instanceID = OA.num(aura.auraInstanceID, 0)
+				if instanceID > 0 then
+					instanceMap[instanceID] = item.key
+				end
+				-- Update state from this aura
+				if item.key == "adrenalineRush" then
+					OA.State.buffs.adrenalineRush.up = true
+					OA.State.buffs.adrenalineRush.expires = OA.num(aura.expirationTime, now)
+				elseif item.key == "rtb" then
+					OA.State.buffs.rtb.stage = OA.num(aura.applications, 1)
+					OA.State.buffs.rtb.expires = OA.num(aura.expirationTime, now)
+				elseif item.key == "opportunity" then
+					OA.State.buffs.opportunity.up = true
+					OA.State.buffs.opportunity.expires = OA.num(aura.expirationTime, now)
+				elseif item.key == "stealthed" then
+					OA.State.stealthed = true
+				end
+			end
+		end
+
+		if not foundAny then
+			OA.State.buffs.degraded = true
+		end
+	else
+		OA.State.buffs.degraded = true
+	end
+end
+
+-- TIER 1: Process UNIT_AURA delta payload (updateInfo structure)
+local function ProcessAuraDelta(updateInfo)
+	if not updateInfo then return end
+
+	local now = GetTime()
+
+	-- isFullUpdate: rebuild map + Tier 2
+	if updateInfo.isFullUpdate then
+		BootstrapBuffState()
+		return
+	end
+
+	-- removedAuraInstanceIDs: clear mapped state + remove from map
+	if updateInfo.removedAuraInstanceIDs then
+		for _, instanceID in ipairs(updateInfo.removedAuraInstanceIDs) do
+			local key = instanceMap[instanceID]
+			if key == "adrenalineRush" then
+				OA.State.buffs.adrenalineRush.up = false
+				OA.State.buffs.adrenalineRush.expires = 0
+			elseif key == "rtb" then
+				OA.State.buffs.rtb.stage = 0
+				OA.State.buffs.rtb.expires = 0
+				wipe(OA.State.buffs.rtb.names)
+			elseif key == "opportunity" then
+				OA.State.buffs.opportunity.up = false
+				OA.State.buffs.opportunity.expires = 0
+			elseif key == "stealthed" then
+				OA.State.stealthed = false
+			end
+			instanceMap[instanceID] = nil
+		end
+	end
+
+	-- addedAuras: match by spellId (readable-first check) or correlation
+	if updateInfo.addedAuras then
+		for _, auraData in ipairs(updateInfo.addedAuras) do
+			local instanceID = OA.num(auraData.auraInstanceID, 0)
+			if instanceID > 0 then
+				-- Try to read spellId (not secret)
+				local spellID = nil
+				if not _G.issecretvalue(auraData.spellId) then
+					spellID = OA.num(auraData.spellId, 0)
+				end
+
+				-- Match by readable spellId
+				if spellID == OA.SpellIDs.adrenalineRush then
+					instanceMap[instanceID] = "adrenalineRush"
+					OA.State.buffs.adrenalineRush.up = true
+					OA.State.buffs.adrenalineRush.expires = OA.num(auraData.expirationTime, now)
+					OA.State.buffs.degraded = false
+				elseif spellID == OA.SpellIDs.rollTheBones then
+					instanceMap[instanceID] = "rtb"
+					OA.State.buffs.rtb.stage = OA.num(auraData.applications, 1)
+					OA.State.buffs.rtb.expires = OA.num(auraData.expirationTime, now)
+					OA.State.buffs.degraded = false
+				elseif spellID == 195627 then
+					instanceMap[instanceID] = "opportunity"
+					OA.State.buffs.opportunity.up = true
+					OA.State.buffs.opportunity.expires = OA.num(auraData.expirationTime, now)
+					OA.State.buffs.degraded = false
+				elseif spellID == OA.SpellIDs.stealth then
+					instanceMap[instanceID] = "stealthed"
+					OA.State.stealthed = true
+					OA.State.buffs.degraded = false
+				elseif spellID == 0 or spellID == nil then
+					-- Secret spellId: try CAST-CORRELATION
+					if lastCast.spellID and (now - lastCast.t) <= castCorrelationWindow then
+						if lastCast.spellID == OA.SpellIDs.adrenalineRush then
+							instanceMap[instanceID] = "adrenalineRush"
+							OA.State.buffs.adrenalineRush.up = true
+							OA.State.buffs.adrenalineRush.expires = OA.num(auraData.expirationTime, now)
+							OA.State.buffs.degraded = false
+						elseif lastCast.spellID == OA.SpellIDs.rollTheBones then
+							instanceMap[instanceID] = "rtb"
+							OA.State.buffs.rtb.stage = OA.num(auraData.applications, 1)
+							OA.State.buffs.rtb.expires = OA.num(auraData.expirationTime, now)
+							OA.State.buffs.degraded = false
+						elseif lastCast.spellID == 195627 then
+							instanceMap[instanceID] = "opportunity"
+							OA.State.buffs.opportunity.up = true
+							OA.State.buffs.opportunity.expires = OA.num(auraData.expirationTime, now)
+							OA.State.buffs.degraded = false
+						end
+					else
+						-- No correlation possible: mark degraded
+						OA.State.buffs.degraded = true
+					end
+				end
+			end
+		end
+	end
+
+	-- updatedAuraInstanceIDs: refresh mapped entries via GetAuraDataByAuraInstanceID
+	if updateInfo.updatedAuraInstanceIDs then
+		if C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID then
+			for _, instanceID in ipairs(updateInfo.updatedAuraInstanceIDs) do
+				if instanceMap[instanceID] then
+					local aura = C_UnitAuras.GetAuraDataByAuraInstanceID("player", instanceID)
+					if aura then
+						OA.State.buffs[instanceMap[instanceID]].expires = OA.num(aura.expirationTime, now)
+					end
+				end
+			end
+		end
+	end
+end
+
+-- TIER 3: Fallback full scan (when delta tracking fails)
+local function RefreshBuffsFallback()
 	local now = GetTime()
 	wipe(OA.State.buffs.rtb.names)
 	OA.State.buffs.rtb.stage = 0
@@ -286,7 +449,8 @@ function OA.State.RefreshFast()
 
 	local now = GetTime()
 	if (now - lastBuffScan) >= 0.5 then
-		RefreshBuffs()
+		-- Periodic fallback scan in case delta tracking lost sync
+		RefreshBuffsFallback()
 		lastBuffScan = now
 	end
 
@@ -300,7 +464,9 @@ end
 
 local function OnPlayerEnteringWorld(event)
 	wipe(trinketSpellCache)
+	wipe(instanceMap)
 	RefreshTrinkets()
+	BootstrapBuffState()
 end
 
 local function OnPlayerEquipmentChanged(event)
@@ -315,9 +481,22 @@ local function OnPlayerRegenEnabled(event)
 	OA.State.inCombat = false
 end
 
-local function OnUnitAura(event, unit)
+local function OnUnitAura(event, unit, updateInfo)
 	if unit == "player" then
-		RefreshBuffs()
+		-- TIER 1: Process delta updates if updateInfo available
+		if updateInfo then
+			ProcessAuraDelta(updateInfo)
+		else
+			-- Fallback: full refresh if no updateInfo
+			RefreshBuffsFallback()
+		end
+	end
+end
+
+local function OnUnitSpellcastSucceeded(event, unit, castGUID, spellID)
+	if unit == "player" then
+		lastCast.spellID = OA.num(spellID, 0)
+		lastCast.t = GetTime()
 	end
 end
 
@@ -334,5 +513,6 @@ OA.RegisterEvent("PLAYER_EQUIPMENT_CHANGED", OnPlayerEquipmentChanged)
 OA.RegisterEvent("PLAYER_REGEN_DISABLED", OnPlayerRegenDisabled)
 OA.RegisterEvent("PLAYER_REGEN_ENABLED", OnPlayerRegenEnabled)
 OA.RegisterEvent("UNIT_AURA", OnUnitAura)
+OA.RegisterEvent("UNIT_SPELLCAST_SUCCEEDED", OnUnitSpellcastSucceeded)
 OA.RegisterEvent("NAME_PLATE_UNIT_ADDED", OnNamePlateUnitAdded)
 OA.RegisterEvent("NAME_PLATE_UNIT_REMOVED", OnNamePlateUnitRemoved)
