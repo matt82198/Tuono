@@ -2704,6 +2704,218 @@ test("rotation rules: Ambush stealth-opener rule exists", function()
   end
 end)
 
+-- === display-clarity tests ===
+
+-- Display Test 1: High confidence renders at full opacity
+test("display-clarity: high confidence renders at full opacity", function()
+  OA.Display.Init()
+  local result = {
+    queue = {
+      {spellID = 193315, kind = "rotation", source = "blizzard", confidence = "high", degraded = false}
+    },
+    advisories = {}
+  }
+  OA.Display.Render(result)
+
+  local icon = OA.Display.anchor.icons[1]
+  assert_true(icon ~= nil, "icon 1 exists")
+  assert_true(icon:IsShown(), "icon 1 is visible")
+
+  -- High confidence should render with baseAlpha=1.0, icon opacity should be 1.0
+  local alpha = icon:GetAlpha()
+  assert_true(alpha >= 0.95, "high confidence icon has alpha >= 0.95 (near full opacity), got " .. tostring(alpha))
+end)
+
+-- Display Test 2: Medium confidence renders dimmed (~0.7)
+test("display-clarity: medium confidence renders slightly dimmed", function()
+  OA.Display.Init()
+  local result = {
+    queue = {
+      {spellID = 193315, kind = "rotation", source = "blizzard", confidence = "medium", degraded = false}
+    },
+    advisories = {}
+  }
+  OA.Display.Render(result)
+
+  local icon = OA.Display.anchor.icons[1]
+  local alpha = icon:GetAlpha()
+  assert_true(alpha >= 0.6 and alpha <= 0.8, "medium confidence icon has alpha ~0.7, got " .. tostring(alpha))
+end)
+
+-- Display Test 3: Low confidence renders clearly dimmed (~0.45)
+test("display-clarity: low confidence renders clearly dimmed", function()
+  OA.Display.Init()
+  local result = {
+    queue = {
+      {spellID = 193315, kind = "rotation", source = "blizzard", confidence = "low", degraded = false}
+    },
+    advisories = {}
+  }
+  OA.Display.Render(result)
+
+  local icon = OA.Display.anchor.icons[1]
+  local alpha = icon:GetAlpha()
+  assert_true(alpha >= 0.4 and alpha <= 0.55, "low confidence icon has alpha ~0.45, got " .. tostring(alpha))
+end)
+
+-- Display Test 4: Static-fallback renders distinctly dimmed and marked
+test("display-clarity: static-fallback renders distinctly dimmed with marker", function()
+  OA.Display.Init()
+  local result = {
+    queue = {
+      {spellID = 193315, kind = "rotation", source = "blizzard", confidence = "static-fallback", degraded = false}
+    },
+    advisories = {}
+  }
+  OA.Display.Render(result)
+
+  local icon = OA.Display.anchor.icons[1]
+  local alpha = icon:GetAlpha()
+  assert_true(alpha >= 0.25 and alpha <= 0.35, "static-fallback icon has alpha ~0.3, got " .. tostring(alpha))
+
+  -- Static-fallback should show badge marker
+  if icon.badge then
+    assert_true(icon.badge:IsShown(), "static-fallback icon has badge shown")
+  end
+end)
+
+-- Display Test 5: Position-1 gets distinct treatment (authority ring visible)
+test("display-clarity: position-1 gets distinct authority ring treatment", function()
+  OA.Display.Init()
+  local result = {
+    queue = {
+      {spellID = 193315, kind = "rotation", source = "blizzard", confidence = "high", degraded = false},
+      {spellID = 13750, kind = "cooldown", source = "rule", confidence = "high", degraded = false}
+    },
+    advisories = {}
+  }
+  OA.Display.Render(result)
+
+  local icon1 = OA.Display.anchor.icons[1]
+  local icon2 = OA.Display.anchor.icons[2]
+
+  assert_true(icon1 ~= nil, "position 1 exists")
+  assert_true(icon2 ~= nil, "position 2 exists")
+
+  -- Position 1 should have authRing visible (silver, non-kind encoding)
+  if icon1.authRing then
+    assert_true(icon1.authRing:IsShown(), "position-1 has authRing visible")
+  end
+
+  -- Position 2 should have kindRing (not authRing)
+  if icon2.kindRing then
+    assert_true(icon2.kindRing:IsShown(), "position-2 has kindRing visible")
+  end
+  if icon1.kindRing then
+    assert_false(icon1.kindRing:IsShown(), "position-1 does NOT show kindRing")
+  end
+end)
+
+-- Display Test 6: Degraded flag shows hazard overlay
+test("display-clarity: degraded entry shows hazard overlay", function()
+  OA.Display.Init()
+  local result = {
+    queue = {
+      {spellID = 193315, kind = "rotation", source = "blizzard", confidence = "high", degraded = true}
+    },
+    advisories = {}
+  }
+  OA.Display.Render(result)
+
+  local icon = OA.Display.anchor.icons[1]
+  if icon.hazard then
+    assert_true(icon.hazard:IsShown(), "degraded entry shows hazard overlay")
+  end
+end)
+
+-- Display Test 7: Degraded + low confidence together leaves icon visible
+test("display-clarity: degraded + low confidence icon remains above visibility floor", function()
+  OA.Display.Init()
+  local result = {
+    queue = {
+      {spellID = 193315, kind = "rotation", source = "blizzard", confidence = "low", degraded = true}
+    },
+    advisories = {}
+  }
+  OA.Display.Render(result)
+
+  local icon = OA.Display.anchor.icons[1]
+  local alpha = icon:GetAlpha()
+  -- Low confidence alone is ~0.45; degraded adds hazard overlay at 0.35.
+  -- Icon alpha should still be ~0.45 so art is readable under hazard overlay.
+  assert_true(alpha >= 0.4, "degraded + low confidence icon alpha >= 0.4 (readable), got " .. tostring(alpha))
+
+  if icon.hazard then
+    assert_true(icon.hazard:IsShown(), "degraded overlay visible on low-confidence icon")
+  end
+end)
+
+-- Display Test 8: Empty queue renders without error
+test("display-clarity: empty queue renders without error", function()
+  OA.Display.Init()
+  local result = {
+    queue = {},
+    advisories = {}
+  }
+  -- Should not error
+  OA.Display.Render(result)
+  assert_true(true, "empty queue renders without error")
+end)
+
+-- Display Test 9: Dynamic strip resize based on actual entries
+test("display-clarity: dynamic strip resize wraps actual entries, not iconCount", function()
+  OA.db.display.iconCount = 8
+  OA.Display.Init()
+
+  -- Render with only 2 entries
+  local result = {
+    queue = {
+      {spellID = 193315, kind = "rotation", source = "blizzard", confidence = "high", degraded = false},
+      {spellID = 13750, kind = "cooldown", source = "rule", confidence = "high", degraded = false}
+    },
+    advisories = {}
+  }
+  OA.Display.Render(result)
+
+  local anchor = OA.Display.anchor
+  local width, height = anchor:GetSize()
+  -- With 2 entries: width = 6 + 50 + 1*(6+42) + 6 = 110
+  assert_true(width >= 105 and width <= 115, "strip width wraps 2 entries (~110), got " .. tostring(width))
+
+  -- Render with 4 entries
+  result.queue = {
+    {spellID = 193315, kind = "rotation", source = "blizzard", confidence = "high", degraded = false},
+    {spellID = 13750, kind = "cooldown", source = "rule", confidence = "high", degraded = false},
+    {spellID = 271877, kind = "rotation", source = "blizzard", confidence = "high", degraded = false},
+    {spellID = 315341, kind = "rotation", source = "blizzard", confidence = "high", degraded = false}
+  }
+  OA.Display.Render(result)
+
+  local width2, _ = anchor:GetSize()
+  -- With 4 entries: width = 6 + 50 + 3*(6+42) + 6 = 206
+  assert_true(width2 >= 200 and width2 <= 212, "strip width wraps 4 entries (~206), got " .. tostring(width2))
+  assert_true(width2 > width, "strip width increased when entries increased")
+end)
+
+-- Display Test 10: Keybind text applies confidence alpha
+test("display-clarity: keybind text alpha follows confidence level", function()
+  OA.Display.Init()
+  local result = {
+    queue = {
+      {spellID = 193315, kind = "rotation", source = "blizzard", confidence = "low", degraded = false}
+    },
+    advisories = {}
+  }
+  OA.Display.Render(result)
+
+  local icon = OA.Display.anchor.icons[1]
+  if icon.keyText then
+    local keyAlpha = icon.keyText:GetAlpha()
+    -- Low confidence should set keyText alpha to ~0.45
+    assert_true(keyAlpha >= 0.4 and keyAlpha <= 0.55, "keybind text alpha follows confidence (~0.45), got " .. tostring(keyAlpha))
+  end
+end)
+
 -- Summary
 print("")
 print(passCount .. "/" .. testCount .. " tests passed")

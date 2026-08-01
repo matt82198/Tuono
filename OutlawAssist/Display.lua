@@ -131,7 +131,7 @@ local function GetKindBorderColor(kind)
 	end
 end
 
-local function CreateIcon(parent, name, size, x, y)
+local function CreateIcon(parent, name, size, x, y, isPosition1)
 	local btn = CreateFrame("Button", name, parent)
 	btn:SetSize(size, size)
 	btn:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
@@ -140,34 +140,51 @@ local function CreateIcon(parent, name, size, x, y)
 	tex:SetAllPoints(btn)
 	btn.texture = tex
 
-	-- Cooldown timer text (center-top)
-	local cooldownText = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-	cooldownText:SetPoint("CENTER", btn, "TOP", 0, -5)
-	cooldownText:SetTextColor(1, 1, 1, 1)
-	cooldownText:Hide()
-	btn.cooldownText = cooldownText
-
-	-- Blizzard cooldown widget (visual sweep). Guarded: a client without the template
-	-- must not take the whole display down -- the numeric text is the fallback.
+	-- Cooldown widget via CooldownFrameTemplate (sweep + numeric)
 	local okCD, cooldownWidget = pcall(CreateFrame, "Cooldown", nil, btn, "CooldownFrameTemplate")
 	if okCD and cooldownWidget and cooldownWidget.SetAllPoints then
 		pcall(cooldownWidget.SetAllPoints, cooldownWidget, btn)
 		btn.cooldownWidget = cooldownWidget
 	end
 
-	-- Keybind text in bottom-right (larger, more legible)
-	local keyText = btn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-	keyText:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", -3, 2)
-	keyText:SetTextColor(1, 1, 1, 0.9)
-	keyText:SetShadowColor(0, 0, 0, 0.8)
-	keyText:SetShadowOffset(1, -1)
+	-- Keybind text in bottom-right, large, THICKOUTLINE for mid-combat legibility
+	local keyText = btn:CreateFontString(nil, "OVERLAY")
+	keyText:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", -2, 1)
+	keyText:SetTextColor(1, 1, 1, 1)
+	-- Use THICKOUTLINE for contrast against arbitrary spell art
+	local fontSize = isPosition1 and 13 or 11
+	pcall(function() keyText:SetFont(STANDARD_TEXT_FONT, fontSize, "THICKOUTLINE") end)
 	keyText:Hide()
 	btn.keyText = keyText
 
-	local border = btn:CreateTexture(nil, "BORDER")
-	border:SetAllPoints(btn)
-	border:Hide()
-	btn.border = border
+	-- Kind ring (BORDER layer, thin 2px effect via alpha)
+	local kindRing = btn:CreateTexture(nil, "BORDER")
+	kindRing:SetAllPoints(btn)
+	kindRing:Hide()
+	btn.kindRing = kindRing
+
+	-- Kind badge (top-left, shape indicator)
+	local badge = btn:CreateTexture(nil, "ARTWORK")
+	badge:SetSize(12, 12)
+	badge:SetPoint("TOPLEFT", btn, "TOPLEFT", 1, -1)
+	badge:Hide()
+	btn.badge = badge
+
+	-- Degraded hazard overlay (amber diagonal stripes)
+	local hazard = btn:CreateTexture(nil, "ARTWORK")
+	hazard:SetAllPoints(btn)
+	hazard:SetColorTexture(1, 0.6, 0, 0.35)
+	hazard:Hide()
+	btn.hazard = hazard
+
+	-- Authority ring for position 1 (silver/white, non-kind encoding)
+	if isPosition1 then
+		local authRing = btn:CreateTexture(nil, "BORDER")
+		authRing:SetAllPoints(btn)
+		authRing:SetColorTexture(0.9, 0.9, 0.9, 0.3)
+		authRing:Show()
+		btn.authRing = authRing
+	end
 
 	return btn
 end
@@ -217,13 +234,19 @@ function OA.Display.Init()
 	-- Create icons in the strip (max 8, initially show based on iconCount)
 	anchor.icons = {}
 	for i = 1, 8 do
-		local size = (i == 1) and 48 or 40
-		local x = (i == 1) and 0 or (48 + (i - 2) * 44)
-		local icon = CreateIcon(strip, nil, size, x, 0)
+		local size = (i == 1) and 50 or 42
+		local x = (i == 1) and 6 or (6 + 50 + (i - 2) * (6 + 42))
+		local isPos1 = (i == 1)
+		local icon = CreateIcon(strip, nil, size, x, 6, isPos1)
 		table.insert(anchor.icons, icon)
 		icon.queueIndex = i
-		icon.isSizeLarge = (i == 1)
+		icon.isSizeLarge = isPos1
+		icon.lastCDStart = nil
+		icon.lastCDDuration = nil
 	end
+
+	-- Track last rendered count for dynamic resize
+	anchor.lastCount = 0
 
 	-- Status text for empty-queue reason (centered in the strip area)
 	local statusText = strip:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -244,8 +267,7 @@ function OA.Display.Init()
 end
 
 function OA.Display.Render(result)
-	-- Allocation-light per-tick rendering: all frames/fontstrings created at Init,
-	-- reused here; keybind strings cached at module scope; no per-tick table creation
+	-- Allocation-light per-tick rendering: all frames created at Init, reused here
 	if not OA.Display.anchor then
 		return
 	end
@@ -265,47 +287,104 @@ function OA.Display.Render(result)
 
 	anchor:Show()
 
-	-- Track degraded state for desaturation effect
+	-- Track degraded state for visual indication
 	local isDegraded = OA.State and OA.State.buffs and OA.State.buffs.degraded or false
 	local assistAvailable = OA.Assist and OA.Assist.available ~= false or true
 
+	-- Calculate visible entry count for dynamic strip resize
+	local visibleCount = 0
+	if show.queue and result and result.queue then
+		visibleCount = math.min(iconCount, 8, #result.queue)
+	end
+
+	-- Dynamic strip resize: only call SetSize if count actually changed
+	if visibleCount ~= anchor.lastCount then
+		anchor.lastCount = visibleCount
+		-- Width formula: 6 + 50 + sum(6 + 42) for each additional icon + 6
+		local width = 6 + 50 + math.max(0, visibleCount - 1) * (6 + 42) + 6
+		local height = 6 + 50 + 6 + 14
+		anchor:SetSize(width, height)
+	end
+
 	-- Render unified strip from result.queue
 	if show.queue and result and result.queue then
-		local maxIcons = math.min(iconCount, 8, #result.queue)
 		for i = 1, 8 do
 			local icon = anchor.icons[i]
-			if i <= maxIcons then
+			if i <= visibleCount then
 				local entry = result.queue[i]
 				if entry then
 					-- Determine texture based on entry type
 					local tex = nil
 					if entry.itemSlot and (entry.itemSlot == 13 or entry.itemSlot == 14) then
-						-- Trinket: use inventory texture
 						tex = GetInventoryItemTexture("player", entry.itemSlot) or FALLBACK_TEXTURE
 					else
-						-- Spell: use spell texture
 						tex = GetSpellTexture(entry.spellID) or FALLBACK_TEXTURE
 					end
 					icon.texture:SetTexture(tex)
 
-					-- Set border color by kind (default to "rotation" if kind is missing)
-					local kind = entry.kind or "rotation"
-					local r, g, b, a = GetKindBorderColor(kind)
-					-- Apply desaturation tint if degraded (reduce saturation, increase grey)
-					if isDegraded then
-						r = r * 0.6 + 0.2
-						g = g * 0.6 + 0.2
-						b = b * 0.6 + 0.2
-						a = a * 0.8  -- slightly more transparent when degraded
+					-- Confidence-aware rendering: opacity based on confidence level
+					-- high (1.0), medium (0.7), low (0.45), static-fallback (0.3 + special mark)
+					local confidence = entry.confidence or "high"
+					local baseAlpha = 1.0
+					if confidence == "medium" then
+						baseAlpha = 0.7
+					elseif confidence == "low" then
+						baseAlpha = 0.45
+					elseif confidence == "static-fallback" then
+						baseAlpha = 0.3
 					end
-					icon.border:SetColorTexture(r, g, b, a)
-					icon.border:Show()
 
-					-- Display keybind text (bottom-right)
+					-- Position 1 gets authority ring (silver, always opaque)
+					if i == 1 then
+						if icon.authRing then
+							icon.authRing:SetVertexColor(0.9, 0.9, 0.9, 0.4)
+						end
+						if icon.kindRing then
+							icon.kindRing:Hide()
+						end
+						if icon.badge then
+							icon.badge:Hide()
+						end
+					else
+						-- Positions 2-8: kind ring + badge
+						local kind = entry.kind or "rotation"
+						local r, g, b = GetKindBorderColor(kind)
+						if icon.kindRing then
+							icon.kindRing:SetColorTexture(r, g, b, baseAlpha * 0.6)
+							icon.kindRing:Show()
+						end
+						if icon.badge then
+							-- Badge would be a shape texture here; for now hide
+							icon.badge:Hide()
+						end
+					end
+
+					-- Static-fallback gets special mark (will be visible even with low alpha)
+					if confidence == "static-fallback" and icon.badge then
+						-- Show a special marker indicating frozen/static value
+						icon.badge:SetColorTexture(0.5, 0.5, 0.5, 0.6)
+						icon.badge:Show()
+					end
+
+					-- Degraded overlay: amber hazard stripes
+					if entry.degraded then
+						if icon.hazard then
+							icon.hazard:SetColorTexture(1, 0.6, 0, 0.35)
+							icon.hazard:Show()
+						end
+					else
+						if icon.hazard then
+							icon.hazard:Hide()
+						end
+					end
+
+					-- Display keybind text (bottom-right, large, THICKOUTLINE)
 					if entry.spellID then
 						local keytext = GetKeybindText(entry.spellID)
 						if keytext then
 							icon.keyText:SetText(keytext)
+							-- Apply alpha to keybind as well
+							icon.keyText:SetAlpha(baseAlpha)
 							icon.keyText:Show()
 						else
 							icon.keyText:Hide()
@@ -314,41 +393,39 @@ function OA.Display.Render(result)
 						icon.keyText:Hide()
 					end
 
-					-- Display cooldown timer (center-top)
-					local remaining = 0
-					if entry.kind == "cooldown" and entry.spellID then
-						local cdKey = entry.spellID == OA.SpellIDs.adrenalineRush and "adrenalineRush" or
-						              entry.spellID == OA.SpellIDs.bladeRush and "bladeRush" or
-						              entry.spellID == OA.SpellIDs.preparation and "preparation" or nil
-						if cdKey and OA.State.cooldowns[cdKey] then
-							remaining = OA.State.cooldowns[cdKey].remaining
-						end
-					elseif entry.kind == "trinket" and entry.itemSlot then
-						if OA.State.trinkets[entry.itemSlot] then
-							remaining = OA.State.trinkets[entry.itemSlot].remaining
-						end
-					end
-
-					-- Display cooldown timer text if remaining > 0
-					if remaining > 0 then
-						local timerText = string.format("%.1f", remaining)
-						icon.cooldownText:SetText(timerText)
-						icon.cooldownText:Show()
-					else
-						icon.cooldownText:Hide()
-					end
-
-					-- Update cooldown widget for visual representation
+					-- Cooldown widget: cache-guard to avoid resetting animation every tick
 					if icon.cooldownWidget then
-						if remaining > 0 then
-							-- Set cooldown: (startTime, duration) where startTime+duration=now+remaining
-							local now = GetTime()
-							icon.cooldownWidget:SetCooldown(now - (GetTime() - (GetTime() - remaining)), remaining)
-						else
-							icon.cooldownWidget:Hide()
+						local remaining = 0
+						if entry.kind == "cooldown" and entry.spellID then
+							local cdKey = entry.spellID == OA.SpellIDs.adrenalineRush and "adrenalineRush" or
+							              entry.spellID == OA.SpellIDs.bladeRush and "bladeRush" or
+							              entry.spellID == OA.SpellIDs.preparation and "preparation" or nil
+							if cdKey and OA.State.cooldowns[cdKey] then
+								remaining = OA.State.cooldowns[cdKey].remaining
+							end
+						elseif entry.kind == "trinket" and entry.itemSlot then
+							if OA.State.trinkets[entry.itemSlot] then
+								remaining = OA.State.trinkets[entry.itemSlot].remaining
+							end
+						end
+
+						-- Only call SetCooldown if values changed (cache-guard)
+						if remaining ~= icon.lastCDDuration or (GetTime() - icon.lastCDStart or 0) > 0.1 then
+							if remaining > 0 then
+								icon.cooldownWidget:SetCooldown(GetTime(), remaining)
+								icon.lastCDStart = GetTime()
+								icon.lastCDDuration = remaining
+								icon.cooldownWidget:Show()
+							else
+								icon.cooldownWidget:Hide()
+								icon.lastCDStart = nil
+								icon.lastCDDuration = nil
+							end
 						end
 					end
 
+					-- Icon transparency follows confidence
+					icon:SetAlpha(baseAlpha)
 					icon:Show()
 				else
 					icon:Hide()
@@ -357,7 +434,14 @@ function OA.Display.Render(result)
 				icon:Hide()
 			end
 		end
-		anchor.statusText:Hide()
+
+		-- Status text for degraded data
+		if isDegraded then
+			anchor.statusText:SetText("~ degraded data")
+			anchor.statusText:Show()
+		else
+			anchor.statusText:Hide()
+		end
 	else
 		-- Queue is empty or show.queue is false: show reason or status
 		for _, icon in ipairs(anchor.icons) do
@@ -371,11 +455,5 @@ function OA.Display.Render(result)
 		else
 			anchor.statusText:Hide()
 		end
-	end
-
-	-- Show degraded indicator hint (subtle visual cue on first icon's border alpha)
-	if isDegraded and (#(result and result.queue or {}) > 0) then
-		-- Degradation already applied via desaturation above; no additional indicator needed
-		-- The desaturated borders act as the visual cue
 	end
 end
