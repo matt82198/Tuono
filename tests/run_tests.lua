@@ -1572,6 +1572,150 @@ test("Additional-4: RtB legacy fallback marks degraded", function()
   assert_true(true, "degraded flag available for legacy fallback signaling")
 end)
 
+-- === live-queue tests ===
+
+-- LIVE QUEUE TEST 1: Position 1 tracks live GetNextCastSpell changes every tick
+test("live-queue: position 1 always tracks live GetNextCastSpell every tick", function()
+  -- Simulate dynamic GetNextCastSpell that changes each tick
+  local spellSequence = {193315, 1234, 5678, 193315}
+  local sequenceIndex = 1
+
+  _G.C_AssistedCombat.GetNextCastSpell = function()
+    local spell = spellSequence[sequenceIndex]
+    sequenceIndex = sequenceIndex + 1
+    if sequenceIndex > #spellSequence then
+      sequenceIndex = 1
+    end
+    return spell
+  end
+
+  OA.State.inCombat = true
+  OA.State.stealthed = false
+
+  -- Poll 1: GetNextCastSpell = 193315
+  OA.Assist.Update()
+  local r1 = OA.Engine.Evaluate()
+  assert_eq(r1.queue[1].spellID, 193315, "position 1 = 193315 at first poll")
+
+  -- Poll 2: GetNextCastSpell = 1234 (should change position 1)
+  OA.Assist.Update()
+  local r2 = OA.Engine.Evaluate()
+  assert_eq(r2.queue[1].spellID, 1234, "position 1 = 1234 at second poll (changed)")
+
+  -- Poll 3: GetNextCastSpell = 5678 (should change again)
+  OA.Assist.Update()
+  local r3 = OA.Engine.Evaluate()
+  assert_eq(r3.queue[1].spellID, 5678, "position 1 = 5678 at third poll (changed again)")
+
+  -- Restore to default
+  _G.C_AssistedCombat.GetNextCastSpell = function(b) return 193315 end
+end)
+
+-- LIVE QUEUE TEST 2: Positions 2+ contain ONLY rule-derived entries, not static rotation
+test("live-queue: positions 2+ contain no entries from static rotation list", function()
+  OA.State.inCombat = true
+  OA.State.stealthed = false
+  OA.State.comboPoints = 2  -- AR PIN at low CP
+
+  OA.Assist.Update()
+  local r = OA.Engine.Evaluate()
+
+  -- Verify position 1 is from Blizzard
+  assert_eq(r.queue[1].source, "blizzard", "position 1 source is blizzard")
+
+  -- Positions 2+ must be from rules, not blizzard rotation
+  for i = 2, #r.queue do
+    local entry = r.queue[i]
+    assert_true(entry.source ~= "blizzard" or entry.kind ~= "rotation",
+      "queue position " .. i .. " not a static blizzard rotation entry")
+  end
+end)
+
+-- LIVE QUEUE TEST 3: Queue does not pad with static rotation entries
+test("live-queue: queue does not pad with static rotation entries", function()
+  OA.State.inCombat = true
+  OA.State.stealthed = false
+  OA.State.comboPoints = 4  -- Mid-range CP (no PIN)
+  OA.State.buffs.adrenalineRush.up = false
+  OA.State.buffs.opportunity.up = false
+  OA.State.trinkets[13].ready = false
+  OA.State.trinkets[14].ready = false
+  OA.State.buffs.rtb.stage = 3  -- RtB up (no stage-0 rule fire)
+  OA.State.cooldowns.adrenalineRush.ready = false
+  OA.State.cooldowns.bladeRush.ready = false
+  OA.State.cooldowns.preparation.ready = false
+  OA.db.aoeMode = false
+  OA.Assist.aoeDetected = false
+
+  OA.Assist.Update()
+  local r = OA.Engine.Evaluate()
+
+  -- Old behavior would pad with all static rotation entries (4+).
+  -- New behavior should have only position 1 + any rule-derived entries.
+  -- Most states should result in <= 3 entries when no major rules fire.
+  assert_true(#r.queue <= 3, "queue not padded with static rotation (<=3 when no rules fire)")
+end)
+
+-- LIVE QUEUE TEST 4: aoeDetected still works off rotationSet
+test("live-queue: aoeDetected still detects blade flurry from rotationSet", function()
+  assert_true(_G.C_AssistedCombat ~= nil, "C_AssistedCombat available")
+
+  -- Rotation includes Blade Flurry
+  _G.C_AssistedCombat.GetRotationSpells = function()
+    return {193315, 271877, 13877, 315341}  -- Includes Blade Flurry (13877)
+  end
+
+  OA.Assist.Update()
+
+  assert_true(OA.Assist.aoeDetected, "aoeDetected=true when Blade Flurry in rotationSet")
+  assert_true(OA.Assist.rotationSet[13877], "Blade Flurry in rotationSet")
+
+  -- Rotation excludes Blade Flurry
+  _G.C_AssistedCombat.GetRotationSpells = function()
+    return {193315, 271877, 315341}  -- No Blade Flurry
+  end
+
+  OA.Assist.Update()
+
+  assert_false(OA.Assist.aoeDetected, "aoeDetected=false when Blade Flurry NOT in rotationSet")
+  assert_false(OA.Assist.rotationSet[13877], "Blade Flurry not in rotationSet")
+
+  -- Restore default
+  _G.C_AssistedCombat.GetRotationSpells = function() return {193315, 271877, 315341, 13877} end
+end)
+
+-- LIVE QUEUE TEST 5: lastChangeAt updates when position 1 changes
+test("live-queue: lastChangeAt timestamp updates when position 1 changes", function()
+  -- Reset to ensure clean state
+  OA.Assist.nextSpellID = nil
+  OA.Assist.lastChangeAt = 0
+
+  -- First Update: position 1 changes from nil to 193315
+  _G.C_AssistedCombat.GetNextCastSpell = function() return 193315 end
+  OA.Assist.Update()
+  local firstChangeTime = OA.Assist.lastChangeAt
+
+  -- Verify it was recorded (should be a number >= 0)
+  assert_true(type(firstChangeTime) == "number", "lastChangeAt is a number after first change")
+
+  -- Position 1 stays same
+  OA.Assist.Update()
+  assert_eq(OA.Assist.lastChangeAt, firstChangeTime, "lastChangeAt unchanged when position 1 stable")
+
+  -- Position 1 changes to different spell
+  _G.C_AssistedCombat.GetNextCastSpell = function() return 1234 end
+  OA.Assist.Update()
+  local secondChangeTime = OA.Assist.lastChangeAt
+
+  assert_true(type(secondChangeTime) == "number", "lastChangeAt updated to a number")
+  assert_true(secondChangeTime >= firstChangeTime, "lastChangeAt does not decrease when position 1 changes")
+
+  -- Restore default
+  _G.C_AssistedCombat.GetNextCastSpell = function() return 193315 end
+  OA.Assist.nextSpellID = nil
+  OA.Assist.lastChangeAt = 0
+end)
+
 -- Summary
 print("")
 print(passCount .. "/" .. testCount .. " tests passed")

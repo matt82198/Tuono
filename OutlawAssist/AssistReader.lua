@@ -4,8 +4,10 @@ OA.Assist = {
 	available = false,
 	nextSpellID = nil,
 	queue = {},
+	rotationSet = {},
 	aoeDetected = false,
-	deviated = false
+	deviated = false,
+	lastChangeAt = 0
 }
 
 local warned = false
@@ -24,6 +26,7 @@ function OA.Assist.Update()
 		OA.Assist.available = false
 		OA.Assist.nextSpellID = nil
 		wipe(OA.Assist.queue)
+		wipe(OA.Assist.rotationSet)
 		return
 	end
 
@@ -36,6 +39,7 @@ function OA.Assist.Update()
 		OA.Assist.available = false
 		OA.Assist.nextSpellID = nil
 		wipe(OA.Assist.queue)
+		wipe(OA.Assist.rotationSet)
 		return
 	end
 
@@ -44,23 +48,21 @@ function OA.Assist.Update()
 	local nextSpell = OA.safe(function()
 		return C_AssistedCombat.GetNextCastSpell(false)
 	end)
+	local prevNextSpellID = OA.Assist.nextSpellID
 	OA.Assist.nextSpellID = nextSpell or nil
 
+	-- Track when position 1 changes (diagnostic: lastChangeAt timestamp)
+	if OA.Assist.nextSpellID ~= prevNextSpellID then
+		OA.Assist.lastChangeAt = GetTime()
+	end
+
+	-- Get rotation spells and build CAPABILITY SET (not a sequence)
 	local rotationSpells = OA.safe(function()
 		return C_AssistedCombat.GetRotationSpells()
 	end) or {}
 
-	wipe(OA.Assist.queue)
-
-	if OA.Assist.nextSpellID then
-		table.insert(OA.Assist.queue, OA.Assist.nextSpellID)
-	end
-
-	local seen = {}
-	if OA.Assist.nextSpellID then
-		seen[OA.Assist.nextSpellID] = true
-	end
-
+	-- Clear rotation set and rebuild it for membership tests only
+	wipe(OA.Assist.rotationSet)
 	for _, entry in ipairs(rotationSpells) do
 		local spellID = nil
 
@@ -70,22 +72,22 @@ function OA.Assist.Update()
 			spellID = entry.spellID
 		end
 
-		if spellID and not seen[spellID] then
-			table.insert(OA.Assist.queue, spellID)
-			seen[spellID] = true
+		if spellID then
+			OA.Assist.rotationSet[spellID] = true
 		end
 	end
 
-	-- Detect AoE: check if Blade Flurry appears in the normalized queue
-	-- Blizzard's engine recommends AoE when 2+ targets are present
+	-- POSITION 1: always live GetNextCastSpell, no padding with static rotation
+	-- Queue is built dynamically by IntelligenceLayer from rules only
+	wipe(OA.Assist.queue)
+	if OA.Assist.nextSpellID then
+		table.insert(OA.Assist.queue, OA.Assist.nextSpellID)
+	end
+
+	-- Detect AoE: check if Blade Flurry appears in the capability set (rotationSet)
 	OA.Assist.aoeDetected = false
 	if OA.SpellIDs and OA.SpellIDs.bladeFlurry then
-		for _, spellID in ipairs(OA.Assist.queue) do
-			if spellID == OA.SpellIDs.bladeFlurry then
-				OA.Assist.aoeDetected = true
-				break
-			end
-		end
+		OA.Assist.aoeDetected = OA.Assist.rotationSet[OA.SpellIDs.bladeFlurry] or false
 	end
 end
 
