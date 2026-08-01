@@ -194,11 +194,11 @@ local function RefreshTrinkets()
 			if not trinketSpellCache[itemID] then
 				local hasUse = false
 				if C_Item and C_Item.GetItemSpell then
-					local spellID = C_Item.GetItemSpell(itemID)
-					hasUse = spellID and spellID > 0
+					local spellName, spellID = C_Item.GetItemSpell(itemID)
+					hasUse = OA.num(spellID, 0) > 0
 				elseif GetItemSpell then
-					local spellID = GetItemSpell(itemID)
-					hasUse = spellID and spellID > 0
+					local spellName, spellID = GetItemSpell(itemID)
+					hasUse = OA.num(spellID, 0) > 0
 				end
 				trinketSpellCache[itemID] = hasUse
 			end
