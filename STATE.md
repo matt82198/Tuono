@@ -66,3 +66,16 @@ whether any accessor IS proc-aware — Blizzard's own UI highlight reportedly re
 
 - v0.1.0 → v0.1.3 → v0.2.0 → v0.2.2/v0.2.3 (current, converge CLEAN)
 - Next: M4 completion (party-HP if legal) → v0.3.0 (M5 CurseForge + docs)
+
+## PRODUCT DIRECTION (user, 2026-08-01): UI SUITE
+
+Scope expands from "rotation bar" to a minimalist UI package, Liquid/Maximum-inspired, old-WeakAuras
+aesthetic (flat bars, thin borders, condensed fonts, no beveling):
+- Rotation bar: CENTER of screen (this is the anchor of the layout, not an off-to-the-side widget).
+- Health bar: minimalist.
+- Unit frames + party frames: restyled to match the same aesthetic.
+- Nameplates: USER HANDLES THESE - do not build nameplate styling.
+Research in flight: docs/research/liquid-ui-style.md (aesthetic tokens), docs/research/unitframe-feasibility.md
+(can unit/party frames even be built in Midnight: secure frames, taint, whether party health is
+readable in combat). Feasibility gates the whole suite - if party health is secret in combat, party
+frames cannot show live health and the design must change.
