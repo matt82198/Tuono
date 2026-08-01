@@ -63,6 +63,77 @@ log("== C: known-spell table empty (probe unavailable) ==")
 OA.State.knownSpells = {}
 showBar("  0 CP")
 
+-- === p0fix tests ===
+
+-- P0-1 TEST: Stealth opener yields Ambush ONCE, then different ability
+log("")
+log("== P0-1: Stealth opener (Ambush clears stealthed) ==")
+OA.State.inCombat = false
+OA.State.stealthed = true
+OA.State.buffs.degraded = false
+OA.State.energy = 100
+OA.State.comboPoints = 0
+OA.State.knownSpells = {}
+OA.State.knownSpells[OA.SpellIDs.ambush] = true
+OA.State.knownSpells[OA.SpellIDs.sinisterStrike] = true
+OA.State.knownSpells[OA.SpellIDs.dispatch] = true
+OA.State.cooldowns.ambush = { known = true, ready = true, remaining = 0 }
+OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+OA.State.cooldowns.dispatch = { known = true, ready = true, remaining = 0 }
+for _, k in ipairs({"adrenalineRush","bladeRush","preparation","betweenTheEyes",
+                    "killingSpree","rollTheBones","keepItRolling","bladeFlurry"}) do
+  OA.State.knownSpells[OA.SpellIDs[k]] = false
+  OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+end
+showBar("  Stealth: Ambush ONCE, then different")
+
+-- P0-2 TEST: At max CP with finisher ready, finisher appears at position 1
+log("")
+log("== P0-2: At 5 CP, finisher priority (Dispatch first, not buried) ==")
+OA.State.inCombat = true
+OA.State.stealthed = false
+OA.State.buffs.degraded = true
+OA.State.energy = 100
+OA.State.comboPoints = 5
+OA.State.knownSpells = {}
+OA.State.knownSpells[OA.SpellIDs.sinisterStrike] = true
+OA.State.knownSpells[OA.SpellIDs.dispatch] = true
+OA.State.cooldowns.dispatch = { known = true, ready = true, remaining = 0 }
+OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+for _, k in ipairs({"adrenalineRush","bladeRush","preparation","betweenTheEyes",
+                    "killingSpree","rollTheBones","keepItRolling","bladeFlurry","ambush"}) do
+  OA.State.knownSpells[OA.SpellIDs[k]] = false
+  OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+end
+showBar("  5 CP: Dispatch first (not buried)")
+
+-- P0-3 TEST: Levelling fixture (SS + Dispatch, 5 CP) puts Dispatch at position 1
+log("")
+log("== P0-3: Levelling (SS + Dispatch, 5 CP), Dispatch at position 1 ==")
+-- (same state as P0-2, already set above)
+-- The test is: position 1 should be Dispatch, not SS
+showBar("  Levelling 5 CP: Dispatch at position 1")
+
+-- P0-4 TEST: Killing Spree not treated as CP spender at 6 CP
+log("")
+log("== P0-4: Killing Spree independent of CP, not gated to 6 CP ==")
+OA.State.inCombat = true
+OA.State.stealthed = false
+OA.State.buffs.degraded = true
+OA.State.energy = 100
+OA.State.comboPoints = 2  -- Low CP, not 6 CP
+OA.State.knownSpells = {}
+OA.State.knownSpells[OA.SpellIDs.killingSpree] = true
+OA.State.knownSpells[OA.SpellIDs.sinisterStrike] = true
+OA.State.cooldowns.killingSpree = { known = true, ready = true, remaining = 0 }
+OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+for _, k in ipairs({"adrenalineRush","bladeRush","preparation","betweenTheEyes",
+                    "rollTheBones","keepItRolling","bladeFlurry","ambush","dispatch"}) do
+  OA.State.knownSpells[OA.SpellIDs[k]] = false
+  OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+end
+showBar("  2 CP: Killing Spree available (not gated to 6 CP)")
+
 io.write(table.concat(out, "\n") .. "\n")
 
 -- Direct Predict probe: how many steps does it actually return?

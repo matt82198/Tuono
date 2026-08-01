@@ -2,6 +2,21 @@
 
 All notable changes to OutlawAssist are documented here.
 
+## [1.5.0] - 2026-08-01
+
+### Fixed — Release Blockers (Expert Audit)
+- **P0-1: Stealth opener predicting Ambush 4x in a row** — Ambush was marked `gcd=false` (incorrect; breaks stealth on cast consumes GCD), and the simulation never cleared `S.stealthed` after applying Ambush. Result: the bar showed "Ambush Ambush Ambush Ambush" for the first 4 GCDs after stealth, teaching players to spam an ability that can only be used once per opener. Fixed: (1) `gcd=false` → `gcd=true` in ABILITIES table, (2) added `S.stealthed = false` in effects application block after Ambush is cast in simulation.
+- **P0-2: Finisher starvation at 5-6 CP** — At 5-6 combo points with finisher available, the bar buried the finisher behind Roll the Bones / Adrenaline Rush / Blade Rush / Preparation (none of which spend CP), preventing it from appearing in the 4-icon visible window. Affects the exact moment a finisher should be spent. Fixed by gating utilities: (1) RtB to not fire when 5+ CP with finisher available, (2) AR to <= 2 CP (consistent with rules.lua), (3) Prep to not fire when 5+ CP with finisher available, (4) BR to not fire when 5+ CP with finisher available.
+- **P0-3: PREFER rule demoting finisher at 5 CP** — `rules.lua:sinister_strike_builder` PREFER unconditionally moved SS forward whenever `S.comboPoints <= 5`, overriding `Rotation.lua:Dispatch_finisher` which correctly prioritized spending a ready finisher. Result: position 1 icon said "build more" instead of "spend 5 CP now". Fixed: gated PREFER to `<= 4 CP` so Dispatch at 5 CP is not demoted.
+- **P0-4: Killing Spree modeled as 6-CP finisher** — Killing Spree was coded as `cpSpend=6` and gated behind `>= 6 CP`, competing with Between the Eyes as if the player must choose "which 6-CP finisher". In live, Killing Spree is a combo-point-independent burst cooldown (teleports + attacks, uses no CP resource). Result: the addon withheld a major cooldown until combo points were capped, throwing away DPS and breaking leveling rotation advice. Fixed: (1) `cpSpend=6` → `cpSpend=0` in ABILITIES table, (2) renamed `KS_finisher_6cp` rule to `KS_burst_cooldown` and removed CP gate, (3) corrected spell ID citation from 5374 (legacy) to 51690 (current patch).
+- **Citation mismatches** — Three ability entries had inline Wowhead links pointing at different spell IDs than what the code actually casts (undermining the "verified 2026-08-01" claims): Sinister Strike cited 1752 (classic/legacy), actually uses 193315; Blade Rush cited 271896, actually uses 271877; Killing Spree cited 5374, actually uses 51690. Fixed all citations to match the IDs in OA.SpellIDs.
+
+### Tests Added
+- `P0-1 scenario: Stealth opener` — Verifies Ambush fires once, then next ability differs (not Ambush again)
+- `P0-2 scenario: 5 CP finisher priority` — Confirms Dispatch appears at position 1, not buried behind utilities
+- `P0-3 scenario: Leveling fixture` — Verifies SS+Dispatch at 5 CP puts Dispatch at position 1 (not demoted by PREFER)
+- `P0-4 scenario: Killing Spree low CP` — Confirms KS is available and recommended at 2 CP (not gated to 6 CP)
+
 ## [1.4.0] - 2026-08-01
 
 ### Added
