@@ -35,6 +35,8 @@ stub.eventHandlers = {}
 stub.frameScripts = {}
 stub.frames = {}
 stub.slashCommands = {}
+stub.nameplates = {}
+stub.threatLevels = {}
 
 function stub.FireEvent(event, ...)
   local handlers = stub.eventHandlers[event] or {}
@@ -495,6 +497,44 @@ function _G.GetActionInfo(slot)
     return "spell", 193315  -- Spell in slot 1
   end
   return nil
+end
+
+-- C_NamePlate stub for threat detection
+_G.C_NamePlate = {
+  GetNamePlates = function()
+    return stub.nameplates
+  end
+}
+
+-- Helper to add a nameplate with threat level
+function stub.AddNamePlate(unitToken, threatLevel)
+  threatLevel = threatLevel or 3  -- Default to high threat
+  local plate = {
+    namePlateUnitToken = unitToken,
+    UnitFrame = {
+      unit = unitToken
+    }
+  }
+  table.insert(stub.nameplates, plate)
+  -- Store threat level in stub for UnitThreatSituation
+  if not stub.threatLevels then
+    stub.threatLevels = {}
+  end
+  stub.threatLevels[unitToken] = threatLevel
+end
+
+-- Helper to clear nameplates
+function stub.ClearNamePlates()
+  wipe(stub.nameplates)
+  stub.threatLevels = {}
+end
+
+-- UnitThreatSituation stub
+function _G.UnitThreatSituation(player, unitToken)
+  if not stub.threatLevels then
+    return nil
+  end
+  return stub.threatLevels[unitToken]
 end
 
 return stub
