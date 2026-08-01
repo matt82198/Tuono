@@ -4,12 +4,16 @@ OA.Assist = {
 	available = false,
 	nextSpellID = nil,
 	queue = {},
-	aoeDetected = false
+	aoeDetected = false,
+	deviated = false
 }
 
 local warned = false
 
 function OA.Assist.Update()
+	-- Clear deviation flag at start of update; it will be re-set by event handler if player casts ~= recommendation
+	OA.Assist.deviated = false
+
 	if not C_AssistedCombat then
 		if not warned then
 			OA.safe(function()
@@ -84,3 +88,13 @@ function OA.Assist.Update()
 		end
 	end
 end
+
+-- Deviation detection: flag when player casts a spell that doesn't match recommendation
+-- This handler runs immediately on spell cast (forced by event), then Update() clears the flag on next tick
+OA.RegisterEvent("UNIT_SPELLCAST_SUCCEEDED", function(event, unit, castGUID, spellID, ...)
+	if unit == "player" and spellID ~= OA.Assist.nextSpellID then
+		OA.Assist.deviated = true
+		-- Request immediate update to refresh recommendation after deviation
+		OA.RequestImmediateUpdate()
+	end
+end)
