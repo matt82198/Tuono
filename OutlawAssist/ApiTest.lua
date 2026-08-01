@@ -247,5 +247,121 @@ local function debug()
   end
 end
 
+local watchState = nil
+
+local function watch()
+  if watchState and watchState.active then
+    OA.print("Watch already running - wait for current run to finish or restart WoW")
+    return
+  end
+
+  watchState = {
+    active = true,
+    startTime = GetTime(),
+    endTime = GetTime() + 15,
+    samples = {},
+    rotationSnapshots = {},
+    sampleCount = 0,
+    lastSampleTime = GetTime() - 0.25
+  }
+
+  -- Wrap Assist.Update to collect samples
+  local originalUpdate = OA.Assist.Update
+  function OA.Assist.Update()
+    originalUpdate()
+
+    local now = GetTime()
+    if not watchState.active then return end
+
+    -- Sample every 0.25s
+    if (now - watchState.lastSampleTime) >= 0.25 then
+      watchState.lastSampleTime = now
+      watchState.sampleCount = watchState.sampleCount + 1
+
+      -- Record nextSpellID
+      table.insert(watchState.samples, OA.Assist.nextSpellID or 0)
+
+      -- Record rotation list snapshot
+      local rotationSpells = OA.safe(function()
+        return C_AssistedCombat and C_AssistedCombat.GetRotationSpells() or {}
+      end) or {}
+      local snapshot = {}
+      for _, entry in ipairs(rotationSpells) do
+        local spellID = nil
+        if type(entry) == "number" then
+          spellID = entry
+        elseif type(entry) == "table" and entry.spellID then
+          spellID = entry.spellID
+        end
+        if spellID then
+          table.insert(snapshot, spellID)
+        end
+      end
+      table.insert(watchState.rotationSnapshots, snapshot)
+    end
+
+    if now >= watchState.endTime then
+      watchState.active = false
+
+      -- Restore original Update
+      OA.Assist.Update = originalUpdate
+
+      -- Analyze results
+      local samples = watchState.samples
+      local rotationSnapshots = watchState.rotationSnapshots
+
+      -- Count distinct nextSpellID values
+      local distinctSet = {}
+      local changeCount = 0
+      local prevSpellID = samples[1]
+      for i, spellID in ipairs(samples) do
+        distinctSet[spellID] = true
+        if spellID ~= prevSpellID then
+          changeCount = changeCount + 1
+          prevSpellID = spellID
+        end
+      end
+      local distinctCount = 0
+      for _ in pairs(distinctSet) do
+        distinctCount = distinctCount + 1
+      end
+
+      -- Check if rotation list changed
+      local rotationChanged = false
+      if #rotationSnapshots > 1 then
+        local first = rotationSnapshots[1]
+        for i = 2, #rotationSnapshots do
+          local curr = rotationSnapshots[i]
+          if #curr ~= #first then
+            rotationChanged = true
+            break
+          end
+          for j = 1, #first do
+            if curr[j] ~= first[j] then
+              rotationChanged = true
+              break
+            end
+          end
+          if rotationChanged then break end
+        end
+      end
+
+      OA.print("=== /oa watch results (15 second sample) ===")
+      OA.print("Distinct nextSpellID values: " .. distinctCount)
+      OA.print("Position 1 changes: " .. changeCount)
+      OA.print("Rotation list changed: " .. (rotationChanged and "YES (list is live)" or "NO (list is static)"))
+      OA.print("Samples collected: " .. watchState.sampleCount)
+      OA.print("Last change timestamp: " .. string.format("%.2f", OA.Assist.lastChangeAt or 0))
+      OA.print("Paste this output if queue appears frozen in combat")
+
+      watchState = nil
+    end
+  end
+
+  OA.print("Watch started - sampling queue liveness for 15 seconds")
+  OA.print("Run this during combat or while casting off-rotation for best results")
+end
+
 OA.RegisterSlash("apitest", apitest, "Run API compatibility probe")
 OA.RegisterSlash("debug", debug, "Print one-shot state dump")
+OA.RegisterSlash("watch", watch, "Sample queue liveness for 15s; run during combat when queue frozen")

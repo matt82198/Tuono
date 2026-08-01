@@ -56,25 +56,14 @@ function OA.Engine.Evaluate()
     return { queue = resultQueue, advisories = resultAdvisories }
   end
 
-  -- Populate base queue: nextSpellID first, then queue
+  -- Populate base queue: POSITION 1 ONLY from live GetNextCastSpell (no static rotation padding)
+  -- GetRotationSpells is treated as a capability set (rotationSet), not a sequence to pad the queue
   local queueIndex = 1
   if A.nextSpellID then
     resultQueue[queueIndex] = { spellID = A.nextSpellID, source = "blizzard", kind = "rotation" }
     tempDedup[A.nextSpellID] = true
     queueSet[A.nextSpellID] = queueIndex
     queueIndex = queueIndex + 1
-  end
-
-  -- Add remaining queue entries (avoid duplicates)
-  if A.queue then
-    for _, spellID in ipairs(A.queue) do
-      if spellID and not tempDedup[spellID] then
-        resultQueue[queueIndex] = { spellID = spellID, source = "blizzard", kind = "rotation" }
-        tempDedup[spellID] = true
-        queueSet[spellID] = queueIndex
-        queueIndex = queueIndex + 1
-      end
-    end
   end
 
   -- Step 2: Apply rules in array order
