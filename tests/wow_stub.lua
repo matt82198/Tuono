@@ -388,7 +388,10 @@ _G.SlashCmdList = {}
 local SECRET_MARKER = "__is_secret_value"
 
 -- Secret value factory for testing WoW Midnight behavior
+-- Secrets report their REAL type via type() (e.g., secret number has type=="number")
+-- This models actual Midnight client behavior where secrets pass through type() checks
 function stub.makeSecret(value)
+  local realType = type(value)
   local secretMeta = {
     __lt = function() error("attempt to compare secret") end,
     __le = function() error("attempt to compare secret") end,
@@ -400,16 +403,30 @@ function stub.makeSecret(value)
     __len = function() error("attempt to get length of secret") end,
     __concat = function(a, b) return tostring(a) .. tostring(b) end,
     __tostring = function(a) return tostring(value) end,
-    [SECRET_MARKER] = true
+    [SECRET_MARKER] = true,
+    __secret_real_type = realType  -- Store the real type for shadowed type() function
   }
   local secret = {}
   setmetatable(secret, secretMeta)
   return secret
 end
 
+-- Shadow the global type() function to return the real type for secrets
+-- This models Midnight behavior where secrets report their real type
+local real_type = type
+function _G.type(x)
+  if x and real_type(x) == "table" then
+    local mt = getmetatable(x)
+    if mt and mt[SECRET_MARKER] then
+      return mt.__secret_real_type or "table"
+    end
+  end
+  return real_type(x)
+end
+
 -- Global issecretvalue for Midnight API compliance testing
 function _G.issecretvalue(v)
-  if v and type(v) == "table" then
+  if v and real_type(v) == "table" then
     local mt = getmetatable(v)
     if mt and mt[SECRET_MARKER] then
       return true

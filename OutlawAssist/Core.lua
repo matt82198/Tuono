@@ -58,9 +58,10 @@ end
 function OA.num(v, default)
   default = default or 0
   if v == nil then return default end
-  if type(v) == "number" then return v end
-  -- Check for secret values (issecretvalue exists in Midnight)
+  -- Check for secret values FIRST, before any type() check (issecretvalue exists in Midnight)
+  -- Secret values report their real type, so type(secret_number)=="number" without this guard
   if _G.issecretvalue and _G.issecretvalue(v) then return default end
+  if type(v) == "number" then return v end
   -- Try string coercion as fallback
   if type(v) == "string" then
     local n = tonumber(v)
@@ -74,9 +75,10 @@ end
 function OA.bool(v, default)
   default = default or false
   if v == nil then return default end
-  if type(v) == "boolean" then return v end
-  -- Check for secret values
+  -- Check for secret values FIRST, before any type() check
+  -- Secret values report their real type, so type(secret_bool)=="boolean" without this guard
   if _G.issecretvalue and _G.issecretvalue(v) then return default end
+  if type(v) == "boolean" then return v end
   return default
 end
 
