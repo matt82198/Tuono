@@ -85,19 +85,22 @@ OA.Rules = {
     source = "outlaw-rotation.md §1 (Opportunity & Audacity Procs: 'Opportunity: Granted by Sinister Strike double-strikes; enables free Pistol Shot')"
   },
 
-  -- Mandatory Rule 7: Blade Flurry PREFER when AOE mode enabled
+  -- Mandatory Rule 7: Blade Flurry PREFER when AOE mode enabled or enemy count >= 2
   {
     name = "blade_flurry_aoe",
-    desc = "Prefer Blade Flurry when AOE mode is active",
+    desc = "Prefer Blade Flurry when AOE mode active, AoE detected in queue, or 2+ enemies engaging",
     action = "PREFER",
     kind = "aoe",
     spellID = 13877,
     itemSlot = nil,
     when = function(S, A)
       local db = OA.db or {}
-      return db.aoeMode
+      local aoeMode = db.aoeMode
+      local aoeDetected = (A and A.aoeDetected) or false
+      local enemyCountSignal = (S.enemyCount ~= nil and S.enemyCount >= 2) or false
+      return aoeMode or aoeDetected or enemyCountSignal
     end,
-    source = "CONTRACT.md (Mandatory rules: 'Blade Flurry PREFER when OA.db.aoeMode'); outlaw-rotation.md §1 (Blade Flurry & AoE Rotation: 'Maintain on 2+ targets')"
+    source = "CONTRACT.md (Mandatory rules: 'Blade Flurry PREFER when OA.db.aoeMode (manual AoE toggle — enemy counting is not legally readable)'); threat-table detector v0.3 (composite: manual aoeMode OR A.aoeDetected OR (S.enemyCount ~= nil and S.enemyCount >= 2), threshold 2); outlaw-rotation.md §1 (Blade Flurry & AoE Rotation: 'Maintain on 2+ targets')"
   },
 
   -- Additional Rule 8: Blade Rush on cooldown

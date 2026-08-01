@@ -1045,6 +1045,192 @@ test("icon count configuration updates display", function()
   assert_eq(OA.db.display.iconCount, 6, "iconCount changed to 6")
 end)
 
+-- === threat-lane tests ===
+
+-- Diagnostic: Verify stub functions work
+test("threat detector: stub nameplate helpers work correctly", function()
+  stub.ClearNamePlates()
+  assert_eq(#stub.nameplates, 0, "nameplates cleared")
+
+  stub.AddNamePlate("test1", 3)
+  assert_eq(#stub.nameplates, 1, "one nameplate added")
+  assert_true(stub.threatLevels["test1"] ~= nil, "threat level stored")
+  assert_eq(stub.threatLevels["test1"], 3, "threat level value correct")
+
+  local plates = _G.C_NamePlate.GetNamePlates()
+  assert_true(plates ~= nil, "GetNamePlates returns a table")
+  assert_eq(#plates, 1, "GetNamePlates returns 1 plate")
+  assert_true(plates[1].namePlateUnitToken == "test1", "plate has correct token")
+end)
+
+-- Threat Test 1: 3 hostile-threat plates → enemyCount==3 and blade_flurry fires
+test("threat detector: 3 hostile plates detected, enemyCount==3", function()
+  stub.ClearNamePlates()
+  stub.AddNamePlate("nameplate1", 3)
+  stub.AddNamePlate("nameplate2", 3)
+  stub.AddNamePlate("nameplate3", 3)
+
+  stub.Tick(0.5)  -- Advance time to ensure RefreshEnemyCount is called (time-gated at 0.25s)
+  OA.State.RefreshFast()
+
+  assert_eq(OA.State.enemyCount, 3, "enemyCount equals 3 with 3 hostile plates")
+end)
+
+-- Threat Test 2: blade_flurry rule fires with 2+ enemies (via threatcount signal, not aoeDetected)
+test("threat detector: blade_flurry_aoe rule fires when enemyCount >= 2", function()
+  stub.ClearNamePlates()
+  stub.AddNamePlate("nameplate1", 3)
+  stub.AddNamePlate("nameplate2", 3)
+  OA.db.aoeMode = false
+
+  -- Disable aoeDetected by preventing blade flurry from being in the queue
+  local originalGetRotationSpells = _G.C_AssistedCombat.GetRotationSpells
+  _G.C_AssistedCombat.GetRotationSpells = function()
+    return {193315, 271877, 315341}  -- No blade flurry (13877)
+  end
+
+  OA.Assist.Update()
+  OA.State.RefreshFast()
+
+  assert_false(OA.Assist.aoeDetected, "aoeDetected false (blade flurry not in queue)")
+
+  local r = OA.Engine.Evaluate()
+  local foundBladeFlurry = false
+  for _, entry in ipairs(r.queue) do
+    if entry.spellID == 13877 then
+      foundBladeFlurry = true
+      break
+    end
+  end
+  assert_true(foundBladeFlurry, "blade flurry in queue when enemyCount >= 2 (via threat signal, not aoeDetected)")
+
+  _G.C_AssistedCombat.GetRotationSpells = originalGetRotationSpells
+end)
+
+-- Threat Test 3: single plate (enemyCount=1) → rule doesn't fire (threshold is 2)
+test("threat detector: single plate gives enemyCount=1, rule doesn't fire", function()
+  stub.ClearNamePlates()
+  stub.AddNamePlate("nameplate1", 3)
+  OA.db.aoeMode = false
+
+  stub.Tick(0.5)  -- Advance time to ensure RefreshEnemyCount is called
+  OA.Assist.Update()  -- Reset aoeDetected based on current GetRotationSpells (blade flurry IS in queue)
+  OA.State.RefreshFast()
+
+  assert_eq(OA.State.enemyCount, 1, "enemyCount equals 1 with 1 plate")
+
+  -- With enemyCount=1 (< threshold of 2), rule should not fire even if aoeDetected is true
+  -- The rule uses composite signal: aoeMode OR aoeDetected OR (enemyCount >= 2)
+  -- aoeMode=false, aoeDetected may be true (blade flurry in queue), but enemyCount=1<2
+  -- If aoeDetected is true, rule WILL fire (3-signal OR logic)
+  -- So we need to disable aoeDetected
+  local originalGetRotationSpells = _G.C_AssistedCombat.GetRotationSpells
+  _G.C_AssistedCombat.GetRotationSpells = function()
+    return {193315, 271877, 315341}  -- No blade flurry
+  end
+  OA.Assist.Update()  -- Now aoeDetected should be false
+  _G.C_AssistedCombat.GetRotationSpells = originalGetRotationSpells
+
+  local r = OA.Engine.Evaluate()
+  local foundBladeFlurry = false
+  for _, entry in ipairs(r.queue) do
+    if entry.spellID == 13877 then
+      foundBladeFlurry = true
+      break
+    end
+  end
+  assert_false(foundBladeFlurry, "blade flurry NOT in queue when enemyCount < 2 AND aoeDetected=false AND aoeMode=false")
+end)
+
+-- Threat Test 4: C_NamePlate absent → enemyCount==nil, rule falls back
+test("threat detector: C_NamePlate absent gives enemyCount==nil", function()
+  stub.ClearNamePlates()
+  local originalC_NamePlate = _G.C_NamePlate
+  _G.C_NamePlate = nil
+
+  stub.Tick(0.5)
+  OA.State.RefreshFast()
+
+  assert_eq(OA.State.enemyCount, nil, "enemyCount is nil when C_NamePlate absent")
+
+  _G.C_NamePlate = originalC_NamePlate
+end)
+
+-- Threat Test 5: secret threat results → enemyCount==nil
+test("threat detector: secret threat values degrade to enemyCount==nil", function()
+  stub.ClearNamePlates()
+  stub.AddNamePlate("nameplate1", 3)
+
+  local originalUnitThreatSituation = _G.UnitThreatSituation
+  _G.UnitThreatSituation = function(player, unitToken)
+    return stub.makeSecret(3)
+  end
+
+  stub.Tick(0.5)
+  OA.State.RefreshFast()
+
+  assert_eq(OA.State.enemyCount, nil, "enemyCount is nil when all threats are secret")
+
+  _G.UnitThreatSituation = originalUnitThreatSituation
+end)
+
+-- Threat Test 6: NAME_PLATE_UNIT_ADDED triggers recompute
+test("threat detector: NAME_PLATE_UNIT_ADDED event triggers recompute", function()
+  stub.ClearNamePlates()
+  stub.AddNamePlate("nameplate1", 3)
+  stub.Tick(0.5)  -- Advance time for first refresh
+  OA.State.RefreshFast()
+  assert_eq(OA.State.enemyCount, 1, "initial enemyCount==1 with 1 plate")
+
+  -- Add another plate and fire event (event handler directly calls RefreshEnemyCount, no time-gating)
+  stub.AddNamePlate("nameplate2", 3)
+  stub.Tick(0.1)  -- Small advance in time (event still triggers immediately)
+  stub.FireEvent("NAME_PLATE_UNIT_ADDED", "nameplate2")
+
+  assert_eq(OA.State.enemyCount, 2, "enemyCount updated to 2 after NAME_PLATE_UNIT_ADDED event")
+end)
+
+-- Threat Test 7: blade_flurry composite signal - all three true
+test("threat detector: blade_flurry fires when ANY signal true (aoeMode=true)", function()
+  stub.ClearNamePlates()
+  stub.AddNamePlate("nameplate1", 3)
+  OA.db.aoeMode = true
+  OA.Assist.aoeDetected = false
+
+  OA.Assist.Update()
+  OA.State.RefreshFast()
+
+  local r = OA.Engine.Evaluate()
+  local foundBladeFlurry = false
+  for _, entry in ipairs(r.queue) do
+    if entry.spellID == 13877 then
+      foundBladeFlurry = true
+      break
+    end
+  end
+  assert_true(foundBladeFlurry, "blade flurry fires when aoeMode=true (even with single enemy)")
+end)
+
+-- Threat Test 8: blade_flurry composite signal - aoeDetected true
+test("threat detector: blade_flurry fires when ANY signal true (aoeDetected=true)", function()
+  stub.ClearNamePlates()
+  OA.db.aoeMode = false
+  OA.Assist.aoeDetected = true
+
+  OA.Assist.Update()
+  OA.State.RefreshFast()
+
+  local r = OA.Engine.Evaluate()
+  local foundBladeFlurry = false
+  for _, entry in ipairs(r.queue) do
+    if entry.spellID == 13877 then
+      foundBladeFlurry = true
+      break
+    end
+  end
+  assert_true(foundBladeFlurry, "blade flurry fires when aoeDetected=true")
+end)
+
 -- Summary
 print("")
 print(passCount .. "/" .. testCount .. " tests passed")

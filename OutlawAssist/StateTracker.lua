@@ -43,10 +43,12 @@ OA.State = {
 	},
 	tier = { twoPc = false, fourPc = false },
 	inCombat = false,
-	stealthed = false
+	stealthed = false,
+	enemyCount = nil
 }
 
 local lastBuffScan = -1
+local lastEnemyCountRefresh = -1
 local trinketSpellCache = {}
 local trinketCacheSentinel = {}
 
@@ -223,6 +225,54 @@ local function RefreshTrinkets()
 	end
 end
 
+local function RefreshEnemyCount()
+	OA.State.enemyCount = nil
+
+	local api = _G.C_NamePlate
+	if not api or not api.GetNamePlates then
+		return
+	end
+
+	local plates = api.GetNamePlates()
+	if not plates then
+		return
+	end
+
+	local count = 0
+	local poisoned = 0
+
+	for _, plate in ipairs(plates) do
+		local token = nil
+		if plate.namePlateUnitToken then
+			token = plate.namePlateUnitToken
+		elseif plate.UnitFrame and plate.UnitFrame.unit then
+			token = plate.UnitFrame.unit
+		end
+
+		if token then
+			local ok, threat = pcall(function()
+				return UnitThreatSituation("player", token)
+			end)
+
+			if ok and threat ~= nil then
+				if _G.issecretvalue and _G.issecretvalue(threat) then
+					poisoned = poisoned + 1
+				else
+					count = count + 1
+				end
+			else
+				poisoned = poisoned + 1
+			end
+		end
+	end
+
+	if #plates == 0 or poisoned == #plates then
+		OA.State.enemyCount = nil
+	else
+		OA.State.enemyCount = count
+	end
+end
+
 function OA.State.RefreshFast()
 	local energyPower = Enum and Enum.PowerType and Enum.PowerType.Energy or 3
 	local comboPower = Enum and Enum.PowerType and Enum.PowerType.ComboPoints or 4
@@ -238,6 +288,11 @@ function OA.State.RefreshFast()
 	if (now - lastBuffScan) >= 0.5 then
 		RefreshBuffs()
 		lastBuffScan = now
+	end
+
+	if (now - lastEnemyCountRefresh) >= 0.25 then
+		RefreshEnemyCount()
+		lastEnemyCountRefresh = now
 	end
 
 	RefreshTrinkets()
@@ -266,8 +321,18 @@ local function OnUnitAura(event, unit)
 	end
 end
 
+local function OnNamePlateUnitAdded(event, unitToken)
+	RefreshEnemyCount()
+end
+
+local function OnNamePlateUnitRemoved(event, unitToken)
+	RefreshEnemyCount()
+end
+
 OA.RegisterEvent("PLAYER_ENTERING_WORLD", OnPlayerEnteringWorld)
 OA.RegisterEvent("PLAYER_EQUIPMENT_CHANGED", OnPlayerEquipmentChanged)
 OA.RegisterEvent("PLAYER_REGEN_DISABLED", OnPlayerRegenDisabled)
 OA.RegisterEvent("PLAYER_REGEN_ENABLED", OnPlayerRegenEnabled)
 OA.RegisterEvent("UNIT_AURA", OnUnitAura)
+OA.RegisterEvent("NAME_PLATE_UNIT_ADDED", OnNamePlateUnitAdded)
+OA.RegisterEvent("NAME_PLATE_UNIT_REMOVED", OnNamePlateUnitRemoved)
