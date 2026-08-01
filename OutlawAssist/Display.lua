@@ -148,6 +148,15 @@ local function CreateIcon(parent, name, size, x, y, isPosition1)
 	end
 
 	-- Keybind text in bottom-right, large, THICKOUTLINE for mid-combat legibility
+	-- Numeric cooldown text. Blizzard's Cooldown widget draws a sweep, but its countdown
+	-- NUMBERS are a user setting that is often off -- and the user explicitly asked for
+	-- cooldowns visible on the icons, so we draw our own and never rely on that setting.
+	local cooldownText = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+	cooldownText:SetPoint("CENTER", btn, "CENTER", 0, 0)
+	cooldownText:SetTextColor(1, 0.9, 0.4, 1)
+	cooldownText:Hide()
+	btn.cooldownText = cooldownText
+
 	local keyText = btn:CreateFontString(nil, "OVERLAY")
 	keyText:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", -2, 1)
 	keyText:SetTextColor(1, 1, 1, 1)
@@ -413,6 +422,14 @@ function OA.Display.Render(result)
 						if remaining ~= icon.lastCDDuration or (GetTime() - icon.lastCDStart or 0) > 0.1 then
 							if remaining > 0 then
 								icon.cooldownWidget:SetCooldown(GetTime(), remaining)
+							end
+							if icon.cooldownText then
+								if remaining and remaining > 0 then
+									icon.cooldownText:SetText(string.format("%.0f", remaining))
+									icon.cooldownText:Show()
+								else
+									icon.cooldownText:Hide()
+								end
 								icon.lastCDStart = GetTime()
 								icon.lastCDDuration = remaining
 								icon.cooldownWidget:Show()

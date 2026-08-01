@@ -78,6 +78,12 @@ function CreateFrame(frameType, name, parent)
   -- Frame geometry/cooldown methods the real API exposes on frames (a stub that
   -- omits them makes real code look broken and hides real breakage).
   function frame:SetAllPoints(f) self.allPoints = f or true end
+  function frame:GetSize() return self.w or 0, self.h or 0 end
+  function frame:GetWidth() return self.w or 0 end
+  function frame:GetHeight() return self.h or 0 end
+  function frame:SetAlpha(a) self.alpha = a end
+  function frame:GetAlpha() return self.alpha or 1 end
+  function frame:SetDesaturated(d) self.desaturated = d end
   function frame:IsShown() return self.visible == true end
   function frame:IsVisible() return self.visible == true end
   function frame:SetCooldown(start, duration)
@@ -97,6 +103,7 @@ function CreateFrame(frameType, name, parent)
   end
 
   function frame:SetSize(w, h)
+    self.w, self.h = w, h
     self.width = w
     self.height = h
   end
@@ -164,6 +171,18 @@ function CreateFrame(frameType, name, parent)
     function tex:SetAllPoints(f)
       self.parent = f
     end
+    -- Textures support the same geometry/appearance calls as frames in the real API.
+    -- Omitting them makes correct addon code look broken (and hid real breakage).
+    function tex:SetSize(w, h) self.w, self.h = w, h end
+    function tex:SetPoint(...) self.points = self.points or {}; table.insert(self.points, {...}) end
+    function tex:SetVertexColor(r, g, b, a) self.vertexColor = {r, g, b, a} end
+    function tex:SetAlpha(a) self.alpha = a end
+    function tex:GetAlpha() return self.alpha or 1 end
+    function tex:SetDesaturated(d) self.desaturated = d end
+    function tex:SetTexCoord(...) self.texCoord = {...} end
+    function tex:SetDrawLayer(...) end
+    function tex:SetBlendMode(...) end
+    function tex:IsShown() return self.visible ~= false end
     function tex:SetColorTexture(r, g, b, a)
       self.color = {r, g, b, a}
     end
@@ -192,7 +211,10 @@ function CreateFrame(frameType, name, parent)
       self.x = x or 0
       self.y = y or 0
     end
-    function fs:SetShadowColor(r, g, b, a) self.shadowColor = {r, g, b, a} end
+    function fs:SetAlpha(a) self.alpha = a end
+  function fs:GetAlpha() return self.alpha or 1 end
+  function fs:SetSize(w, h) self.w, self.h = w, h end
+  function fs:SetShadowColor(r, g, b, a) self.shadowColor = {r, g, b, a} end
   function fs:SetShadowOffset(x, y) self.shadowOffset = {x, y} end
   function fs:SetFont() end
   function fs:SetJustifyH() end
