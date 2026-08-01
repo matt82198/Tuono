@@ -2,6 +2,18 @@
 
 All notable changes to OutlawAssist are documented here.
 
+## [1.2.0] - 2026-08-01
+
+### Added
+- **Forward-simulating rotation engine** — New `OA.Rotation.Predict()` function computes the next 1-4 ability casts deterministically based on current state (energy, combo points, cooldowns, RtB stage). Predicts energy regeneration, cooldown reduction (Restless Blades: 1.0 sec/CP, +30% in RtB Stage 3), and GCD advancement across the simulation horizon.
+- Rotation priorities transcribed from research/rotation-model.md with single-target and AoE variants (Blade Flurry priority insertion).
+- Confidence tracking (high for steps 1-3, low for 4+) reflecting determinism ceiling beyond ~3 GCDs.
+- Fallback to Blizzard assist when prediction yields no castable ability (degraded state or out-of-resources).
+- `/oa probe` — Proc observability probe and accessor liveness sampler (15s). Records aura observability (query-by-ID and delta-event tracking for Opportunity, Adrenaline Rush, Roll the Bones, Stealth). Samples all assist-combat accessors side-by-side: GetNextCastSpell(false/true), GetActionSpell(...), and enumerates available C_AssistedCombat/C_ActionBar functions. Reports verdict (DIRECT, DELTA-ONLY, or NONE) for proc visibility and identifies best live accessor.
+
+### Changed
+- IntelligenceLayer now wires OUR predicted sequence into the queue as source=<ruleName> entries, tagged with confidence. Blizzard's live value (OA.Assist.nextSpellID) still merges as a safety net and is compared for UI agreement display (OA.Engine.blizzAgrees).
+
 ## [1.1.1] - 2026-08-01
 
 ### Added

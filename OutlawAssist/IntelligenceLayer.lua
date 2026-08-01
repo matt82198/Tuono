@@ -66,6 +66,31 @@ function OA.Engine.Evaluate()
     queueIndex = queueIndex + 1
   end
 
+  -- Step 1b: Add our rotation predictions (if available)
+  -- Our Predict() gives us the deterministic next 1-4 casts
+  local predictions = OA.safe(OA.Rotation.Predict, S, 4)
+  if predictions and type(predictions) == "table" then
+    for _, pred in ipairs(predictions) do
+      if pred.spellID and not tempDedup[pred.spellID] then
+        table.insert(resultQueue, {
+          spellID = pred.spellID,
+          source = pred.reason or "rotation_predict",
+          kind = "rotation",
+          confidence = pred.confidence
+        })
+        tempDedup[pred.spellID] = true
+        queueSet[pred.spellID] = queueIndex
+        queueIndex = queueIndex + 1
+      end
+    end
+  end
+
+  -- Optionally store whether Blizzard agrees with our step 1
+  if predictions and #predictions > 0 and A.nextSpellID then
+    OA.Engine = OA.Engine or {}
+    OA.Engine.blizzAgrees = (predictions[1].spellID == A.nextSpellID)
+  end
+
   -- Step 2: Apply rules in array order
   local pinApplied = false
   local advisoryIndex = #resultAdvisories + 1
