@@ -678,7 +678,6 @@ test("load canary detects missing module", function()
   OA.Engine = savedEngine
 end)
 
-<<<<<<< HEAD
 -- === polling-lane tests ===
 
 -- TEST: Dynamic interval based on combat state
