@@ -130,3 +130,41 @@ Provides on OA:
 - Pure-Lua harness run by `lua tests/run_tests.lua` (Lua 5.4 on the build box): `tests/wow_stub.lua`
   fakes the WoW API surface above; loader loads files in TOC order passing ("OutlawAssist", OA)
   as varargs; asserts on Engine PIN/PREFER/ADVISE behavior + State cache updates from stubbed events.
+
+## v0.3 Unified Queue Engine & Stealth/Opener
+
+**Contract Addendum:** `OA.Engine.Evaluate()` returns:
+```
+{
+  queue = {
+    {
+      spellID = <n>,
+      source = "blizzard"|<ruleName>,
+      kind = "rotation"|"cooldown"|"trinket"|"rtb"|"opener",
+      itemSlot = <13|14|nil>
+    },
+    ...
+  },
+  advisories = <unchanged existing shape for context text line>
+}
+```
+
+**Queue semantics:**
+- **kind="rotation"** — Blizzard assist base queue spells
+- **kind="cooldown"** — Ready major cooldowns (e.g., Adrenaline Rush per AR rule)
+- **kind="trinket"** — Ready on-use trinkets during AR windows; itemSlot marks slot 13 or 14
+- **kind="rtb"** — Roll the Bones cast/reroll recommendations (spellID = OA.SpellIDs.rollTheBones)
+- **kind="opener"** — Pre-combat opener spells (e.g., Stealth when OOC+unstealthed)
+
+**Queue ordering & dedup:**
+1. Position 1: first PIN rule (by array order) if any conditions met
+2. Positions 2+: PREFER/cooldown/trinket/rtb entries in rule priority order
+3. Dedup by spellID (keep highest-priority, first occurrence wins)
+4. Truncate to 8 entries maximum
+5. Advisories table unchanged; kept for non-queue context text
+
+**Stealth/Opener (Lua 5.1):**
+- `OA.SpellIDs.stealth = 1784` — TODO(M0): verify in-game
+- `OA.State.stealthed` (bool) — refreshed on UNIT_AURA + RefreshFast via Stealth aura scan (1784 or "Stealth" name fallback)
+- **opener_stealth rule:** PIN kind="opener" spellID=stealth when `not S.inCombat and not S.stealthed`
+- **Note:** Research doc (outlaw-rotation.md §5 RESEARCH LIMITATIONS) does not name a specific opener ability from Stealth state; opener_from_stealth rule SKIPPED

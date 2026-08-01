@@ -274,14 +274,28 @@ OA.Rules = {
     desc = "Use Pistol Shot as fallback builder when energy low",
     action = "PREFER",
     kind = "builder",
-    spellID = OA.SpellIDs and OA.SpellIDs.pistolShot or nil,
+    spellID = nil,
     itemSlot = nil,
     when = function(S, A)
-      if not (OA.SpellIDs and OA.SpellIDs.pistolShot) then
-        return false
-      end
       return S.energy < 40 and S.buffs.opportunity.up
     end,
+    resolveSpellID = function()
+      return OA.SpellIDs and OA.SpellIDs.pistolShot or nil
+    end,
     source = "outlaw-rotation.md §1 (Opportunity & Audacity Procs: 'enables free Pistol Shot without Energy cost') and (Priority Order: 'Pistol Shot – Secondary generator with lower priority than Sinister Strike')"
+  },
+
+  -- Additional Rule 23: Stealth before opening
+  {
+    name = "opener_stealth",
+    desc = "Stealth before opening",
+    action = "PIN",
+    kind = "opener",
+    spellID = OA.SpellIDs and OA.SpellIDs.stealth or 1784,
+    itemSlot = nil,
+    when = function(S, A)
+      return not S.inCombat and not S.stealthed
+    end,
+    source = "v0.3 unified queue engine - stealthing before opening"
   },
 }
