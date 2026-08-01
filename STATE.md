@@ -90,3 +90,10 @@ frames cannot show live health and the design must change.
   Any percent text must be hidden in combat rather than shown stale.
 - Dispel highlighting: BUILDABLE (C_UnitAuras.GetAuraDispelTypeColor).
 DECISION PENDING (user): accept a numbers-free-in-combat aesthetic, or drop party frames.
+
+### UI-SUITE: CANCELLED (user, 2026-08-01)
+User cancelled after the feasibility verdict — numeric health/percent text is blocked in combat by
+Midnight's secret values, so the Liquid look could not be delivered faithfully. Do NOT resurrect
+unit frames / party frames / health bars. Research kept for reference only
+(docs/research/liquid-ui-style.md, docs/research/unitframe-feasibility.md).
+SOLE FOCUS: the Outlaw rotation helper. Ship a green build the user can play.
