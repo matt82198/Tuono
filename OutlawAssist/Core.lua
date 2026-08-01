@@ -130,13 +130,10 @@ end)
 
 OA.frame:SetScript("OnUpdate", function(self, elapsed)
   for _, handler in ipairs(OA.updateHandlers) do
-    -- Compute dynamic interval: 0.1s in combat, 0.5s otherwise
-    -- Read inCombat at tick time; keep override (updateInterval) optional for COMBAT interval only
-    local dynamicInterval = handler.interval
+    -- Compute dynamic interval: 0.1s in combat (fast), 0.5s idle (slow)
+    local dynamicInterval = handler.interval  -- base interval (0.5s idle)
     if OA.State and OA.State.inCombat then
-      dynamicInterval = 0.1
-    else
-      dynamicInterval = handler.interval or 0.5
+      dynamicInterval = 0.1  -- override to fast in combat
     end
 
     handler.elapsed = handler.elapsed + elapsed
@@ -174,7 +171,7 @@ OA.RegisterEvent("PLAYER_LOGIN", function()
     OA.safe(OA.Display.Init)
   end
 
-  -- Register update handler with saved interval (or default 0.5 idle, dynamic to 0.1 combat)
+  -- Register update handler with base idle interval 0.5s; dynamic override to 0.1s in combat
   OA.RegisterUpdate(function()
     OA.safe(function()
       if OA.State and OA.State.RefreshFast then
@@ -191,7 +188,7 @@ OA.RegisterEvent("PLAYER_LOGIN", function()
         OA.Display.Render(r)
       end
     end)
-  end, OA.db and OA.db.updateInterval or 0.5)
+  end, 0.5)
 
   -- Register event-forced re-evaluate triggers
   -- UNIT_SPELLCAST_SUCCEEDED: detect if player cast what was recommended or deviated

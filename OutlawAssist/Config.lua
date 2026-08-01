@@ -5,10 +5,6 @@ OA.defaults = {
 	aoeMode = false,
 	show = {
 		queue = true,
-		cds = true,
-		trinkets = true,
-		rtb = true,
-		procs = true,
 		ooc = false
 	},
 	display = {
@@ -57,7 +53,7 @@ end
 
 local function HandleToggle(arg)
 	if not arg or arg == "" then
-		OA.print("Usage: /oa toggle <queue|cds|trinkets|rtb|procs|ooc>")
+		OA.print("Usage: /oa toggle <queue|ooc>")
 		return
 	end
 	local toggle = string.lower(arg)
@@ -99,10 +95,6 @@ end
 local function HandleStatus()
 	OA.print("=== OutlawAssist Status ===")
 	OA.print("Queue: " .. (OA.db.show.queue and "ON" or "OFF"))
-	OA.print("Cooldowns: " .. (OA.db.show.cds and "ON" or "OFF"))
-	OA.print("Trinkets: " .. (OA.db.show.trinkets and "ON" or "OFF"))
-	OA.print("RtB: " .. (OA.db.show.rtb and "ON" or "OFF"))
-	OA.print("Procs: " .. (OA.db.show.procs and "ON" or "OFF"))
 	OA.print("Out-of-combat: " .. (OA.db.show.ooc and "ON" or "OFF"))
 	OA.print("Scale: " .. (OA.db.display.scale or 1))
 	OA.print("Icon count: " .. (OA.db.display.iconCount or 4))
@@ -116,7 +108,7 @@ local function HandleHelp()
 	OA.print("  /oa unlock — Unlock display (enable dragging)")
 	OA.print("  /oa scale <0.5-2> — Adjust scale")
 	OA.print("  /oa icons <1-8> — Set icon count")
-	OA.print("  /oa toggle <queue|cds|trinkets|rtb|procs|ooc> — Toggle display rows")
+	OA.print("  /oa toggle <queue|ooc> — Toggle display visibility")
 	OA.print("  /oa reset — Reset to defaults and reposition display")
 	OA.print("Features:")
 	OA.print("  /oa aoe — Toggle AoE mode")
@@ -157,7 +149,7 @@ OA.RegisterSlash("lock", HandleLock, "Lock the display (disable dragging).")
 OA.RegisterSlash("unlock", HandleUnlock, "Unlock the display (enable dragging).")
 OA.RegisterSlash("scale", HandleScale, "Set display scale (0.5-2).")
 OA.RegisterSlash("icons", HandleIcons, "Set icon count (1-8).")
-OA.RegisterSlash("toggle", HandleToggle, "Toggle a feature: queue|cds|trinkets|rtb|procs|ooc.")
+OA.RegisterSlash("toggle", HandleToggle, "Toggle a feature: queue|ooc.")
 OA.RegisterSlash("aoe", HandleAoe, "Toggle AoE mode.")
 OA.RegisterSlash("reset", HandleReset, "Reset config to defaults.")
 OA.RegisterSlash("status", HandleStatus, "Print current status.")
