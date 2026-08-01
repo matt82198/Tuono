@@ -1,5 +1,10 @@
 # STATE.md — OutlawAssist Project State
 
+**M0 API VERIFICATION: PASSED IN-GAME 2026-08-01** — /oa apitest on the live client reports all
+probes PASS except the deliberately-SKIPped legacy UnitBuff fallback. Spell IDs independently
+verified by an Outlaw specialist. Remaining live unknown: whether GetRotationSpells is static or
+live (run /oa watch on a dummy; decides whether a true multi-step sequence is possible at all).
+
 **Date:** 2026-08-01  
 **Current Version:** v0.2.3 (consolidated)  
 **Interface Pin:** 120007 (live 12.0.7)  
