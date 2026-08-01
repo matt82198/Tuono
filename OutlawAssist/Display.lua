@@ -47,17 +47,19 @@ end
 local function GetKeybindText(spellID)
 	if not spellID then return nil end
 
-	-- Cache hit: return already-abbreviated string without recomputing
-	if spellIDtoKeytext[spellID] then
-		return spellIDtoKeytext[spellID]
+	-- Cache hit: return already-abbreviated string or sentinel (not nil, which would re-lookup)
+	local cached = spellIDtoKeytext[spellID]
+	if cached ~= nil then
+		return (cached == trinketCacheSentinel) and nil or cached
 	end
 
-	-- Try C_ActionBar.FindSpellActionButtons (guard existence)
+	local foundKey = nil
+
+	-- Try C_ActionBar.FindSpellActionButtons (modern, preferred)
 	if C_ActionBar and C_ActionBar.FindSpellActionButtons then
-		local buttons = C_ActionBar.FindSpellActionButtons(spellID)
-		if buttons and #buttons > 0 then
+		local ok, buttons = OA.safe(function() return C_ActionBar.FindSpellActionButtons(spellID) end)
+		if ok and buttons and #buttons > 0 then
 			local slot = buttons[1]
-			-- Map slot to binding name (bars 1-6)
 			local bindingName = nil
 			if slot >= 1 and slot <= 12 then
 				bindingName = "ACTIONBUTTON" .. slot
@@ -70,24 +72,22 @@ local function GetKeybindText(spellID)
 			elseif slot >= 97 and slot <= 108 then
 				bindingName = "MULTIACTIONBAR4BUTTON" .. (slot - 96)
 			end
-			-- TODO: stance bars for other specs
 
 			if bindingName and GetBindingKey then
 				local key = GetBindingKey(bindingName)
 				if key then
-					local abbrev = AbbreviateKey(key)
-					spellIDtoKeytext[spellID] = abbrev
-					return abbrev
+					foundKey = AbbreviateKey(key)
 				end
 			end
 		end
 	end
 
 	-- Fallback: iterate action buttons 1-120
-	if GetActionInfo then
+	if not foundKey and GetActionInfo then
 		for slot = 1, 120 do
-			local actionType, actionID = GetActionInfo(slot)
-			if actionType == "spell" and actionID == spellID then
+			local actionType, actionID, _ = GetActionInfo(slot)
+			-- Check both spell and potentially talent/override variants
+			if actionID == spellID and (actionType == "spell" or actionType == "talent" or actionType == "action") then
 				local bindingName = nil
 				if slot >= 1 and slot <= 12 then
 					bindingName = "ACTIONBUTTON" .. slot
@@ -104,17 +104,17 @@ local function GetKeybindText(spellID)
 				if bindingName and GetBindingKey then
 					local key = GetBindingKey(bindingName)
 					if key then
-						local abbrev = AbbreviateKey(key)
-						spellIDtoKeytext[spellID] = abbrev
-						return abbrev
+						foundKey = AbbreviateKey(key)
+						break
 					end
 				end
-				break
 			end
 		end
 	end
 
-	return nil
+	-- Cache result (use sentinel for nil so we retry later, not poison the cache)
+	spellIDtoKeytext[spellID] = foundKey or trinketCacheSentinel
+	return foundKey
 end
 
 local function GetKindBorderColor(kind)
@@ -142,16 +142,24 @@ local function CreateIcon(parent, name, size, x, y)
 	tex:SetAllPoints(btn)
 	btn.texture = tex
 
+	-- Cooldown timer text (center-top)
 	local cooldownText = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-	cooldownText:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", -2, 2)
+	cooldownText:SetPoint("CENTER", btn, "TOP", 0, -5)
 	cooldownText:SetTextColor(1, 1, 1, 1)
 	cooldownText:Hide()
 	btn.cooldownText = cooldownText
 
-	-- Keybind text in top-right
-	local keyText = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-	keyText:SetPoint("TOPRIGHT", btn, "TOPRIGHT", -2, -2)
-	keyText:SetTextColor(1, 1, 1, 0.8)
+	-- Blizzard cooldown widget (shows visual cooldown overlay)
+	local cooldownWidget = CreateFrame("Cooldown", nil, btn, "CooldownFrameTemplate")
+	cooldownWidget:SetAllPoints(btn)
+	btn.cooldownWidget = cooldownWidget
+
+	-- Keybind text in bottom-right (larger, more legible)
+	local keyText = btn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	keyText:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", -3, 2)
+	keyText:SetTextColor(1, 1, 1, 0.9)
+	keyText:SetShadowColor(0, 0, 0, 0.8)
+	keyText:SetShadowOffset(1, -1)
 	keyText:Hide()
 	btn.keyText = keyText
 
@@ -246,12 +254,7 @@ function OA.Display.Render(result)
 	local inCombat = OA.State and OA.State.inCombat
 	local iconCount = OA.db.display.iconCount or 4
 
-	local showUI = inCombat or show.ooc
-	if not showUI then
-		anchor:Hide()
-		return
-	end
-
+	-- PERSISTENT: Always show the bar (user controls with show.queue toggle, not combat status)
 	local classToken = select(2, UnitClass("player"))
 	local spec = GetSpecialization and GetSpecialization() or nil
 	if classToken ~= "ROGUE" or (spec and spec ~= 2) then
@@ -297,7 +300,7 @@ function OA.Display.Render(result)
 					icon.border:SetColorTexture(r, g, b, a)
 					icon.border:Show()
 
-					-- Display keybind text
+					-- Display keybind text (bottom-right)
 					if entry.spellID then
 						local keytext = GetKeybindText(entry.spellID)
 						if keytext then
@@ -308,6 +311,41 @@ function OA.Display.Render(result)
 						end
 					else
 						icon.keyText:Hide()
+					end
+
+					-- Display cooldown timer (center-top)
+					local remaining = 0
+					if entry.kind == "cooldown" and entry.spellID then
+						local cdKey = entry.spellID == OA.SpellIDs.adrenalineRush and "adrenalineRush" or
+						              entry.spellID == OA.SpellIDs.bladeRush and "bladeRush" or
+						              entry.spellID == OA.SpellIDs.preparation and "preparation" or nil
+						if cdKey and OA.State.cooldowns[cdKey] then
+							remaining = OA.State.cooldowns[cdKey].remaining
+						end
+					elseif entry.kind == "trinket" and entry.itemSlot then
+						if OA.State.trinkets[entry.itemSlot] then
+							remaining = OA.State.trinkets[entry.itemSlot].remaining
+						end
+					end
+
+					-- Display cooldown timer text if remaining > 0
+					if remaining > 0 then
+						local timerText = string.format("%.1f", remaining)
+						icon.cooldownText:SetText(timerText)
+						icon.cooldownText:Show()
+					else
+						icon.cooldownText:Hide()
+					end
+
+					-- Update cooldown widget for visual representation
+					if icon.cooldownWidget then
+						if remaining > 0 then
+							-- Set cooldown: (startTime, duration) where startTime+duration=now+remaining
+							local now = GetTime()
+							icon.cooldownWidget:SetCooldown(now - (GetTime() - (GetTime() - remaining)), remaining)
+						else
+							icon.cooldownWidget:Hide()
+						end
 					end
 
 					icon:Show()

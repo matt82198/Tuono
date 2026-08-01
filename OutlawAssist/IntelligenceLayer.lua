@@ -204,7 +204,49 @@ function OA.Engine.Evaluate()
     resultQueue[i] = entry
   end
 
-  -- Step 4: Truncate queue to 8
+  -- Step 4: ENGINE-LEVEL CASTABILITY FILTER (belt-and-braces)
+  -- Drop any entry whose cooldown is not known-ready OR spell is not known, EXCEPT position 1 from Blizzard
+  local filteredQueue = {}
+  for i, entry in ipairs(resultQueue) do
+    local skip = false
+
+    -- Position 1 from Blizzard is authoritative, never filter
+    if i == 1 and entry.source == "blizzard" then
+      skip = false
+    else
+      -- Check if spell is known (when API available)
+      if entry.spellID and not S.knownUnavailable then
+        if S.knownSpells[entry.spellID] == false then
+          skip = true
+        end
+      end
+
+      -- For cooldown/trinket entries: verify the cooldown is known and ready
+      if not skip and entry.kind == "cooldown" and entry.spellID then
+        local cd = S.cooldowns[entry.spellID == OA.SpellIDs.adrenalineRush and "adrenalineRush" or
+                              entry.spellID == OA.SpellIDs.bladeRush and "bladeRush" or
+                              entry.spellID == OA.SpellIDs.preparation and "preparation" or nil]
+        if cd and (not cd.known or not cd.ready) then
+          skip = true
+        end
+      elseif not skip and entry.kind == "trinket" and entry.itemSlot then
+        local trinket = S.trinkets[entry.itemSlot]
+        if trinket and not trinket.ready then
+          skip = true
+        end
+      end
+    end
+
+    if not skip then
+      table.insert(filteredQueue, entry)
+    end
+  end
+  wipeTable(resultQueue)
+  for i, entry in ipairs(filteredQueue) do
+    resultQueue[i] = entry
+  end
+
+  -- Step 5: Truncate queue to 8
   while #resultQueue > 8 do
     table.remove(resultQueue)
   end

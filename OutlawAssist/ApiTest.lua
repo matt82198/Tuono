@@ -234,17 +234,98 @@ local function debug()
       OA.print("RtB Stage: " .. (OA.State.buffs.rtb.stage or 0))
     end
     if OA.State.cooldowns then
-      OA.print("AR CD: " .. (OA.State.cooldowns.adrenalineRush and OA.State.cooldowns.adrenalineRush.remaining or "unknown"))
+      local function cdState(name, cd)
+        local state = "unknown"
+        if cd.known then
+          state = cd.ready and "ready" or ("CD: " .. string.format("%.1f", cd.remaining) .. "s")
+        end
+        return name .. ": " .. state
+      end
+      OA.print(cdState("AR", OA.State.cooldowns.adrenalineRush))
+      OA.print(cdState("BladeRush", OA.State.cooldowns.bladeRush))
+      OA.print(cdState("Prep", OA.State.cooldowns.preparation))
     end
     if OA.State.trinkets then
-      OA.print("Trinket 13: " .. tostring(OA.State.trinkets[13] and OA.State.trinkets[13].ready and "ready" or "cooldown"))
-      OA.print("Trinket 14: " .. tostring(OA.State.trinkets[14] and OA.State.trinkets[14].ready and "ready" or "cooldown"))
+      OA.print("Trinket 13: " .. tostring(OA.State.trinkets[13] and OA.State.trinkets[13].ready and "ready" or ("CD: " .. string.format("%.1f", OA.State.trinkets[13].remaining) .. "s")))
+      OA.print("Trinket 14: " .. tostring(OA.State.trinkets[14] and OA.State.trinkets[14].ready and "ready" or ("CD: " .. string.format("%.1f", OA.State.trinkets[14].remaining) .. "s")))
     end
   end
   if OA.Assist then
     OA.print("Assist NextSpellID: " .. (OA.Assist.nextSpellID or "none"))
     OA.print("Assist Queue Length: " .. (OA.Assist.queue and #OA.Assist.queue or 0))
   end
+
+  -- KEYBIND & TALENT DIAGNOSTICS
+  OA.print("=== Keybind & Talent Diagnostics ===")
+  if OA.State and OA.State.knownSpells then
+    OA.print("Known Spells API: " .. (OA.State.knownUnavailable and "unavailable (fail-open)" or "available"))
+  end
+
+  if OA.Engine then
+    local result = OA.safe(function() return OA.Engine.Evaluate() end)
+    if result and result.queue then
+      for i, entry in ipairs(result.queue) do
+        if entry.spellID then
+          -- Check if spell is known
+          local knownStatus = "unknown"
+          if OA.State and OA.State.knownUnavailable then
+            knownStatus = "unavailable"
+          elseif OA.State and OA.State.knownSpells then
+            knownStatus = OA.State.knownSpells[entry.spellID] and "known" or "unknown"
+          end
+
+          -- Check cooldown status
+          local cdStatus = "none"
+          if entry.kind == "cooldown" and entry.spellID then
+            local cd = OA.State.cooldowns[entry.spellID == OA.SpellIDs.adrenalineRush and "adrenalineRush" or
+                                        entry.spellID == OA.SpellIDs.bladeRush and "bladeRush" or
+                                        entry.spellID == OA.SpellIDs.preparation and "preparation" or nil]
+            if cd then
+              if not cd.known then
+                cdStatus = "unknown"
+              elseif cd.ready then
+                cdStatus = "ready"
+              else
+                cdStatus = string.format("%.1f", cd.remaining) .. "s"
+              end
+            end
+          end
+
+          -- Try to resolve keybind
+          local keytext = nil
+          if C_ActionBar and C_ActionBar.FindSpellActionButtons then
+            local ok, buttons = pcall(function() return C_ActionBar.FindSpellActionButtons(entry.spellID) end)
+            if ok and buttons and #buttons > 0 then
+              local slot = buttons[1]
+              local bindingName = nil
+              if slot >= 1 and slot <= 12 then
+                bindingName = "ACTIONBUTTON" .. slot
+              elseif slot >= 61 and slot <= 72 then
+                bindingName = "MULTIACTIONBAR1BUTTON" .. (slot - 60)
+              elseif slot >= 73 and slot <= 84 then
+                bindingName = "MULTIACTIONBAR2BUTTON" .. (slot - 72)
+              elseif slot >= 85 and slot <= 96 then
+                bindingName = "MULTIACTIONBAR3BUTTON" .. (slot - 84)
+              elseif slot >= 97 and slot <= 108 then
+                bindingName = "MULTIACTIONBAR4BUTTON" .. (slot - 96)
+              end
+              if bindingName and GetBindingKey then
+                keytext = GetBindingKey(bindingName)
+              end
+              OA.print("  [" .. i .. "] spellID=" .. entry.spellID .. " known=" .. knownStatus .. " cd=" .. cdStatus .. " key=" .. (keytext or "unbound"))
+            else
+              OA.print("  [" .. i .. "] spellID=" .. entry.spellID .. " known=" .. knownStatus .. " cd=" .. cdStatus .. " (keybind resolution failed)")
+            end
+          else
+            OA.print("  [" .. i .. "] spellID=" .. entry.spellID .. " known=" .. knownStatus .. " cd=" .. cdStatus)
+          end
+        elseif entry.itemSlot then
+          OA.print("  [" .. i .. "] trinket slot=" .. entry.itemSlot)
+        end
+      end
+    end
+  end
+
   if OA.errorCount and OA.errorCount > 0 then
     OA.print("Errors since load: " .. OA.errorCount)
   end

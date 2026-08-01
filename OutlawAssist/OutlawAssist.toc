@@ -3,7 +3,7 @@
 ## Title: Outlaw Assist
 ## Notes: Smart rotation assistance for Outlaw Rogues
 ## Author: Matt Culliton
-## Version: 1.0.2
+## Version: 1.1.0
 ## SavedVariables: OutlawAssistDB
 
 Core.lua

@@ -2,6 +2,23 @@
 
 All notable changes to OutlawAssist are documented here.
 
+## [1.1.0] - 2026-08-01
+
+### Fixed
+- **CRITICAL: Fail-open cooldown bug** — Secret/unknown cooldowns (in combat) were treated as READY, causing on-cooldown abilities to be recommended. Now unknown cooldowns fail CLOSED: only known-ready cooldowns are queued.
+- Keybind display was not rendering in-game; improved resolution logic with better fallback paths and cache-retry behavior.
+- Keybind positioning (now bottom-right, larger font with shadow for legibility).
+
+### Changed
+- Persistent bar: now visible out-of-combat by default (`show.ooc = true`).
+- Cooldown timers now display on icons (top-center, numeric format).
+- Added Blizzard's native Cooldown widget for visual cooldown swipe overlay.
+- Engine adds belt-and-braces castability filter: drops any non-position-1 entry whose cooldown is not known-ready.
+
+### Added
+- Enhanced `/oa debug` diagnostic output: shows keybind resolution per queue entry with slot/binding/key details.
+- Trinket cooldowns now respect fail-closed logic (unknown = not ready).
+
 ## [1.0.2] - 2026-08-01
 
 ### Fixed
