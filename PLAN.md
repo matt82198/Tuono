@@ -322,7 +322,7 @@
 
 **Deliverable:**
 - StateTracker caches all readable state (RtB, Opportunity, energy, CP, spell CDs, trinket CDs, tier set)
-- Event-driven updates (SPELL_AURA_APPLIED, UNIT_POWER_UPDATE, SPELL_UPDATE_COOLDOWN, PLAYER_EQUIPMENT_CHANGED)
+- Event-driven updates (UNIT_AURA for own buffs, UNIT_POWER_UPDATE, SPELL_UPDATE_COOLDOWN, PLAYER_EQUIPMENT_CHANGED)
 - Debug panel (toggle via `/oa debug`) showing live state: "RtB stage: 2, AR CD: 15s, Energy: 67/100"
 - Trinket caching pattern (out-of-combat load, in-combat compute)
 
