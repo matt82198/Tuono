@@ -115,6 +115,18 @@ OA.RegisterEvent("PLAYER_LOGIN", function()
   end
   OutlawAssistDB = deepMerge(OutlawAssistDB or {}, OA.defaults)
   OA.db = OutlawAssistDB
+
+  -- Load canary: verify all expected module tables are present
+  local expectedModules = {"State", "Assist", "Engine", "Rules", "Display", "defaults"}
+  local missing = {}
+  for _, mod in ipairs(expectedModules) do
+    if not OA[mod] then
+      table.insert(missing, mod)
+    end
+  end
+  if #missing > 0 then
+    OA.print("module(s) failed to load: " .. table.concat(missing, ", ") .. " - run /console scriptErrors 1 and /reload to see the error")
+  end
 end)
 
 OA.RegisterUpdate(function()

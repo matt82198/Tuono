@@ -5,12 +5,11 @@ local function apitest()
   local total = 0
 
   -- Print client info at the top
-  local buildOk, version, build, date, toc = pcall(GetBuildInfo)
-  if buildOk and version and build and toc then
-    OA.print("Client: " .. tostring(version) .. " build " .. tostring(build) .. " interface " .. tostring(toc))
-  else
-    OA.print("Client: unavailable (restricted)")
-  end
+  local okHeader, headerMsg = pcall(function()
+    local v, b, d, t = GetBuildInfo()
+    return "Client: " .. tostring(v) .. " build " .. tostring(b) .. " interface " .. tostring(t)
+  end)
+  OA.print(okHeader and headerMsg or "Client: unavailable (values restricted)")
 
   local function test(name, fn)
     total = total + 1
