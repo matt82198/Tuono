@@ -11,7 +11,10 @@ OA.SpellIDs = {
 	stealth = 1784, -- TODO(M0): verify in-game
 	pistolShot = 185763, -- TODO(M0): verify in-game
 	opportunity = 195627, -- VERIFIED: Opportunity buff (enables free Pistol Shot), hardcoded 3x in StateTracker before fix
-	ambush = 8676 -- VERIFIED: Stealth opener ability, primary damage button from Stealth
+	ambush = 8676, -- VERIFIED: Stealth opener ability, primary damage button from Stealth
+	killingSpree = 51690, -- TODO(M0): verify in-game
+	dispatch = 2098, -- TODO(M0): verify in-game
+	keepItRolling = 381989 -- TODO(M0): verify in-game
 }
 
 OA.RTB_BUFF_NAMES = {
@@ -38,7 +41,13 @@ OA.State = {
 	cooldowns = {
 		adrenalineRush = { known = false, ready = false, remaining = 0 },
 		bladeRush = { known = false, ready = false, remaining = 0 },
-		preparation = { known = false, ready = false, remaining = 0 }
+		preparation = { known = false, ready = false, remaining = 0 },
+		betweenTheEyes = { known = false, ready = false, remaining = 0 },
+		bladeFlurry = { known = false, ready = false, remaining = 0 },
+		rollTheBones = { known = false, ready = false, remaining = 0 },
+		killingSpree = { known = false, ready = false, remaining = 0 },
+		dispatch = { known = false, ready = false, remaining = 0 },
+		keepItRolling = { known = false, ready = false, remaining = 0 }
 	},
 	trinkets = {
 		[13] = { itemID = nil, ready = false, remaining = 0, onUse = false },
@@ -101,28 +110,29 @@ local function NormalizeCooldown(startTime, duration)
 end
 
 local function RefreshCooldowns()
-	local ar_cd = C_Spell and C_Spell.GetSpellCooldown and C_Spell.GetSpellCooldown(OA.SpellIDs.adrenalineRush)
-	if ar_cd then
-		OA.State.cooldowns.adrenalineRush = NormalizeCooldown(ar_cd.startTime, ar_cd.duration)
-	elseif GetSpellCooldown then
-		local start, duration = GetSpellCooldown(OA.SpellIDs.adrenalineRush)
-		OA.State.cooldowns.adrenalineRush = NormalizeCooldown(start, duration)
-	end
+	-- Track all cooldowns in a single pass
+	local cooldownKeys = {
+		"adrenalineRush", "bladeRush", "preparation", "betweenTheEyes",
+		"bladeFlurry", "rollTheBones", "killingSpree", "dispatch", "keepItRolling"
+	}
 
-	local br_cd = C_Spell and C_Spell.GetSpellCooldown and C_Spell.GetSpellCooldown(OA.SpellIDs.bladeRush)
-	if br_cd then
-		OA.State.cooldowns.bladeRush = NormalizeCooldown(br_cd.startTime, br_cd.duration)
-	elseif GetSpellCooldown then
-		local start, duration = GetSpellCooldown(OA.SpellIDs.bladeRush)
-		OA.State.cooldowns.bladeRush = NormalizeCooldown(start, duration)
-	end
-
-	local prep_cd = C_Spell and C_Spell.GetSpellCooldown and C_Spell.GetSpellCooldown(OA.SpellIDs.preparation)
-	if prep_cd then
-		OA.State.cooldowns.preparation = NormalizeCooldown(prep_cd.startTime, prep_cd.duration)
-	elseif GetSpellCooldown then
-		local start, duration = GetSpellCooldown(OA.SpellIDs.preparation)
-		OA.State.cooldowns.preparation = NormalizeCooldown(start, duration)
+	for _, key in ipairs(cooldownKeys) do
+		local spellID = OA.SpellIDs[key]
+		if spellID then
+			local cd
+			-- Try modern API first
+			if C_Spell and C_Spell.GetSpellCooldown then
+				cd = C_Spell.GetSpellCooldown(spellID)
+				if cd then
+					OA.State.cooldowns[key] = NormalizeCooldown(cd.startTime, cd.duration)
+				end
+			end
+			-- Fallback to legacy API
+			if not cd and GetSpellCooldown then
+				local start, duration = GetSpellCooldown(spellID)
+				OA.State.cooldowns[key] = NormalizeCooldown(start, duration)
+			end
+		end
 	end
 end
 
