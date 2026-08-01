@@ -158,6 +158,21 @@ local function runTocCheck()
     end
   end)
 
+  -- Version drift gate: the TOC version is the single source of truth, so it must
+  -- have a CHANGELOG entry. Three separate drift incidents shipped before this existed.
+  test("toc version has a CHANGELOG entry", function()
+    local version = tocContent:match("##%s*Version:%s*([%d%.]+)")
+    if not version then error("no ## Version in TOC") end
+    local f = io.open("CHANGELOG.md", "r")
+    if not f then error("CHANGELOG.md missing") end
+    local changelog = f:read("*a")
+    f:close()
+    local needle = "%[" .. version:gsub("%.", "%%.") .. "%]"
+    if not changelog:find(needle) then
+      error("TOC version " .. version .. " has no [" .. version .. "] entry in CHANGELOG.md")
+    end
+  end)
+
   return testCount, passCount
 end
 

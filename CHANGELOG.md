@@ -2,6 +2,29 @@
 
 All notable changes to OutlawAssist are documented here.
 
+## [1.0.2] - 2026-08-01
+
+### Fixed
+- Idle throttle stuck at combat rate; dynamic 0.1s combat / 0.5s idle now works
+- Removed dead per-kind display toggles left over from the multi-row design
+- `/oa debug` reported trinkets as always ready
+- Display's own event frame bypassed the addon's error guard
+- `/oa debug` now surfaces the accumulated error count
+
+## [1.0.1] - 2026-08-01
+
+### Fixed
+- Frozen bar: icons 2+ were padded from the static rotation list and could never
+  change. Position 1 is now the live recommendation, re-polled every tick; later
+  slots hold only state-derived entries and the bar shrinks when there is nothing real.
+- Combat error "attempt to compare local auraName (secret)": aura NAMES are secret in
+  combat, not just spell IDs. All aura strings pass a secret guard before comparison.
+- Closed an un-gated legacy aura-scan path that could run in combat.
+
+### Added
+- `/oa watch` — 15s combat sampler reporting whether the recommendation changes and
+  whether the rotation list is static or live.
+
 ## [1.0.0] — 2026-08-01
 
 ### Added
