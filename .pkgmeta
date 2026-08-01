@@ -1,0 +1,7 @@
+package-as: OutlawAssist
+ignore:
+  - docs
+  - tests
+  - PLAN.md
+  - README.md
+  - .pkgmeta
