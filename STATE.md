@@ -79,3 +79,14 @@ Research in flight: docs/research/liquid-ui-style.md (aesthetic tokens), docs/re
 (can unit/party frames even be built in Midnight: secure frames, taint, whether party health is
 readable in combat). Feasibility gates the whole suite - if party health is secret in combat, party
 frames cannot show live health and the design must change.
+
+### UI-SUITE FEASIBILITY VERDICT (2026-08-01, docs/research/unitframe-feasibility.md)
+- Player/target/party frames: BUILDABLE-WITH-LIMITS. SecureGroupHeaderTemplate works for party;
+  set up out of combat, never restructure in combat.
+- Health BARS: buildable via Blizzard's C_CurveUtil, which accepts a secret health value and maps
+  it to bar width - so visual bars work in combat.
+- NUMERIC health / health-% TEXT in combat: BLOCKED. UnitHealth returns secrets in raids/M+ and
+  cannot be compared or formatted. Consequence for the Liquid look: bar fill yes, numbers no.
+  Any percent text must be hidden in combat rather than shown stale.
+- Dispel highlighting: BUILDABLE (C_UnitAuras.GetAuraDispelTypeColor).
+DECISION PENDING (user): accept a numbers-free-in-combat aesthetic, or drop party frames.
