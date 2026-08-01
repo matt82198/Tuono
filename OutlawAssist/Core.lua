@@ -145,6 +145,30 @@ OA.RegisterEvent("PLAYER_LOGIN", function()
   OutlawAssistDB = deepMerge(OutlawAssistDB or {}, OA.defaults)
   OA.db = OutlawAssistDB
 
+  -- Initialize Display (idempotent; guards against double-init)
+  if OA.Display and OA.Display.Init then
+    OA.safe(OA.Display.Init)
+  end
+
+  -- Register update handler with saved interval (or default 0.1)
+  OA.RegisterUpdate(function()
+    OA.safe(function()
+      if OA.State and OA.State.RefreshFast then
+        OA.State.RefreshFast()
+      end
+      if OA.Assist and OA.Assist.Update then
+        OA.Assist.Update()
+      end
+      local r
+      if OA.Engine and OA.Engine.Evaluate then
+        r = OA.Engine.Evaluate()
+      end
+      if OA.Display and OA.Display.Render then
+        OA.Display.Render(r)
+      end
+    end)
+  end, OA.db and OA.db.updateInterval or 0.1)
+
   -- Load canary: verify all expected module tables are present
   local expectedModules = {"State", "Assist", "Engine", "Rules", "Display", "defaults"}
   local missing = {}
@@ -158,20 +182,3 @@ OA.RegisterEvent("PLAYER_LOGIN", function()
   end
 end)
 
-OA.RegisterUpdate(function()
-  OA.safe(function()
-    if OA.State and OA.State.RefreshFast then
-      OA.State.RefreshFast()
-    end
-    if OA.Assist and OA.Assist.Update then
-      OA.Assist.Update()
-    end
-    local r
-    if OA.Engine and OA.Engine.Evaluate then
-      r = OA.Engine.Evaluate()
-    end
-    if OA.Display and OA.Display.Render then
-      OA.Display.Render(r)
-    end
-  end)
-end, OA.db and OA.db.updateInterval or 0.1)
