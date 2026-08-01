@@ -16,7 +16,8 @@ OA.defaults = {
 		scale = 1,
 		point = "CENTER",
 		x = 0,
-		y = -180
+		y = -180,
+		iconCount = 4
 	}
 }
 
@@ -104,12 +105,41 @@ local function HandleStatus()
 	OA.print("Procs: " .. (OA.db.show.procs and "ON" or "OFF"))
 	OA.print("Out-of-combat: " .. (OA.db.show.ooc and "ON" or "OFF"))
 	OA.print("Scale: " .. (OA.db.display.scale or 1))
+	OA.print("Icon count: " .. (OA.db.display.iconCount or 4))
 	OA.print("AoE mode: " .. (OA.db.aoeMode and "ON" or "OFF"))
+end
+
+local function HandleIcons(arg)
+	if not arg or arg == "" then
+		OA.print("Usage: /oa icons <1-8>")
+		return
+	end
+	local count = tonumber(arg)
+	if not count then
+		OA.print("Invalid icon count. Use a number between 1 and 8.")
+		return
+	end
+	count = math.max(1, math.min(8, count))
+	OA.db.display.iconCount = count
+	if OA.Display and OA.Display.anchor then
+		-- Re-layout: update anchor size and re-render
+		local stripWidth = 48 + math.max(0, (count - 1)) * 44
+		OA.Display.anchor:SetSize(stripWidth + 10, 60)
+		-- Trigger a re-render on next tick
+		if OA.Engine and OA.Engine.Evaluate then
+			local result = OA.Engine.Evaluate()
+			if OA.Display and OA.Display.Render then
+				OA.Display.Render(result)
+			end
+		end
+	end
+	OA.print("Icon count set to " .. count)
 end
 
 OA.RegisterSlash("lock", HandleLock, "Lock the display (disable dragging).")
 OA.RegisterSlash("unlock", HandleUnlock, "Unlock the display (enable dragging).")
 OA.RegisterSlash("scale", HandleScale, "Set display scale (0.5-2).")
+OA.RegisterSlash("icons", HandleIcons, "Set icon count (1-8).")
 OA.RegisterSlash("toggle", HandleToggle, "Toggle a feature: queue|cds|trinkets|rtb|procs|ooc.")
 OA.RegisterSlash("aoe", HandleAoe, "Toggle AoE mode.")
 OA.RegisterSlash("reset", HandleReset, "Reset config to defaults.")
