@@ -125,7 +125,7 @@ local function RefreshBuffs()
 
 			i = i + 1
 		end
-	else
+	elseif UnitBuff then
 		local i = 1
 		while true do
 			local name = UnitBuff("player", i)

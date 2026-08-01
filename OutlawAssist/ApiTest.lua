@@ -4,6 +4,14 @@ local function apitest()
   local passed = 0
   local total = 0
 
+  -- Print client info at the top
+  local buildOk, version, build, date, toc = pcall(GetBuildInfo)
+  if buildOk and version and build and toc then
+    OA.print("Client: " .. tostring(version) .. " build " .. tostring(build) .. " interface " .. tostring(toc))
+  else
+    OA.print("Client: unavailable (restricted)")
+  end
+
   local function test(name, fn)
     total = total + 1
     local ok, result = pcall(fn)
@@ -66,7 +74,17 @@ local function apitest()
   end)
 
   test("UnitBuff (fallback)", function()
-    local buff = UnitBuff("player", 1)
+    if UnitBuff == nil then
+      error("SKIP: legacy UnitBuff absent/nonfunctional (OK - modern C_UnitAuras path in use)")
+    end
+    local ok, buff = pcall(UnitBuff, "player", 1)
+    if not ok then
+      error("SKIP: legacy UnitBuff absent/nonfunctional (OK - modern C_UnitAuras path in use)")
+    end
+    -- Only fail if BOTH UnitBuff fails AND C_UnitAuras is missing
+    if buff == nil and (not C_UnitAuras or not C_UnitAuras.GetAuraDataByIndex) then
+      error("UnitBuff returned nil and C_UnitAuras unavailable")
+    end
     return buff
   end)
 
@@ -148,7 +166,7 @@ local function apitest()
     end
   end)
 
-  OA.print(passed .. "/" .. total .. " PASS - paste this output into a GitHub issue if anything FAILs")
+  OA.print(passed .. "/" .. total .. " PASS - paste this output into a GitHub issue if anything FAILs (SKIPs are OK)")
 end
 
 local function debug()

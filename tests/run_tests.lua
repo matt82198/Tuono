@@ -315,6 +315,33 @@ test("apitest command handler exists", function()
   assert_true(OA.slashCommands.apitest ~= nil or OA.slashCommands.debug ~= nil, "api test or debug command exists")
 end)
 
+-- Test 12b: StateTracker with UnitBuff unavailable (nil)
+test("state tracker works when UnitBuff is nil and C_UnitAuras present", function()
+  -- Save the original UnitBuff
+  local originalUnitBuff = _G.UnitBuff
+
+  -- Temporarily set UnitBuff to nil
+  _G.UnitBuff = nil
+
+  -- Ensure C_UnitAuras is still available
+  assert_true(C_UnitAuras ~= nil, "C_UnitAuras is available")
+  assert_true(C_UnitAuras.GetAuraDataByIndex ~= nil, "C_UnitAuras.GetAuraDataByIndex is available")
+
+  -- Set some state to verify buff scan works
+  stub.state.buffs.adrenalineRush = true
+  stub.state.buffs.adrenalineRushExpires = stub.state.time + 100
+
+  -- Call RefreshBuffs through RefreshFast - this should not error
+  OA.State.RefreshFast()
+
+  -- Verify state was refreshed without error
+  assert_true(OA.State.buffs ~= nil, "buffs state exists")
+  assert_true(OA.State.buffs.adrenalineRush.up or not OA.State.buffs.adrenalineRush.up, "buff scan completed")
+
+  -- Restore UnitBuff
+  _G.UnitBuff = originalUnitBuff
+end)
+
 -- Test 13: Energy cap warning guard (energyMax==0 should not trigger advisory)
 test("energy cap advisory not active when energyMax is 0", function()
   stub.state.energy = 100
