@@ -17,6 +17,22 @@ else
   print("WARNING: TOC check script not found")
 end
 
+-- Run Lua 5.1 syntax check (fail-closed)
+local lua51_check = loadfile("tests/lua51_check.lua")
+if lua51_check then
+  local ok, lua51Passed = pcall(lua51_check)
+  if not ok then
+    print("FATAL: Lua 5.1 check failed: " .. tostring(lua51Passed))
+    os.exit(1)
+  end
+  if not lua51Passed then
+    print("FATAL: Lua 5.1 syntax checks failed")
+    os.exit(1)
+  end
+else
+  print("WARNING: Lua 5.1 check script not found")
+end
+
 local stub = require("tests.wow_stub")
 
 -- Global setup

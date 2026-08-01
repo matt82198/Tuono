@@ -80,80 +80,74 @@ function OA.Engine.Evaluate()
   local advisoryIndex = #resultAdvisories + 1
 
   for _, rule in ipairs(OA.Rules or {}) do
-    if not rule.when then
-      goto rule_next
-    end
-
-    -- Evaluate rule condition safely
-    local condMet = OA.safe(rule.when, S, A)
-    if not condMet then
-      goto rule_next
-    end
-
-    -- Handle rule action
-    if rule.action == "PIN" then
-      if not pinApplied and rule.spellID then
-        -- First PIN wins: move or insert at position 1
-        local existingPos = queueSet[rule.spellID]
-        if existingPos then
-          -- Remove from current position
-          table.remove(resultQueue, existingPos)
-          -- Rebuild queueSet
-          wipeSet(queueSet)
-          for i, entry in ipairs(resultQueue) do
-            queueSet[entry.spellID] = i
+    -- Evaluate rule condition safely (skip if no when clause or condition not met)
+    if rule.when then
+      local condMet = OA.safe(rule.when, S, A)
+      if condMet then
+        -- Handle rule action
+        if rule.action == "PIN" then
+          if not pinApplied and rule.spellID then
+            -- First PIN wins: move or insert at position 1
+            local existingPos = queueSet[rule.spellID]
+            if existingPos then
+              -- Remove from current position
+              table.remove(resultQueue, existingPos)
+              -- Rebuild queueSet
+              wipeSet(queueSet)
+              for i, entry in ipairs(resultQueue) do
+                queueSet[entry.spellID] = i
+              end
+            end
+            -- Insert at position 1
+            table.insert(resultQueue, 1, { spellID = rule.spellID, source = rule.name })
+            queueSet[rule.spellID] = 1
+            -- Rebuild queueSet after insert
+            wipeSet(queueSet)
+            for i, entry in ipairs(resultQueue) do
+              queueSet[entry.spellID] = i
+            end
+            pinApplied = true
           end
+
+        elseif rule.action == "PREFER" then
+          if rule.spellID then
+            local pos = queueSet[rule.spellID]
+            if pos and pos > 1 then
+              -- Move one slot forward (toward position 1)
+              table.remove(resultQueue, pos)
+              table.insert(resultQueue, pos - 1, { spellID = rule.spellID, source = rule.name })
+              -- Rebuild queueSet
+              wipeSet(queueSet)
+              for i, entry in ipairs(resultQueue) do
+                queueSet[entry.spellID] = i
+              end
+            elseif not pos then
+              -- Not in queue: insert at position 2 (if room)
+              if #resultQueue >= 1 then
+                table.insert(resultQueue, 2, { spellID = rule.spellID, source = rule.name })
+              else
+                table.insert(resultQueue, { spellID = rule.spellID, source = rule.name })
+              end
+              -- Rebuild queueSet
+              wipeSet(queueSet)
+              for i, entry in ipairs(resultQueue) do
+                queueSet[entry.spellID] = i
+              end
+            end
+          end
+
+        elseif rule.action == "ADVISE" then
+          resultAdvisories[advisoryIndex] = {
+            kind = rule.kind or "generic",
+            icon = rule.spellID,
+            itemSlot = rule.itemSlot,
+            text = rule.desc or "",
+            active = true
+          }
+          advisoryIndex = advisoryIndex + 1
         end
-        -- Insert at position 1
-        table.insert(resultQueue, 1, { spellID = rule.spellID, source = rule.name })
-        queueSet[rule.spellID] = 1
-        -- Rebuild queueSet after insert
-        wipeSet(queueSet)
-        for i, entry in ipairs(resultQueue) do
-          queueSet[entry.spellID] = i
-        end
-        pinApplied = true
       end
-
-    elseif rule.action == "PREFER" then
-      if rule.spellID then
-        local pos = queueSet[rule.spellID]
-        if pos and pos > 1 then
-          -- Move one slot forward (toward position 1)
-          table.remove(resultQueue, pos)
-          table.insert(resultQueue, pos - 1, { spellID = rule.spellID, source = rule.name })
-          -- Rebuild queueSet
-          wipeSet(queueSet)
-          for i, entry in ipairs(resultQueue) do
-            queueSet[entry.spellID] = i
-          end
-        elseif not pos then
-          -- Not in queue: insert at position 2 (if room)
-          if #resultQueue >= 1 then
-            table.insert(resultQueue, 2, { spellID = rule.spellID, source = rule.name })
-          else
-            table.insert(resultQueue, { spellID = rule.spellID, source = rule.name })
-          end
-          -- Rebuild queueSet
-          wipeSet(queueSet)
-          for i, entry in ipairs(resultQueue) do
-            queueSet[entry.spellID] = i
-          end
-        end
-      end
-
-    elseif rule.action == "ADVISE" then
-      resultAdvisories[advisoryIndex] = {
-        kind = rule.kind or "generic",
-        icon = rule.spellID,
-        itemSlot = rule.itemSlot,
-        text = rule.desc or "",
-        active = true
-      }
-      advisoryIndex = advisoryIndex + 1
     end
-
-    ::rule_next::
   end
 
   -- Step 3: Truncate queue to 5

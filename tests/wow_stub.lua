@@ -339,7 +339,7 @@ end
 _G.C_Item = {
   GetItemCooldown = C_Item_GetItemCooldown,
   GetItemSpell = function(itemID)
-    return 123 -- dummy spell ID for trinket
+    return "Potion Name", 123 -- return (spellName, spellID) matching real API
   end
 }
 
@@ -357,6 +357,10 @@ function GetInventoryItemTexture(unit, slot)
     return "Interface\\Icons\\Ability_Rogue_Adrenaline"
   end
   return nil
+end
+
+function GetItemSpell(itemID)
+  return "Potion Name", 123 -- return (spellName, spellID) matching real API
 end
 
 function GetSpellTexture(spellID)
