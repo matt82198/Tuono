@@ -55,6 +55,22 @@ local lastEnemyCountRefresh = -1
 local trinketSpellCache = {}
 local trinketCacheSentinel = {}
 
+-- Secret-value helpers. issecretvalue itself may not exist on every build, so probe it
+-- once. NOTE: aura NAMES are secret in combat too, not just spellIds -- comparing one
+-- throws "attempt to compare local auraName (secret)". Every string that comes out of an
+-- aura must pass through safeStr before it is compared to anything.
+local hasIsSecret = type(_G.issecretvalue) == "function"
+local function isSecret(v)
+	if not hasIsSecret then return false end
+	local ok, res = pcall(_G.issecretvalue, v)
+	return ok and res == true
+end
+
+local function safeStr(v)
+	if v == nil or type(v) ~= "string" or isSecret(v) then return "" end
+	return v
+end
+
 -- TIER 1: Instance ID delta-map (auraInstanceID -> tracked-aura key)
 local instanceMap = {}
 -- TIER 1: Last cast tracking for correlation (~0.8s window)
@@ -194,7 +210,7 @@ local function ProcessAuraDelta(updateInfo)
 			if instanceID > 0 then
 				-- Try to read spellId (not secret)
 				local spellID = nil
-				if not _G.issecretvalue(auraData.spellId) then
+				if not isSecret(auraData.spellId) then
 					spellID = OA.num(auraData.spellId, 0)
 				end
 
@@ -279,7 +295,7 @@ local function RefreshBuffsFallback()
 
 			-- Guard against secret values in aura.spellId
 			local auraSpellId = 0
-			if aura.spellId and not _G.issecretvalue(aura.spellId) then
+			if aura.spellId and not isSecret(aura.spellId) then
 				auraSpellId = OA.num(aura.spellId, 0)
 			end
 
@@ -303,7 +319,7 @@ local function RefreshBuffsFallback()
 			end
 
 			-- Legacy name scan: ONLY if stage is still 0 (modern spellID path didn't find it)
-			local auraName = aura.name or ""
+			local auraName = safeStr(aura.name)
 			if rtbStageFromModern == 0 then
 				for _, buffName in ipairs(OA.RTB_BUFF_NAMES) do
 					if auraName == buffName and auraSpellId ~= OA.SpellIDs.rollTheBones then
@@ -320,8 +336,11 @@ local function RefreshBuffsFallback()
 		-- Classic UnitBuff fallback (when C_UnitAuras unavailable)
 		local i = 1
 		while true do
-			local name = UnitBuff("player", i)
-			if not name then break end
+			-- Break on the RAW value: safeStr returns "" for secret/absent, and "" is
+			-- truthy in Lua, so sanitizing before the nil-check loops forever.
+			local rawName = UnitBuff("player", i)
+			if not rawName then break end
+			local name = safeStr(rawName)
 
 			if name == "Roll the Bones" and rtbStageFromModern == 0 then
 				local _, _, count, _, duration, expTime = UnitBuff("player", i)
@@ -437,7 +456,7 @@ local function RefreshEnemyCount()
 			end)
 
 			if ok and threat ~= nil then
-				if _G.issecretvalue and _G.issecretvalue(threat) then
+				if isSecret(threat) then
 					poisoned = poisoned + 1
 				else
 					count = count + 1
@@ -508,8 +527,9 @@ local function OnUnitAura(event, unit, updateInfo)
 		-- TIER 1: Process delta updates if updateInfo available
 		if updateInfo then
 			ProcessAuraDelta(updateInfo)
-		else
-			-- Fallback: full refresh if no updateInfo
+		elseif not OA.State.inCombat then
+			-- Fallback: full refresh if no updateInfo. Same combat gate as the periodic
+			-- path -- this call site was the hole that let the index scan run in combat.
 			RefreshBuffsFallback()
 		end
 	end
