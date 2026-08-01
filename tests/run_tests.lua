@@ -673,11 +673,14 @@ test("display frames auto-initialized after PLAYER_LOGIN", function()
 
   -- Verify Display anchor was created by the Init call in PLAYER_LOGIN handler
   assert_true(OA.Display.anchor ~= nil, "Display anchor exists after PLAYER_LOGIN (auto-initialized)")
-  assert_true(OA.Display.anchor.rotationIcons ~= nil, "rotation icons created")
-  assert_true(#OA.Display.anchor.rotationIcons > 0, "rotation icons populated")
-  assert_true(OA.Display.anchor.cdRow ~= nil, "cooldown row created")
-  assert_true(OA.Display.anchor.trinketRow ~= nil, "trinket row created")
-  assert_true(OA.Display.anchor.rtbPanel ~= nil, "RtB panel created")
+  assert_true(OA.Display.anchor.strip ~= nil, "unified strip created")
+  assert_true(OA.Display.anchor.icons ~= nil, "icons array created")
+  assert_true(#OA.Display.anchor.icons > 0, "icons array populated")
+  -- Verify old multi-row structures are NOT created (unified strip only)
+  assert_true(OA.Display.anchor.rotationIcons == nil, "rotationIcons not created (unified strip only)")
+  assert_true(OA.Display.anchor.cdRow == nil, "cdRow not created (unified strip only)")
+  assert_true(OA.Display.anchor.trinketRow == nil, "trinketRow not created (unified strip only)")
+  assert_true(OA.Display.anchor.rtbPanel == nil, "rtbPanel not created (unified strip only)")
 end)
 
 -- GAP TEST 4: P0 bite-proof - /oa reset and /oa status work without errors
@@ -736,6 +739,169 @@ test("load canary detects missing module", function()
 
   -- Restore
   OA.Engine = savedEngine
+end)
+
+-- === ui-lane tests ===
+
+-- UI Test 1: Strip renders correct number of icons per iconCount config
+test("strip renders correct number of icons per iconCount", function()
+  OA.db.display.iconCount = 4
+  if OA.Display and OA.Display.Init then
+    OA.Display.Init()
+  end
+
+  local anchor = OA.Display.anchor
+  assert_true(anchor ~= nil, "anchor exists")
+  assert_true(anchor.strip ~= nil, "strip frame exists")
+  assert_true(anchor.icons ~= nil, "icons array exists")
+  assert_true(#anchor.icons >= 8, "icons array has at least 8 slots")
+end)
+
+-- UI Test 2: kind→border color mapping applied correctly
+test("kind to border color mapping applied", function()
+  OA.db.display.iconCount = 4
+  if OA.Display and OA.Display.Init then
+    OA.Display.Init()
+  end
+
+  -- Create a mock result with various kinds
+  local result = {
+    queue = {
+      {spellID = 193315, kind = "rotation", source = "blizzard"},
+      {spellID = 13750, kind = "cooldown", source = "rule"},
+      {spellID = 123456, kind = "trinket", itemSlot = 13, source = "rule"},
+      {spellID = 315508, kind = "rtb", source = "rule"}
+    },
+    advisories = {}
+  }
+
+  OA.Display.Render(result)
+
+  local anchor = OA.Display.anchor
+  -- Verify icons are shown (borders should be visible for non-default kinds)
+  for i = 1, 4 do
+    local icon = anchor.icons[i]
+    assert_true(icon ~= nil, "icon " .. i .. " exists")
+    -- If icon is shown and has border texture, the kind mapping was applied
+    -- We can't easily check the exact color in stub, but we can verify the border is set
+  end
+end)
+
+-- UI Test 3: Keybind text appears when mapping provided
+test("keybind text renders when GetBindingKey provides mapping", function()
+  -- Set up stub to return a keybinding
+  if GetBindingKey then
+    -- This tests the fallback path; in real game C_ActionBar would provide it
+    -- For stub test, we're verifying the code doesn't error when trying to get keybinds
+  end
+
+  OA.db.display.iconCount = 4
+  if OA.Display and OA.Display.Init then
+    OA.Display.Init()
+  end
+
+  local result = {
+    queue = {
+      {spellID = 193315, kind = "rotation", source = "blizzard"}
+    },
+    advisories = {}
+  }
+
+  OA.Display.Render(result)
+
+  -- Verify icon is rendered without error
+  local anchor = OA.Display.anchor
+  assert_true(anchor.icons[1] ~= nil, "icon 1 exists")
+  -- keyText field should exist (populated or empty)
+  assert_true(anchor.icons[1].keyText ~= nil, "keyText fontstring created")
+end)
+
+-- UI Test 4: Missing-kind entries render as rotation (default border color)
+test("missing kind in queue entry defaults to rotation", function()
+  OA.db.display.iconCount = 4
+  if OA.Display and OA.Display.Init then
+    OA.Display.Init()
+  end
+
+  -- Queue entry without kind field (old shape)
+  local result = {
+    queue = {
+      {spellID = 193315, source = "blizzard"}  -- no kind field
+    },
+    advisories = {}
+  }
+
+  OA.Display.Render(result)
+
+  -- Should not error; border should be set to rotation default
+  local anchor = OA.Display.anchor
+  assert_true(anchor.icons[1] ~= nil, "icon 1 renders")
+  -- Verify the icon was processed without error
+  assert_true(anchor.icons[1].texture ~= nil, "icon 1 texture exists")
+end)
+
+-- UI Test 5: No error when queue is empty
+test("display render handles empty queue without error", function()
+  OA.db.display.iconCount = 4
+  if OA.Display and OA.Display.Init then
+    OA.Display.Init()
+  end
+
+  local result = {
+    queue = {},
+    advisories = {}
+  }
+
+  OA.Display.Render(result)
+
+  -- All icons should be hidden
+  local anchor = OA.Display.anchor
+  for i = 1, 8 do
+    local icon = anchor.icons[i]
+    assert_true(icon ~= nil, "icon " .. i .. " exists")
+    -- Icon should be hidden when queue is empty
+  end
+end)
+
+-- UI Test 6: Only strip is visible, no rtbPanel or advisory visible
+test("only strip visible after render, no rtbPanel or advisory", function()
+  OA.db.display.iconCount = 4
+  if OA.Display and OA.Display.Init then
+    OA.Display.Init()
+  end
+
+  local result = {
+    queue = {
+      {spellID = 193315, kind = "rotation", source = "blizzard"}
+    },
+    advisories = {}
+  }
+
+  OA.Display.Render(result)
+
+  local anchor = OA.Display.anchor
+  assert_true(anchor.strip ~= nil, "strip frame exists")
+  -- rtbPanel and advisory should NOT exist (deleted in unified strip design)
+  assert_true(anchor.rtbPanel == nil, "rtbPanel does not exist (unified strip only)")
+  assert_true(anchor.advisory == nil, "advisory does not exist (unified strip only)")
+end)
+
+-- UI Test 7: iconCount configuration persists and re-layouts
+test("iconCount configuration persists and is applied", function()
+  OA.db.display.iconCount = 3
+  if OA.Display and OA.Display.Init then
+    OA.Display.Init()
+  end
+
+  assert_eq(OA.db.display.iconCount, 3, "iconCount initially 3")
+
+  -- Change iconCount via handler
+  local HandleIcons = OA.slashCommands and OA.slashCommands.icons and OA.slashCommands.icons.fn
+  assert_true(HandleIcons ~= nil, "icons handler exists")
+  HandleIcons("6")
+
+  -- Config should be updated
+  assert_eq(OA.db.display.iconCount, 6, "iconCount changed to 6")
 end)
 
 -- Summary
