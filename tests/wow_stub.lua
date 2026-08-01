@@ -75,6 +75,19 @@ function CreateFrame(frameType, name, parent)
   }
   table.insert(stub.frames, frame)
 
+  -- Frame geometry/cooldown methods the real API exposes on frames (a stub that
+  -- omits them makes real code look broken and hides real breakage).
+  function frame:SetAllPoints(f) self.allPoints = f or true end
+  function frame:IsShown() return self.visible == true end
+  function frame:IsVisible() return self.visible == true end
+  function frame:SetCooldown(start, duration)
+    self.cdStart, self.cdDuration = start, duration
+  end
+  function frame:SetSwipeColor() end
+  function frame:SetDrawEdge() end
+  function frame:SetReverse() end
+  function frame:SetHideCountdownNumbers() end
+
   function frame:RegisterEvent(event)
     self.events[event] = true
   end
@@ -179,7 +192,11 @@ function CreateFrame(frameType, name, parent)
       self.x = x or 0
       self.y = y or 0
     end
-    function fs:SetTextColor(r, g, b, a)
+    function fs:SetShadowColor(r, g, b, a) self.shadowColor = {r, g, b, a} end
+  function fs:SetShadowOffset(x, y) self.shadowOffset = {x, y} end
+  function fs:SetFont() end
+  function fs:SetJustifyH() end
+  function fs:SetTextColor(r, g, b, a)
       self.color = {r, g, b, a}
     end
     function fs:SetText(text)

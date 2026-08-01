@@ -5,7 +5,7 @@ OA.defaults = {
 	aoeMode = false,
 	show = {
 		queue = true,
-		ooc = false
+		ooc = true
 	},
 	display = {
 		locked = true,

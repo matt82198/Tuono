@@ -47,7 +47,9 @@ OA.State = {
 	tier = { twoPc = false, fourPc = false },
 	inCombat = false,
 	stealthed = false,
-	enemyCount = nil
+	enemyCount = nil,
+	knownSpells = {},
+	knownUnavailable = false
 }
 
 local lastBuffScan = -1
@@ -78,6 +80,12 @@ local lastCast = { spellID = nil, t = 0 }
 local castCorrelationWindow = 0.8
 
 local function NormalizeCooldown(startTime, duration)
+	-- FAIL-CLOSED: Check for secret values BEFORE coercing
+	-- Secret cooldowns are UNKNOWN, never READY
+	if isSecret(startTime) or isSecret(duration) then
+		return { known = false, ready = false, remaining = 0 }
+	end
+
 	startTime = OA.num(startTime, 0)
 	duration = OA.num(duration, 0)
 	if startTime == 0 or duration == 0 then
@@ -396,16 +404,24 @@ local function RefreshTrinkets()
 			else
 				cd_start, cd_duration = GetItemCooldown(itemID)
 			end
-			cd_start = OA.num(cd_start, 0)
-			cd_duration = OA.num(cd_duration, 0)
-			if cd_start ~= nil and cd_duration ~= nil then
-				local now = GetTime()
-				if cd_start == 0 or cd_duration == 0 then
-					OA.State.trinkets[slot].ready = true
-					OA.State.trinkets[slot].remaining = 0
-				else
-					OA.State.trinkets[slot].remaining = math.max(0, (cd_start + cd_duration) - now)
-					OA.State.trinkets[slot].ready = OA.State.trinkets[slot].remaining <= 0
+
+			-- FAIL-CLOSED: Check for secret values BEFORE coercing
+			if isSecret(cd_start) or isSecret(cd_duration) then
+				-- Unknown cooldown: mark as not ready
+				OA.State.trinkets[slot].ready = false
+				OA.State.trinkets[slot].remaining = 0
+			else
+				cd_start = OA.num(cd_start, 0)
+				cd_duration = OA.num(cd_duration, 0)
+				if cd_start ~= nil and cd_duration ~= nil then
+					local now = GetTime()
+					if cd_start == 0 or cd_duration == 0 then
+						OA.State.trinkets[slot].ready = true
+						OA.State.trinkets[slot].remaining = 0
+					else
+						OA.State.trinkets[slot].remaining = math.max(0, (cd_start + cd_duration) - now)
+						OA.State.trinkets[slot].ready = OA.State.trinkets[slot].remaining <= 0
+					end
 				end
 			end
 
@@ -471,6 +487,45 @@ local function RefreshEnemyCount()
 		OA.State.enemyCount = nil
 	else
 		OA.State.enemyCount = count
+	end
+end
+
+local function RefreshKnownSpells()
+	-- Probe for known-spell APIs in order of preference
+	local checkFn = nil
+	if C_SpellBook and C_SpellBook.IsSpellKnown then
+		checkFn = function(spellID) return C_SpellBook.IsSpellKnown(spellID) end
+	elseif IsPlayerSpell then
+		checkFn = function(spellID) return IsPlayerSpell(spellID) end
+	elseif IsSpellKnownOrOverridesKnown then
+		checkFn = function(spellID) return IsSpellKnownOrOverridesKnown(spellID) end
+	elseif IsSpellKnown then
+		checkFn = function(spellID) return IsSpellKnown(spellID) end
+	else
+		-- No known-spell API available: fail-open (assume all are known)
+		OA.State.knownUnavailable = true
+		return
+	end
+
+	OA.State.knownUnavailable = false
+	wipe(OA.State.knownSpells)
+
+	-- Check all spells from OA.SpellIDs
+	for name, spellID in pairs(OA.SpellIDs or {}) do
+		if spellID then
+			local ok, isKnown = pcall(checkFn, spellID)
+			OA.State.knownSpells[spellID] = ok and isKnown or false
+		end
+	end
+
+	-- Also check all spells referenced by rules
+	for _, rule in ipairs(OA.Rules or {}) do
+		if rule.spellID then
+			if OA.State.knownSpells[rule.spellID] == nil then
+				local ok, isKnown = pcall(checkFn, rule.spellID)
+				OA.State.knownSpells[rule.spellID] = ok and isKnown or false
+			end
+		end
 	end
 end
 
@@ -550,7 +605,16 @@ local function OnNamePlateUnitRemoved(event, unitToken)
 	RefreshEnemyCount()
 end
 
-OA.RegisterEvent("PLAYER_ENTERING_WORLD", OnPlayerEnteringWorld)
+local function OnPlayerEnteringWorldFull(event)
+	OnPlayerEnteringWorld(event)
+	RefreshKnownSpells()
+end
+
+local function OnTalentChange(event)
+	RefreshKnownSpells()
+end
+
+OA.RegisterEvent("PLAYER_ENTERING_WORLD", OnPlayerEnteringWorldFull)
 OA.RegisterEvent("PLAYER_EQUIPMENT_CHANGED", OnPlayerEquipmentChanged)
 OA.RegisterEvent("PLAYER_REGEN_DISABLED", OnPlayerRegenDisabled)
 OA.RegisterEvent("PLAYER_REGEN_ENABLED", OnPlayerRegenEnabled)
@@ -558,3 +622,20 @@ OA.RegisterEvent("UNIT_AURA", OnUnitAura)
 OA.RegisterEvent("UNIT_SPELLCAST_SUCCEEDED", OnUnitSpellcastSucceeded)
 OA.RegisterEvent("NAME_PLATE_UNIT_ADDED", OnNamePlateUnitAdded)
 OA.RegisterEvent("NAME_PLATE_UNIT_REMOVED", OnNamePlateUnitRemoved)
+
+-- Register for talent changes (guard existence of each event)
+if not OA._RegisteredTalentEvents then
+	OA._RegisteredTalentEvents = true
+	if _G.PLAYER_TALENT_UPDATE then
+		OA.RegisterEvent("PLAYER_TALENT_UPDATE", OnTalentChange)
+	end
+	if _G.ACTIVE_TALENT_GROUP_CHANGED then
+		OA.RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED", OnTalentChange)
+	end
+	if _G.TRAIT_CONFIG_UPDATED then
+		OA.RegisterEvent("TRAIT_CONFIG_UPDATED", OnTalentChange)
+	end
+	if _G.SPELLS_CHANGED then
+		OA.RegisterEvent("SPELLS_CHANGED", OnTalentChange)
+	end
+end
