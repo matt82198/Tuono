@@ -128,6 +128,18 @@ function CreateFrame(frameType, name, parent)
     self.visible = false
   end
 
+  function frame:IsVisible()
+    return self.visible
+  end
+
+  function frame:GetWidth()
+    return self.width or 200
+  end
+
+  function frame:GetHeight()
+    return self.height or 250
+  end
+
   function frame:CreateTexture(name, layer)
     local tex = {
       name = name,
@@ -455,6 +467,34 @@ function _G.issecretvalue(v)
     end
   end
   return false
+end
+
+-- C_ActionBar stub for keybind lookups
+_G.C_ActionBar = {
+  FindSpellActionButtons = function(spellID)
+    -- Return slot 1 for spell 193315 (Sinister Strike), nil for others
+    if spellID == 193315 then
+      return {1}  -- Action button 1
+    end
+    return nil
+  end
+}
+
+-- GetBindingKey stub for keybind text
+function _G.GetBindingKey(bindingName)
+  -- Stub: return a binding for ACTIONBUTTON1
+  if bindingName == "ACTIONBUTTON1" then
+    return "1"
+  end
+  return nil
+end
+
+-- GetActionInfo stub
+function _G.GetActionInfo(slot)
+  if slot == 1 then
+    return "spell", 193315  -- Spell in slot 1
+  end
+  return nil
 end
 
 return stub
