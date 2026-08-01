@@ -1676,12 +1676,15 @@ test("live-queue: queue does not pad with static rotation entries", function()
     assert_true(entry.source ~= "blizzard" or entry.confidence == "static-fallback",
       "queue entry " .. i .. " is ours or a labelled fallback, never static padding")
   end
-  -- And the sequence must not repeat a cooldown-bearing ability back to back, which is
-  -- what a simulation that fails to start cooldowns produces.
+  -- A COOLDOWN-BEARING ability must not repeat back to back -- that is the signature of
+  -- a simulation that never starts cooldowns. A zero-cooldown builder repeating is
+  -- CORRECT and expected ("Sinister Strike x4" at low combo points).
+  local ABIL = OA.Rotation and OA.Rotation.ABILITIES or {}
   for i = 2, #r.queue do
-    if r.queue[i].spellID and r.queue[i].kind ~= "trinket" then
-      assert_true(r.queue[i].spellID ~= r.queue[i - 1].spellID,
-        "no immediate duplicate at position " .. i .. " (cooldowns advanced in sim)")
+    local id = r.queue[i].spellID
+    if id and r.queue[i].kind ~= "trinket" and ABIL[id] and (ABIL[id].cd or 0) > 0 then
+      assert_true(id ~= r.queue[i - 1].spellID,
+        "cooldown ability repeated back to back at position " .. i .. " (cooldowns not advancing)")
     end
   end
 end)

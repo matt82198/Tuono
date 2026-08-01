@@ -54,15 +54,24 @@ function OA.Engine.Evaluate()
 
   if predictions and type(predictions) == "table" then
     for _, pred in ipairs(predictions) do
-      if pred.spellID and not tempDedup[pred.spellID] then
+      -- DO NOT dedupe the predicted SEQUENCE. A rotation legitimately repeats an
+      -- ability -- at 0 combo points the honest answer is "Sinister Strike x4" -- and
+      -- collapsing those to one icon is why the bar showed only one or two entries.
+      -- Dedup still applies to the rule-derived extras merged in below, so a cooldown
+      -- reminder never doubles up an ability already in the sequence.
+      if pred.spellID then
         table.insert(resultQueue, {
           spellID = pred.spellID,
           source = pred.reason or "rotation_predict",
           kind = "rotation",
-          confidence = pred.confidence
+          confidence = pred.confidence,
+          step = queueIndex,
+          isSequence = true
         })
         tempDedup[pred.spellID] = true
-        queueSet[pred.spellID] = queueIndex
+        if not queueSet[pred.spellID] then
+          queueSet[pred.spellID] = queueIndex
+        end
         queueIndex = queueIndex + 1
       end
     end
@@ -220,9 +229,13 @@ function OA.Engine.Evaluate()
   end
 
   -- Step 3: Dedup by spellID (keep highest-priority = earliest in array)
+  -- Sequence steps are EXEMPT: deduping them collapsed "SS, SS, SS, SS" into one icon,
+  -- which is why the bar showed one or two entries instead of the four predicted steps.
   local seenSpells = {}
   for i, entry in ipairs(resultQueue) do
-    if entry.spellID then
+    if entry.isSequence then
+      table.insert(dedupQueue, entry)
+    elseif entry.spellID then
       if not seenSpells[entry.spellID] then
         table.insert(dedupQueue, entry)
         seenSpells[entry.spellID] = true
