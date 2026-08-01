@@ -237,13 +237,16 @@ local function debug()
       OA.print("AR CD: " .. (OA.State.cooldowns.adrenalineRush and OA.State.cooldowns.adrenalineRush.remaining or "unknown"))
     end
     if OA.State.trinkets then
-      OA.print("Trinket 13: " .. tostring(OA.State.trinkets[13] and "ready" or "cooldown"))
-      OA.print("Trinket 14: " .. tostring(OA.State.trinkets[14] and "ready" or "cooldown"))
+      OA.print("Trinket 13: " .. tostring(OA.State.trinkets[13] and OA.State.trinkets[13].ready and "ready" or "cooldown"))
+      OA.print("Trinket 14: " .. tostring(OA.State.trinkets[14] and OA.State.trinkets[14].ready and "ready" or "cooldown"))
     end
   end
   if OA.Assist then
     OA.print("Assist NextSpellID: " .. (OA.Assist.nextSpellID or "none"))
     OA.print("Assist Queue Length: " .. (OA.Assist.queue and #OA.Assist.queue or 0))
+  end
+  if OA.errorCount and OA.errorCount > 0 then
+    OA.print("Errors since load: " .. OA.errorCount)
   end
 end
 

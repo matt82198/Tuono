@@ -223,16 +223,13 @@ function OA.Display.Init()
 	statusText:Hide()
 	anchor.statusText = statusText
 
-	-- Register for UPDATE_BINDINGS and ACTIONBAR_SLOT_CHANGED events
-	local eventFrame = CreateFrame("Frame")
-	eventFrame:RegisterEvent("UPDATE_BINDINGS")
-	eventFrame:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
-	eventFrame:SetScript("OnEvent", function(self, event)
-		if event == "UPDATE_BINDINGS" or event == "ACTIONBAR_SLOT_CHANGED" then
-			InvalidateKeybindCache()
-		end
+	-- Register for UPDATE_BINDINGS and ACTIONBAR_SLOT_CHANGED events via OA dispatcher
+	OA.RegisterEvent("UPDATE_BINDINGS", function()
+		InvalidateKeybindCache()
 	end)
-	anchor.eventFrame = eventFrame
+	OA.RegisterEvent("ACTIONBAR_SLOT_CHANGED", function()
+		InvalidateKeybindCache()
+	end)
 
 	OA.Display.anchor = anchor
 end
