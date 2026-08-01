@@ -76,11 +76,22 @@ local function HandleAoe()
 end
 
 local function HandleReset()
-	OutlawAssistDB = nil
-	OA.db = nil
+	OutlawAssistDB = {}
+	for k, v in pairs(OA.defaults) do
+		if type(v) == "table" then
+			OutlawAssistDB[k] = {}
+			for k2, v2 in pairs(v) do
+				OutlawAssistDB[k][k2] = v2
+			end
+		else
+			OutlawAssistDB[k] = v
+		end
+	end
+	OA.db = OutlawAssistDB
 	OA.print("Config reset to defaults.")
 	if OA.Display and OA.Display.anchor then
 		OA.Display.anchor:SetPoint(OA.defaults.display.point or "CENTER", OA.defaults.display.x or 0, OA.defaults.display.y or -180)
+		OA.Display.anchor:SetScale(OA.defaults.display.scale or 1)
 	end
 end
 

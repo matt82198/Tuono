@@ -151,8 +151,14 @@ local function apitest()
     end
 
     local found = false
-    for _, spellID in ipairs(spells) do
-      if spellID == bladeFlurrySpellID then
+    for _, entry in ipairs(spells) do
+      local id = nil
+      if type(entry) == "number" then
+        id = entry
+      elseif type(entry) == "table" and entry.spellID then
+        id = entry.spellID
+      end
+      if id == bladeFlurrySpellID then
         found = true
         break
       end
