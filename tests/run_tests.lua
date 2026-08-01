@@ -136,6 +136,10 @@ end
 
 -- Test 1: Base queue with assist available
 test("assist available - queue adapts to varying nextSpellID values", function()
+  -- Self-sufficient: prevent opener rule from pinning by setting inCombat=true
+  OA.State.inCombat = true
+  OA.State.stealthed = false
+
   _G.C_AssistedCombat.GetNextCastSpell = function() return 193315 end
   OA.Assist.Update()
   local r = OA.Engine.Evaluate()
@@ -149,10 +153,14 @@ test("assist available - queue adapts to varying nextSpellID values", function()
   assert_eq(r.queue[1].spellID, 1234, "queue adapts: starts with 1234 when GetNextCastSpell returns 1234")
 
   _G.C_AssistedCombat.GetNextCastSpell = function() return 193315 end
+  OA.State.inCombat = false
 end)
 
 -- Test 2: AR PIN at low CP
 test("adrenaline rush PIN when CP<=2 and ready", function()
+  -- Self-sufficient state setup
+  OA.State.inCombat = true
+  OA.State.stealthed = false
   stub.state.comboPoints = 2
   stub.state.cooldowns[13750] = {startTime = 0, duration = 0}
   OA.Assist.Update()
@@ -171,6 +179,9 @@ end)
 
 -- Test 3: BtE PIN at high CP
 test("between the eyes PIN when CP>=6", function()
+  -- Self-sufficient state setup
+  OA.State.inCombat = true
+  OA.State.stealthed = false
   stub.state.comboPoints = 6
   stub.state.cooldowns[13750] = {startTime = 100, duration = 10}
   OA.Assist.Update()
@@ -182,6 +193,9 @@ end)
 
 -- Test 4: Engine.Evaluate validates actual logic
 test("engine.evaluate produces valid queue and advisory structures", function()
+  -- Self-sufficient state setup
+  OA.State.inCombat = true
+  OA.State.stealthed = false
   stub.state.comboPoints = 2
   OA.Assist.Update()
   OA.State.RefreshFast()
@@ -215,19 +229,23 @@ test("trinket advisory rule exists for AR buff + trinket ready", function()
   end
   assert_true(foundRule, "trinket_slot13_during_ar rule exists")
 
+  -- Self-sufficient state setup
+  OA.State.inCombat = true
+  OA.State.stealthed = false
   OA.State.buffs.adrenalineRush.up = true
   OA.State.trinkets[13].ready = true
   OA.State.trinkets[13].onUse = true
 
   local r = OA.Engine.Evaluate()
+  -- v0.3 contract: trinket entries fold into queue with kind="trinket" and itemSlot
   local foundTrinket = false
-  for _, adv in ipairs(r.advisories) do
-    if adv.kind == "trinket" and adv.itemSlot == 13 and adv.active then
+  for _, entry in ipairs(r.queue) do
+    if entry.kind == "trinket" and entry.itemSlot == 13 then
       foundTrinket = true
       break
     end
   end
-  assert_true(foundTrinket, "trinket advisory fires when AR up + trinket ready + onUse")
+  assert_true(foundTrinket, "trinket entry in queue when AR up + trinket ready + onUse")
 end)
 
 -- MANDATED TEST 2: RtB reroll advisory at stage 1
@@ -288,6 +306,9 @@ end)
 
 -- Test 6: IntelligenceLayer integration
 test("intelligence layer evaluate with various states", function()
+  -- Self-sufficient state setup
+  OA.State.inCombat = true
+  OA.State.stealthed = false
   stub.state.comboPoints = 3
   OA.Assist.Update()
   OA.State.RefreshFast()
@@ -298,6 +319,9 @@ end)
 
 -- Test 8: Intelligence Layer Queue Content
 test("intelligence layer queue reflects specific spell IDs based on combo point state", function()
+  -- Self-sufficient state setup
+  OA.State.inCombat = true
+  OA.State.stealthed = false
   stub.state.comboPoints = 2
   OA.Assist.Update()
   OA.State.RefreshFast()
@@ -771,6 +795,9 @@ end)
 
 -- TEST: Pistol shot rule resolves spellID lazily
 test("pistol shot rule resolves spellID lazily at evaluate time", function()
+  -- Self-sufficient state setup
+  OA.State.inCombat = true
+  OA.State.stealthed = false
   OA.State.buffs.opportunity.up = true
   OA.State.energy = 30
   OA.Assist.Update()
@@ -807,6 +834,9 @@ end)
 
 -- TEST: Unified queue contains cooldown entry when AR ready
 test("unified queue: cooldown entry when AR ready + rule fires", function()
+  -- Self-sufficient state setup
+  OA.State.inCombat = true
+  OA.State.stealthed = false
   OA.State.cooldowns.adrenalineRush.ready = true
   OA.State.comboPoints = 2
   OA.Assist.Update()
@@ -844,6 +874,9 @@ end)
 
 -- TEST: RtB entry at stage 0
 test("unified queue: RtB entry at stage 0", function()
+  -- Self-sufficient state setup
+  OA.State.inCombat = true
+  OA.State.stealthed = false
   OA.State.buffs.rtb.stage = 0
   OA.Assist.Update()
   OA.State.RefreshFast()
@@ -1007,7 +1040,7 @@ test("keybind text displayed when mapping provided", function()
 
   local anchor = OA.Display.anchor
   if anchor.icons[1] then
-    assert_true(anchor.icons[1].keybind ~= nil, "keybind text element exists on icon 1")
+    assert_true(anchor.icons[1].keyText ~= nil, "keyText element exists on icon 1")
   end
 end)
 
