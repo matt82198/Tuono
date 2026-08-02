@@ -74,7 +74,11 @@ local function GetKeybindText(spellID)
 	-- Cache hit: return already-abbreviated string or sentinel (not nil, which would re-lookup)
 	local cached = spellIDtoKeytext[spellID]
 	if cached ~= nil then
-		return (cached == KEYBIND_MISS) and nil or cached
+		-- NOT `(cached == MISS) and nil or cached`: in Lua `true and nil` is nil, so that
+		-- idiom falls through to `or cached` and returns the SENTINEL TABLE, which then
+		-- reached SetText ("bad argument #1 to SetText") and killed the render.
+		if cached == KEYBIND_MISS then return nil end
+		return cached
 	end
 
 	local foundKey = nil

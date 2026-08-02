@@ -549,6 +549,14 @@ function OA.State.RefreshFast()
 	local energyPower = Enum and Enum.PowerType and Enum.PowerType.Energy or 3
 	local comboPower = Enum and Enum.PowerType and Enum.PowerType.ComboPoints or 4
 
+	-- STEALTH comes from IsStealthed(), not the aura scan. Aura data goes secret in
+	-- combat, so an aura-derived flag never CLEARS once set -- which pinned Ambush to
+	-- position 1 permanently. IsStealthed is a plain boolean and stays readable.
+	if _G.IsStealthed then
+		local ok, stealthed = pcall(_G.IsStealthed)
+		if ok then OA.State.stealthed = stealthed and true or false end
+	end
+
 	OA.State.energy = OA.num(UnitPower("player", energyPower), 0)
 	OA.State.energyMax = OA.num(UnitPowerMax("player", energyPower), 0)
 	OA.State.comboPoints = OA.num(UnitPower("player", comboPower), 0)

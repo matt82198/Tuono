@@ -533,6 +533,10 @@ _G.C_AssistedCombat = {
   end
 }
 
+function IsStealthed()
+  return stub.state.stealthed == true
+end
+
 _G.SlashCmdList = {}
 
 -- Marker for secret values
