@@ -48,6 +48,39 @@ local function AbbreviateKey(keyStr)
 	return keyStr
 end
 
+-- Bonus-bar-aware main-bar slot math. STEALTH SWAPS THE ACTION BAR PAGE: entering
+-- stealth changes bonusBarOffset, which remaps what ActionButton1-12 show WITHOUT
+-- necessarily changing GetActionBarPage() -- that API explicitly does NOT reflect
+-- bonus-bar overrides (VERIFIED, warcraft.wiki.gg API_GetActionBarPage: "might not
+-- actually be available if overridden by a vehicle, mind control, temporary
+-- shapeshift or other similar mechanics"). GetBonusBarOffset() is authoritative and
+-- takes priority when > 0 (Rogue Stealth = bonus offset 1, VERIFIED). Formula for
+-- main-bar button N's CURRENT absolute slot (VERIFIED, warcraft.wiki.gg
+-- API_GetBonusBarOffset): bonus active -> N + (NUM_ACTIONBAR_PAGES + offset - 1) *
+-- NUM_ACTIONBAR_BUTTONS; otherwise -> N + (page - 1) * NUM_ACTIONBAR_BUTTONS. All
+-- reads pcall-guarded; the two NUM_ACTIONBAR_* globals fall back to the standard 6/12
+-- if this client build doesn't define them.
+local function CurrentMainBarSlot(buttonIndex)
+	local numPages = tonumber(_G.NUM_ACTIONBAR_PAGES) or 6
+	local numButtons = tonumber(_G.NUM_ACTIONBAR_BUTTONS) or 12
+
+	local bonusOffset = 0
+	if _G.GetBonusBarOffset then
+		local ok, off = pcall(_G.GetBonusBarOffset)
+		if ok and type(off) == "number" and off > 0 then bonusOffset = off end
+	end
+	if bonusOffset > 0 then
+		return buttonIndex + (numPages + bonusOffset - 1) * numButtons
+	end
+
+	local page = 1
+	if _G.GetActionBarPage then
+		local ok, p = pcall(_G.GetActionBarPage)
+		if ok and type(p) == "number" and p > 0 then page = p end
+	end
+	return buttonIndex + (page - 1) * numButtons
+end
+
 -- Action-slot -> binding-name map. The previous inline version covered only slots
 -- 1-12 and 61-72 and mislabelled 73+, so a spell on any other bar silently produced
 -- no keybind -- which is why keybinds appeared on only some icons in live play.
@@ -56,6 +89,16 @@ end
 -- 61-72 MultiBarBottomLeft(1), 73-120 bars 5-7.
 local function bindingNameForSlot(slot)
 	if type(slot) ~= "number" then return nil end
+
+	-- Whichever absolute slot is CURRENTLY showing on the main 12 buttons (accounting
+	-- for stealth/bonus-bar swaps) wins over the static page table below: that table
+	-- assumes page 1 == buttons 1-12, which is false while a bonus bar is active.
+	for i = 1, 12 do
+		if CurrentMainBarSlot(i) == slot then
+			return "ACTIONBUTTON" .. i
+		end
+	end
+
 	if slot >= 1 and slot <= 12 then return "ACTIONBUTTON" .. slot end
 	if slot >= 13 and slot <= 24 then return "ACTIONBUTTON" .. (slot - 12) end
 	if slot >= 25 and slot <= 36 then return "MULTIACTIONBAR3BUTTON" .. (slot - 24) end
@@ -83,9 +126,17 @@ local function GetKeybindText(spellID)
 
 	local foundKey = nil
 
-	-- Try C_ActionBar.FindSpellActionButtons (modern, preferred)
+	-- TIER 1: C_ActionBar.FindSpellActionButtons (modern, preferred). Expects a BASE
+	-- spell ID and resolves overrides internally (VERIFIED, warcraft.wiki.gg: "Expects
+	-- a base spell, so if a spell is overridden the base ID should be provided") --
+	-- exactly what OA.SpellIDs / the queue's spellID always is.
+	-- BUGFIX: OA.safe returns a SINGLE value (`return result`, see Core.lua), not an
+	-- (ok, result) pair. `local ok, buttons = OA.safe(...)` put the buttons array in
+	-- `ok` and left `buttons` always nil, so `if ok and buttons` never passed and this
+	-- whole modern path was permanently dead -- every lookup fell through to the
+	-- 120-slot scan below. pcall directly instead.
 	if C_ActionBar and C_ActionBar.FindSpellActionButtons then
-		local ok, buttons = OA.safe(function() return C_ActionBar.FindSpellActionButtons(spellID) end)
+		local ok, buttons = pcall(function() return C_ActionBar.FindSpellActionButtons(spellID) end)
 		if ok and buttons and #buttons > 0 then
 			local slot = buttons[1]
 			local bindingName = bindingNameForSlot(slot)
@@ -99,12 +150,38 @@ local function GetKeybindText(spellID)
 		end
 	end
 
-	-- Fallback: iterate action buttons 1-120
+	-- TIER 2: the CURRENTLY VISIBLE main-bar slots (bonus-bar aware), so a
+	-- stealth-only spell (e.g. Ambush) resolves to whatever button is ACTUALLY
+	-- showing it right now, not a static page-1 guess. Override-aware match: the slot
+	-- may hold spellID's active override rather than spellID itself.
+	if not foundKey and GetActionInfo then
+		for i = 1, 12 do
+			local slot = CurrentMainBarSlot(i)
+			local actionType, actionID = GetActionInfo(slot)
+			local matches = (actionType == "spell" or actionType == "talent" or actionType == "action")
+				and ((OA.SpellMatchesAction and OA.SpellMatchesAction(spellID, actionID)) or actionID == spellID)
+			if matches then
+				local bindingName = bindingNameForSlot(slot)
+				if bindingName and GetBindingKey then
+					local key = GetBindingKey(bindingName)
+					if key then
+						foundKey = AbbreviateKey(key)
+						break
+					end
+				end
+			end
+		end
+	end
+
+	-- TIER 3: fallback full sweep of all 120 action slots (fixed multibars unaffected
+	-- by the main-bar page/bonus swap, plus a catch-all for anything TIER 1/2 missed).
+	-- Override-aware for the same reason as TIER 2.
 	if not foundKey and GetActionInfo then
 		for slot = 1, 120 do
 			local actionType, actionID, _ = GetActionInfo(slot)
-			-- Check both spell and potentially talent/override variants
-			if actionID == spellID and (actionType == "spell" or actionType == "talent" or actionType == "action") then
+			local matches = (actionType == "spell" or actionType == "talent" or actionType == "action")
+				and ((OA.SpellMatchesAction and OA.SpellMatchesAction(spellID, actionID)) or actionID == spellID)
+			if matches then
 			local bindingName = bindingNameForSlot(slot)
 
 				if bindingName and GetBindingKey then
@@ -277,6 +354,31 @@ function OA.Display.Init()
 		InvalidateKeybindCache()
 	end)
 	OA.RegisterEvent("ACTIONBAR_SLOT_CHANGED", function()
+		InvalidateKeybindCache()
+	end)
+
+	-- STEALTH SWAPS THE ACTION BAR PAGE: the keybind cache must be recomputed for the
+	-- newly visible bar even when no individual slot changed. VERIFIED events
+	-- (warcraft.wiki.gg, 2026-08-01): UPDATE_STEALTH, ACTIONBAR_PAGE_CHANGED,
+	-- UPDATE_BONUS_ACTIONBAR all fire with no payload. SPELLS_CHANGED covers overrides
+	-- granted/revoked by talents. PLAYER_REGEN_DISABLED/ENABLED are included per the
+	-- same "invalidate on any plausible transition" policy the reported bug needs.
+	OA.RegisterEvent("UPDATE_STEALTH", function()
+		InvalidateKeybindCache()
+	end)
+	OA.RegisterEvent("ACTIONBAR_PAGE_CHANGED", function()
+		InvalidateKeybindCache()
+	end)
+	OA.RegisterEvent("UPDATE_BONUS_ACTIONBAR", function()
+		InvalidateKeybindCache()
+	end)
+	OA.RegisterEvent("SPELLS_CHANGED", function()
+		InvalidateKeybindCache()
+	end)
+	OA.RegisterEvent("PLAYER_REGEN_DISABLED", function()
+		InvalidateKeybindCache()
+	end)
+	OA.RegisterEvent("PLAYER_REGEN_ENABLED", function()
 		InvalidateKeybindCache()
 	end)
 

@@ -656,4 +656,80 @@ function _G.UnitThreatSituation(player, unitToken)
   return stub.threatLevels[unitToken]
 end
 
+-- === state-transition stub additions (additive; nothing above this line is edited) ===
+-- Bonus-bar / action-bar-page stub state and spell-override stub state, added to
+-- exercise stealth-triggered slot/button transitions and override resolution.
+
+stub.state.bonusBarOffset = 0  -- 0 = no bonus bar; Rogue Stealth = 1 (VERIFIED contract)
+stub.state.actionBarPage = 1
+
+-- slot -> {actionType, actionID} map, keyed by ABSOLUTE action slot. Slot 1 keeps the
+-- original stub default (spell/193315) so every pre-existing test still passes.
+stub.state.actionSlots = {
+  [1] = { "spell", 193315 }
+}
+
+function stub.SetActionSlot(slot, actionType, actionID)
+  stub.state.actionSlots[slot] = { actionType, actionID }
+end
+
+function stub.ClearActionSlot(slot)
+  stub.state.actionSlots[slot] = nil
+end
+
+-- Supersedes the single-slot GetActionInfo defined above (last definition wins in
+-- Lua); slot 1 keeps returning spell/193315 by default via stub.state.actionSlots.
+function _G.GetActionInfo(slot)
+  local entry = stub.state.actionSlots[slot]
+  if entry then
+    return entry[1], entry[2]
+  end
+  return nil
+end
+
+-- GetBonusBarOffset: 0 = no bonus bar, matching the real Rogue contract (Stealth = 1).
+function _G.GetBonusBarOffset()
+  return stub.state.bonusBarOffset or 0
+end
+
+-- GetActionBarPage: the player-selected page. Per Blizzard's own docs this does NOT
+-- reflect bonus-bar overrides, so the stub mirrors that: it stays whatever it was set
+-- to regardless of stub.state.bonusBarOffset.
+function _G.GetActionBarPage()
+  return stub.state.actionBarPage or 1
+end
+
+_G.NUM_ACTIONBAR_PAGES = 6
+_G.NUM_ACTIONBAR_BUTTONS = 12
+
+-- Spell override stub: baseSpellID -> overrideSpellID currently active.
+stub.state.spellOverrides = {}
+
+function stub.SetSpellOverride(baseSpellID, overrideSpellID)
+  stub.state.spellOverrides[baseSpellID] = overrideSpellID
+end
+
+function stub.ClearSpellOverrides()
+  wipe(stub.state.spellOverrides)
+end
+
+function _G.FindSpellOverrideByID(spellID)
+  return (stub.state.spellOverrides and stub.state.spellOverrides[spellID]) or spellID
+end
+
+function _G.FindBaseSpellByID(spellID)
+  if stub.state.spellOverrides then
+    for base, override in pairs(stub.state.spellOverrides) do
+      if override == spellID then return base end
+    end
+  end
+  return spellID
+end
+
+-- _G.C_Spell already exists above (GetSpellCooldown/GetSpellTexture); extend it
+-- additively rather than replacing the table.
+_G.C_Spell.GetOverrideSpell = function(spellID)
+  return _G.FindSpellOverrideByID(spellID)
+end
+
 return stub

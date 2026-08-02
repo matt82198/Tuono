@@ -506,6 +506,53 @@ local function RefreshEnemyCount()
 	end
 end
 
+-- SPELL OVERRIDES: talents/procs/stealth can swap the spell actually castable/on the
+-- action bar for a different (override) spellID than the base ID this addon reasons
+-- about (OA.SpellIDs always holds base IDs). Both directions must resolve so a lookup
+-- succeeds whether we hold the base or the override ID:
+--   ResolveOverrideSpell(base)     -> override (or base itself if none active)
+--   ResolveBaseSpell(override)     -> base (or the same ID if it is not an override)
+-- VERIFIED (warcraft.wiki.gg, 2026-08-01): C_Spell.GetOverrideSpell(spellID) and the
+-- legacy globals FindSpellOverrideByID/FindBaseSpellByID exist with this contract,
+-- including the documented example that a stealth-granted talent (Shadowrunner)
+-- overrides Stealth itself -- i.e. overrides can change on a STEALTH transition, not
+-- only on talent change. NOT verified against the live client this addon actually
+-- targets (Interface 120005/120007/120100, an unreleased build); every call is
+-- pcall-guarded and falls back to the input ID unchanged.
+function OA.ResolveOverrideSpell(spellID)
+	if not spellID then return spellID end
+	if _G.C_Spell and _G.C_Spell.GetOverrideSpell then
+		local ok, id = pcall(_G.C_Spell.GetOverrideSpell, spellID)
+		if ok and type(id) == "number" and id > 0 then return id end
+	end
+	if _G.FindSpellOverrideByID then
+		local ok, id = pcall(_G.FindSpellOverrideByID, spellID)
+		if ok and type(id) == "number" and id > 0 then return id end
+	end
+	return spellID
+end
+
+function OA.ResolveBaseSpell(spellID)
+	if not spellID then return spellID end
+	if _G.FindBaseSpellByID then
+		local ok, id = pcall(_G.FindBaseSpellByID, spellID)
+		if ok and type(id) == "number" and id > 0 then return id end
+	end
+	return spellID
+end
+
+-- True if actionID (whatever GetActionInfo/etc. reports as actually sitting on a
+-- slot) is spellID itself, spellID's currently active override, or an override whose
+-- base is spellID. Used by Display/Highlight to resolve a base spellID to its bar
+-- slot regardless of which direction the client currently reports.
+function OA.SpellMatchesAction(spellID, actionID)
+	if not spellID or not actionID then return false end
+	if actionID == spellID then return true end
+	if OA.ResolveOverrideSpell(spellID) == actionID then return true end
+	if OA.ResolveBaseSpell(actionID) == spellID then return true end
+	return false
+end
+
 local function RefreshKnownSpells()
 	-- Probe for known-spell APIs in order of preference
 	local checkFn = nil
@@ -526,22 +573,41 @@ local function RefreshKnownSpells()
 	OA.State.knownUnavailable = false
 	wipe(OA.State.knownSpells)
 
+	-- Probe a spellID AND its live override/base pair, marking ALL of them known when
+	-- EITHER form checks true. A talented-and-overridden ability must not read as
+	-- "unknown" just because we probed the base ID while only the override reports
+	-- known (or vice versa) -- this is the gating half of the override-resolution fix
+	-- (state-dependent availability must survive a base<->override swap).
+	local function probeAndMark(spellID)
+		if not spellID or OA.State.knownSpells[spellID] ~= nil then return end
+		local ok, isKnown = pcall(checkFn, spellID)
+		isKnown = ok and isKnown or false
+
+		local override = OA.ResolveOverrideSpell(spellID)
+		local base = OA.ResolveBaseSpell(spellID)
+
+		if not isKnown and override ~= spellID then
+			local ok2, isKnown2 = pcall(checkFn, override)
+			isKnown = isKnown or (ok2 and isKnown2 or false)
+		end
+		if not isKnown and base ~= spellID then
+			local ok3, isKnown3 = pcall(checkFn, base)
+			isKnown = isKnown or (ok3 and isKnown3 or false)
+		end
+
+		OA.State.knownSpells[spellID] = isKnown
+		if override ~= spellID then OA.State.knownSpells[override] = isKnown end
+		if base ~= spellID then OA.State.knownSpells[base] = isKnown end
+	end
+
 	-- Check all spells from OA.SpellIDs
 	for name, spellID in pairs(OA.SpellIDs or {}) do
-		if spellID then
-			local ok, isKnown = pcall(checkFn, spellID)
-			OA.State.knownSpells[spellID] = ok and isKnown or false
-		end
+		if spellID then probeAndMark(spellID) end
 	end
 
 	-- Also check all spells referenced by rules
 	for _, rule in ipairs(OA.Rules or {}) do
-		if rule.spellID then
-			if OA.State.knownSpells[rule.spellID] == nil then
-				local ok, isKnown = pcall(checkFn, rule.spellID)
-				OA.State.knownSpells[rule.spellID] = ok and isKnown or false
-			end
-		end
+		if rule.spellID then probeAndMark(rule.spellID) end
 	end
 end
 
@@ -647,19 +713,24 @@ OA.RegisterEvent("UNIT_SPELLCAST_SUCCEEDED", OnUnitSpellcastSucceeded)
 OA.RegisterEvent("NAME_PLATE_UNIT_ADDED", OnNamePlateUnitAdded)
 OA.RegisterEvent("NAME_PLATE_UNIT_REMOVED", OnNamePlateUnitRemoved)
 
--- Register for talent changes (guard existence of each event)
+-- Register for talent/spell changes. These used to be guarded by `if _G.EVENT_NAME
+-- then ... end` -- that tests for a GLOBAL VARIABLE happening to share the event's
+-- name, which WoW does not define for these events, so the guard was always false
+-- and NONE of these handlers were ever registered (dead code; talent respecs never
+-- refreshed knownSpells/overrides). All four are VERIFIED real, current WoW events
+-- (warcraft.wiki.gg, 2026-08-01) and are registered directly, same as every other
+-- event in this file.
 if not OA._RegisteredTalentEvents then
 	OA._RegisteredTalentEvents = true
-	if _G.PLAYER_TALENT_UPDATE then
-		OA.RegisterEvent("PLAYER_TALENT_UPDATE", OnTalentChange)
-	end
-	if _G.ACTIVE_TALENT_GROUP_CHANGED then
-		OA.RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED", OnTalentChange)
-	end
-	if _G.TRAIT_CONFIG_UPDATED then
-		OA.RegisterEvent("TRAIT_CONFIG_UPDATED", OnTalentChange)
-	end
-	if _G.SPELLS_CHANGED then
-		OA.RegisterEvent("SPELLS_CHANGED", OnTalentChange)
-	end
+	OA.RegisterEvent("PLAYER_TALENT_UPDATE", OnTalentChange)
+	OA.RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED", OnTalentChange)
+	OA.RegisterEvent("TRAIT_CONFIG_UPDATED", OnTalentChange)
+	OA.RegisterEvent("SPELLS_CHANGED", OnTalentChange)
+
+	-- STEALTH can flip which override is active for a spell (VERIFIED example from
+	-- FindBaseSpellByID's own docs: a Shadowrunner-style talent overrides Stealth
+	-- itself while stealthed). Re-probe known/override state on the same trigger
+	-- Display/Highlight use to invalidate their caches, so a talented-and-overridden
+	-- ability is never read as "unknown" mid-transition.
+	OA.RegisterEvent("UPDATE_STEALTH", OnTalentChange)
 end

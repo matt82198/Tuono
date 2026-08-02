@@ -2,6 +2,30 @@
 
 All notable changes to OutlawAssist are documented here.
 
+## [1.7.0] - 2026-08-01
+
+### Fixed — Stealth/Bonus-Bar State Transitions
+- **Keybind text and glow pointed at the wrong button while stealthed** — STEALTH SWAPS THE ACTION BAR PAGE (`GetBonusBarOffset() > 0` for Rogue Stealth, VERIFIED), which remaps what ActionButton1-12 show. `GetActionBarPage()` does NOT reflect this swap (VERIFIED: "might not actually be available if overridden by ... temporary shapeshift or other similar mechanics"), so the old static slot→frame table mapped stealth-bar slots (e.g. 73-84) to a fixed multibar name regardless of whether that bar was actually visible. Fixed: `Display.lua`/`Highlight.lua` now compute the CURRENT main-bar slot for buttons 1-12 from `GetBonusBarOffset()`/`GetActionBarPage()` (VERIFIED formula: `N + (NUM_ACTIONBAR_PAGES + bonusOffset - 1) * NUM_ACTIONBAR_BUTTONS`) and prefer that over the static table.
+- **Highlight glow got stuck on the pre-stealth button** — `OA.Highlight.Update` short-circuited whenever the recommended spellID was unchanged, even if the actual bar layout (and therefore the correct button) had moved. Added a `barDirty` flag, set by the new bonus-bar/page-change event handlers, so the cache hit only applies when BOTH the spellID and the layout are unchanged.
+- **Spell overrides broke lookups both directions** — talents/procs/stealth can swap the spell actually sitting on a slot for a different (override) ID than the base ID this addon reasons about. `Display.lua`/`Highlight.lua` now match a base spellID against an action slot holding its live override (and vice versa) via new `OA.ResolveOverrideSpell`/`OA.ResolveBaseSpell`/`OA.SpellMatchesAction` helpers (`StateTracker.lua`), backed by `C_Spell.GetOverrideSpell`/`FindSpellOverrideByID`/`FindBaseSpellByID` (VERIFIED APIs, all guarded).
+- **Known-spell gating didn't account for overrides** — `RefreshKnownSpells` now probes a spellID's live override/base alongside itself and marks all of them known when any one checks true, so a talented-and-overridden ability is never read as "unknown".
+- **Caches never invalidated on the actual transition** — registered `UPDATE_STEALTH`, `ACTIONBAR_PAGE_CHANGED`, `UPDATE_BONUS_ACTIONBAR` (all VERIFIED, no-payload events) alongside the pre-existing `ACTIONBAR_SLOT_CHANGED`/`UPDATE_BINDINGS`/`SPELLS_CHANGED`/`PLAYER_REGEN_DISABLED`/`PLAYER_REGEN_ENABLED` to invalidate both the Display keybind cache and the Highlight bar-dirty flag.
+- **Dead talent-change event registrations** — `StateTracker.lua` guarded `PLAYER_TALENT_UPDATE`/`ACTIVE_TALENT_GROUP_CHANGED`/`TRAIT_CONFIG_UPDATED`/`SPELLS_CHANGED` registration behind `if _G.EVENT_NAME then`, which tests for a global VARIABLE sharing the event's name (never defined) rather than the event's validity — none of these handlers were ever actually registered. All four are VERIFIED real events and are now registered unconditionally, plus `UPDATE_STEALTH` (overrides can change on a stealth transition, not only on talent change).
+
+### Fixed — Coordinator-Reported (verified independently, same files)
+- **`OA.safe` single-return destructuring bug** — `OA.safe` returns one value (`return result`), but `Display.lua`/`Highlight.lua` destructured it as `local ok, buttons = OA.safe(...)`, which put the buttons array in `ok` and left `buttons` always nil — the modern `C_ActionBar.FindSpellActionButtons` path was permanently dead in both files (Highlight's copy ran uncached on the 0.1s combat tick). Fixed to `pcall` directly.
+- **`Rotation.lua` export-before-declaration** — `OA.Rotation.SPELL_TO_CDKEY = SPELL_TO_CDKEY` ran two lines before `local SPELL_TO_CDKEY = {}`, so it captured the undeclared (nil) global instead of the table, silently disabling IntelligenceLayer's position-1 castability filter. Moved the export below the local's construction.
+
+### Tests Added
+- `state-transition: keybind follows the same spellID across a stealth swap`
+- `state-transition: highlight glow follows the same spellID across a stealth swap`
+- `state-transition: override spell ID resolves to its base and back`
+- `state-transition: Ambush recommended only while stealthed`
+- `state-transition: every registered event invalidates the keybind cache`
+- `state-transition: no error when spell is on no action bar at all`
+- `state-transition: OA.Rotation.SPELL_TO_CDKEY is populated (forward-reference fix)`
+- `state-transition: modern C_ActionBar.FindSpellActionButtons path is actually used (OA.safe fix)`
+
 ## [1.6.0] - 2026-08-01
 
 ### Added
