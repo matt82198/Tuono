@@ -2,6 +2,17 @@
 
 All notable changes to OutlawAssist are documented here.
 
+## [1.8.1] - 2026-08-02
+
+### Fixed
+- Fresh/levelling character with a partial kit got an EMPTY bar at max combo points:
+  Dispatch is gated on "no other finisher available", but availability was tested by
+  COOLDOWN only - an untalented Between the Eyes or Killing Spree sits at zero cooldown,
+  so it read as available and blocked the one finisher the character actually had.
+  Availability now requires the ability to be known, not merely off cooldown.
+- Added a last-resort builder so the bar is never blank, even for a character with no
+  finisher at all.
+
 ## [1.8.0] - 2026-08-01
 
 ### Fixed

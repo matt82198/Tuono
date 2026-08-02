@@ -254,9 +254,15 @@ local function runBarBehaviorTests(OA, stub, assert_eq, assert_true, assert_fals
         "same state: entry " .. i .. " changed from " .. tostring(seq1[i]) .. " to " .. tostring(seq2[i]))
     end
 
-    -- Now change state and verify queue DIFFERS
-    OA.State.comboPoints = 5
+    -- Now change state and verify queue DIFFERS. Use a change that MUST alter the
+    -- recommendation: at max combo points with Dispatch usable, the finisher has to
+    -- take position 1. (Comparing 0 CP vs 5 CP alone is no longer discriminating --
+    -- both legitimately lead with the builder for this kit.)
+    -- RefreshFast re-reads resources from the client, so it CLOBBERS anything set
+    -- before it. Apply the state change after the refresh, not before.
     if OA.State.RefreshFast then OA.State.RefreshFast() end
+    OA.State.comboPoints = OA.State.comboPointsMax
+    OA.State.cooldowns.dispatch = { known = true, ready = true, remaining = 0 }
     local r3 = evalBar()
     local seq3 = {}
     if r3.queue then
@@ -268,6 +274,9 @@ local function runBarBehaviorTests(OA, stub, assert_eq, assert_true, assert_fals
     -- Verify sequences are DIFFERENT
     assert_true(#seq1 ~= #seq3 or seq1[1] ~= seq3[1],
       "changed state: queue stayed identical (not recomputing)")
+    assert_eq(seq3[1], OA.SpellIDs.dispatch,
+      "at max combo points the finisher must lead - a levelling character would otherwise " ..
+      "sit at capped combo points forever")
   end)
 
 end

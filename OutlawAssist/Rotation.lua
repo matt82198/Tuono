@@ -85,6 +85,20 @@ local function finisherThreshold(S)
 	return math.min(6, mx)
 end
 
+-- Is an ALTERNATIVE ability genuinely usable right now? An unlearned/untalented spell
+-- sits at zero cooldown, so a cooldown-only check reports it "ready" and blocks the
+-- fallback that should fire. That is why a fresh 80 with only Sinister Strike and
+-- Dispatch got an EMPTY bar at max combo points: BtE and Killing Spree looked ready
+-- while not being on the character at all.
+local function isUsableAlternative(S, spellID, cdKey)
+	if not spellID then return false end
+	local known = S.knownSpells and S.knownSpells[spellID]
+	if known == false then return false end
+	-- If the known-spell API is unavailable we cannot tell; fall back to cooldown only.
+	if known == nil and not S.knownUnavailable then return false end
+	return cdOf(S, cdKey).ready
+end
+
 -- Central affordability checker: prevents hardcoded energy/CP thresholds from drifting vs ABILITIES table
 -- Usage: rules call canAfford(S, spellID) instead of S.energy >= X; guarantees consistency
 -- NOTE: CP is a strategic decision (managed per-rule), not affordability; we only check energy here
@@ -189,10 +203,11 @@ local PRIORITY_SINGLE = {
 		when = function(S, A)
 			if S.comboPoints < finisherThreshold(S) then return false end
 			if not canAfford(S, OA.SpellIDs.dispatch) then return false end
-			-- Only use Dispatch if both BtE and KS are on cooldown
-			local bteReady = cdOf(S, "betweenTheEyes").ready
-			local ksReady = cdOf(S, "killingSpree").ready
-			return not bteReady and not ksReady
+			-- "if no other finishers are available" must mean AVAILABLE TO THIS CHARACTER:
+			-- an untalented finisher is not an alternative just because its cooldown is idle.
+			local bteUsable = isUsableAlternative(S, OA.SpellIDs.betweenTheEyes, "betweenTheEyes")
+			local ksUsable = isUsableAlternative(S, OA.SpellIDs.killingSpree, "killingSpree")
+			return not bteUsable and not ksUsable
 		end
 	},
 
@@ -229,6 +244,18 @@ local PRIORITY_SINGLE = {
 			-- Only cast if we have energy AND we can generate CP (not at cap).
 			-- Without this, an unavailable finisher would cause SS to spam past 6 CP indefinitely.
 			return canAfford(S, OA.SpellIDs.sinisterStrike) and S.comboPoints < S.comboPointsMax
+		end
+	},
+	{
+		-- LAST RESORT. If nothing above fires we would render an EMPTY bar, which reads
+		-- as "the addon is broken" and is strictly worse than a slightly suboptimal
+		-- suggestion. Reachable when a character is at max combo points with no finisher
+		-- available at all (a fresh character before the spec's finisher is learned).
+		name = "SS_last_resort",
+		spellID = OA.SpellIDs.sinisterStrike,
+		requiresSpell = nil,
+		when = function(S, A)
+			return canAfford(S, OA.SpellIDs.sinisterStrike)
 		end
 	},
 
