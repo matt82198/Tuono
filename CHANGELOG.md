@@ -2,6 +2,22 @@
 
 All notable changes to OutlawAssist are documented here.
 
+## [1.8.0] - 2026-08-01
+
+### Fixed
+- ROOT CAUSE of frozen/empty bar for levelling characters: a levelling rogue has 5 max
+  combo points, but finishers hardcoded >= 6 (unreachable) while the builder was gated
+  below max - at 5 CP the sequence went EMPTY and fell back to Blizzard's static pick.
+  Finishers now spend at 6 OR at max when max is lower. Test stub defaults to 5.
+- Stealth/bonus-bar: entering stealth remaps action slots, so keybinds and the glow
+  pointed at the wrong button; slot resolution is now bonus-bar aware and caches
+  invalidate on stealth/page/bar events.
+- Spell overrides resolve in both directions, so an overridden ability is no longer
+  treated as unknown.
+- Failed casts (out of range, line of sight) force an immediate re-evaluate.
+- OA.safe single-return misuse disabled the modern action-button lookup entirely.
+- SPELL_TO_CDKEY was exported before its declaration and was permanently nil.
+
 ## [1.7.0] - 2026-08-01
 
 ### Fixed — Stealth/Bonus-Bar State Transitions

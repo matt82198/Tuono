@@ -6,7 +6,9 @@ stub.state = {
   energy = 50,
   energyMax = 100,
   comboPoints = 2,
-  comboPointsMax = 6,
+  -- Default to a LEVELLING rogue (5), not a geared one. Hardcoding 6 meant the whole
+  -- suite only ever exercised max-level play while the user levelled.
+  comboPointsMax = 5,
   inCombat = false,
   combatSecrets = false, -- Mode: when true, UnitPower/cooldown APIs return secret values
   buffs = {

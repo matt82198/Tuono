@@ -3481,6 +3481,52 @@ test("a failed cast forces an immediate re-evaluate (out of range recovery)", fu
   assert_true(ran, "failed cast did not request an immediate update")
 end)
 
+-- === combo-point-max tests ===
+-- ROOT CAUSE of the user's entire symptom list: a levelling rogue has comboPointsMax = 5,
+-- finishers hardcoded >= 6 (unreachable) and the builder was gated below max, so at 5 CP
+-- the sequence went EMPTY -> fell back to Blizzard's static pick -> frozen icon, no glow.
+-- The stub hardcoded 6, so 166 tests never saw it.
+test("bar is never empty at max combo points, for any comboPointsMax 4..7", function()
+  for _, mx in ipairs({4, 5, 6, 7}) do
+    OA.State.inCombat = true
+    stub.state.stealthed = false
+    OA.State.stealthed = false
+    OA.State.buffs.degraded = false
+    OA.State.buffs.opportunity.up = false
+    OA.State.buffs.opportunity.stacks = 0
+    OA.State.buffs.adrenalineRush.up = false
+    OA.State.buffs.rtb.stage = 2
+    OA.State.energy, OA.State.energyMax = 100, 100
+    OA.State.comboPointsMax = mx
+    OA.State.comboPoints = mx
+    OA.State.knownSpells = OA.State.knownSpells or {}
+    for _, id in pairs(OA.SpellIDs) do
+      if type(id) == "number" then OA.State.knownSpells[id] = true end
+    end
+    OA.State.knownUnavailable = false
+    for _, k in ipairs({"adrenalineRush","bladeRush","preparation","killingSpree",
+                        "rollTheBones","keepItRolling","bladeFlurry"}) do
+      OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+    end
+    for _, k in ipairs({"betweenTheEyes","dispatch","sinisterStrike","pistolShot","ambush"}) do
+      OA.State.cooldowns[k] = { known = true, ready = true, remaining = 0 }
+    end
+
+    local pred = OA.Rotation.Predict(OA.State, 4)
+    assert_true(pred ~= nil and #pred > 0,
+      "sequence EMPTY at max CP with comboPointsMax=" .. mx ..
+      " - the bar would freeze on Blizzard's static pick with no glow")
+    local spendsCP = false
+    for _, step in ipairs(pred) do
+      local ab = OA.Rotation.ABILITIES and OA.Rotation.ABILITIES[step.spellID]
+      if ab and ab.cpSpend and ab.cpSpend ~= 0 and ab.cpSpend ~= false then spendsCP = true end
+    end
+    assert_true(spendsCP,
+      "no finisher reachable at max CP with comboPointsMax=" .. mx .. " - combo points would cap forever")
+  end
+  OA.State.comboPointsMax = 5
+end)
+
 print("")
 print(passCount .. "/" .. testCount .. " tests passed")
 

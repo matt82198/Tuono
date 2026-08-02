@@ -74,6 +74,17 @@ end
 -- Exposed so the engine can map a queued spell back to its cooldown key.
 OA.Rotation.SPELL_TO_CDKEY = SPELL_TO_CDKEY
 
+-- FINISHER THRESHOLD. The guide says "6+ CP" because 6 is max for a geared rogue. A
+-- LEVELLING rogue has comboPointsMax = 5, so a literal >= 6 is UNREACHABLE: the builder
+-- is gated below max, every finisher needs 6, and at 5 CP the sequence went EMPTY --
+-- which is why the bar froze on Blizzard's static pick with no glow. Spend at 6, or at
+-- max when max is lower.
+local function finisherThreshold(S)
+	local mx = S and S.comboPointsMax
+	if type(mx) ~= "number" or mx < 1 then mx = 6 end
+	return math.min(6, mx)
+end
+
 -- Central affordability checker: prevents hardcoded energy/CP thresholds from drifting vs ABILITIES table
 -- Usage: rules call canAfford(S, spellID) instead of S.energy >= X; guarantees consistency
 -- NOTE: CP is a strategic decision (managed per-rule), not affordability; we only check energy here
@@ -139,7 +150,7 @@ local PRIORITY_SINGLE = {
 		spellID = OA.SpellIDs.betweenTheEyes,
 		requiresSpell = OA.SpellIDs.betweenTheEyes,
 		when = function(S, A)
-			return S.comboPoints >= 6 and cdOf(S, "betweenTheEyes").ready and canAfford(S, OA.SpellIDs.betweenTheEyes)
+			return S.comboPoints >= finisherThreshold(S) and cdOf(S, "betweenTheEyes").ready and canAfford(S, OA.SpellIDs.betweenTheEyes)
 		end
 	},
 
@@ -166,7 +177,7 @@ local PRIORITY_SINGLE = {
 		spellID = OA.SpellIDs.killingSpree,
 		requiresSpell = OA.SpellIDs.killingSpree,
 		when = function(S, A)
-			return S.comboPoints >= 6 and cdOf(S, "killingSpree").ready and canAfford(S, OA.SpellIDs.killingSpree)
+			return S.comboPoints >= finisherThreshold(S) and cdOf(S, "killingSpree").ready and canAfford(S, OA.SpellIDs.killingSpree)
 		end
 	},
 
@@ -176,7 +187,7 @@ local PRIORITY_SINGLE = {
 		spellID = OA.SpellIDs.dispatch,
 		requiresSpell = OA.SpellIDs.dispatch,
 		when = function(S, A)
-			if S.comboPoints < 6 then return false end
+			if S.comboPoints < finisherThreshold(S) then return false end
 			if not canAfford(S, OA.SpellIDs.dispatch) then return false end
 			-- Only use Dispatch if both BtE and KS are on cooldown
 			local bteReady = cdOf(S, "betweenTheEyes").ready
