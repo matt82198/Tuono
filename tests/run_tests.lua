@@ -3829,6 +3829,277 @@ test("spec-priority: rule ordering (RtB before KIR)", function()
   assert_eq(p[1].spellID, OA.SpellIDs.rollTheBones, "RtB (rule 1) fires before KIR (rule 2)")
 end)
 
+-- === state-transition tests ===
+-- Stealth swaps the action bar page (bonus bar), and talents/procs can swap the
+-- spell actually sitting on a slot (overrides). These tests prove Display/Highlight
+-- correctly re-resolve the button/keybind for the SAME recommended spellID across a
+-- stealth transition, that override IDs resolve in both directions, that Ambush is
+-- gated to stealth-only, that every registered cache-invalidation event actually
+-- invalidates, and that an unplaced spell never errors.
+
+-- Helper: create a minimal stub button frame (GetButtonFrame requires .GetName) and
+-- register it in _G under the given name, matching the pattern already used by the
+-- pre-existing "highlight: stub action button frames in globals" test.
+local function makeButtonFrameStub(name)
+  local btn = {
+    name = name,
+    GetName = function(self) return self.name end,
+    CreateTexture = function(self, texName, layer)
+      local tex = { visible = false }
+      function tex:SetAllPoints() end
+      function tex:SetColorTexture() end
+      function tex:Show() self.visible = true end
+      function tex:Hide() self.visible = false end
+      return tex
+    end
+  }
+  _G[name] = btn
+  return btn
+end
+
+local function resetActionBarStub()
+  stub.state.actionSlots = { [1] = { "spell", 193315 } }
+  stub.state.bonusBarOffset = 0
+  stub.state.actionBarPage = 1
+  stub.ClearSpellOverrides()
+end
+
+-- TEST 1: same spellID resolves to a different button/keybind across a stealth swap.
+test("state-transition: keybind follows the same spellID across a stealth swap", function()
+  resetActionBarStub()
+  makeButtonFrameStub("ActionButton1")
+  OA.db.display.iconCount = 4
+
+  -- Stealth-only ability, placed ONLY on the stealth bonus-bar slot (bonusBarOffset 1,
+  -- button 1 => 1 + (NUM_ACTIONBAR_PAGES + 1 - 1) * NUM_ACTIONBAR_BUTTONS = 73).
+  local testSpellID = 555001
+  stub.state.actionSlots = { [73] = { "spell", testSpellID } }
+  stub.state.bonusBarOffset = 0  -- not stealthed yet
+
+  local result = { queue = { { spellID = testSpellID, kind = "rotation", source = "test" } } }
+  OA.Display.Render(result)
+  assert_false(OA.Display.anchor.icons[1].keyText.visible,
+    "not stealthed: a spell that ONLY exists on the stealth bonus-bar slot must not resolve to a live ACTIONBUTTON keybind")
+
+  -- Enter stealth and fire the registered invalidation event.
+  stub.state.bonusBarOffset = 1
+  stub.FireEvent("UPDATE_STEALTH")
+  OA.Display.Render(result)
+  assert_true(OA.Display.anchor.icons[1].keyText.visible,
+    "stealthed: the same spellID now resolves once its slot is button 1's CURRENT slot")
+  assert_eq(OA.Display.anchor.icons[1].keyText.text, "1",
+    "resolved keybind matches ACTIONBUTTON1's binding once the bonus-bar slot is the CURRENT main-bar slot 1")
+
+  resetActionBarStub()
+end)
+
+-- TEST 1b: the glow (Highlight) side of the same transition.
+test("state-transition: highlight glow follows the same spellID across a stealth swap", function()
+  resetActionBarStub()
+  makeButtonFrameStub("ActionButton1")
+  OA.db.highlight = OA.db.highlight or {}
+  OA.db.highlight.enabled = true
+
+  local testSpellID = 555002
+  stub.state.actionSlots = { [73] = { "spell", testSpellID } }
+  stub.state.bonusBarOffset = 0
+
+  local result = { queue = { { spellID = testSpellID, kind = "rotation", source = "test" } } }
+  OA.Highlight.Update(result)
+
+  local function captureDebugField(pattern)
+    local captured = {}
+    local originalPrint = OA.print
+    OA.print = function(msg) table.insert(captured, tostring(msg)) end
+    OA.Highlight.AppendDebugOutput()
+    OA.print = originalPrint
+    for _, line in ipairs(captured) do
+      local m = line:match(pattern)
+      if m then return m end
+    end
+    return nil
+  end
+
+  local beforeButton = captureDebugField("Button frame: (.+)")
+  assert_true(beforeButton ~= "ActionButton1",
+    "not stealthed: glow must NOT target ActionButton1 for a spell only on the bonus-bar slot (was: " .. tostring(beforeButton) .. ")")
+
+  -- Enter stealth: recommendation (spellID) is UNCHANGED, only the bar layout moved.
+  -- Without barDirty this would incorrectly cache-hit and never re-resolve.
+  stub.state.bonusBarOffset = 1
+  stub.FireEvent("UPDATE_STEALTH")
+  OA.Highlight.Update(result)
+
+  local afterButton = captureDebugField("Button frame: (.+)")
+  assert_eq(afterButton, "ActionButton1",
+    "stealthed: the SAME spellID's glow now resolves to ActionButton1 (the CURRENT button 1)")
+
+  resetActionBarStub()
+  OA.Highlight.Update({ queue = {} })
+end)
+
+-- TEST 2: override ID resolves to its base, and base resolves to its active override.
+test("state-transition: override spell ID resolves to its base and back", function()
+  resetActionBarStub()
+  local baseID = 8676     -- Ambush (OA.SpellIDs.ambush)
+  local overrideID = 900001
+  stub.SetSpellOverride(baseID, overrideID)
+
+  assert_eq(OA.ResolveOverrideSpell(baseID), overrideID, "base -> override resolves to the active override")
+  assert_eq(OA.ResolveBaseSpell(overrideID), baseID, "override -> base resolves back to the base spell")
+  assert_eq(OA.ResolveBaseSpell(baseID), baseID, "a spell with no override resolves to itself")
+  assert_eq(OA.ResolveOverrideSpell(999999), 999999, "an unrelated spellID resolves to itself")
+
+  assert_true(OA.SpellMatchesAction(baseID, overrideID), "SpellMatchesAction: base spellID matches its override sitting on a slot")
+  assert_true(OA.SpellMatchesAction(baseID, baseID), "SpellMatchesAction: a spell always matches itself")
+  assert_false(OA.SpellMatchesAction(baseID, 999999), "SpellMatchesAction: an unrelated action slot does not match")
+
+  -- Behavioral proof: the override sits on the action bar (NOT the base ID), and
+  -- resolution still finds it because it's given the base ID (as OA.SpellIDs always
+  -- holds), matching the "expects a base spell" contract of FindSpellActionButtons.
+  stub.state.actionSlots = { [1] = { "spell", overrideID } }
+  local result = { queue = { { spellID = baseID, kind = "rotation", source = "test" } } }
+  makeButtonFrameStub("ActionButton1")
+  OA.db.display.iconCount = 4
+  stub.FireEvent("UPDATE_STEALTH")  -- force cache invalidation before resolving
+  OA.Display.Render(result)
+  assert_true(OA.Display.anchor.icons[1].keyText.visible,
+    "base spellID resolves to its override's slot: keybind found even though the bar holds the OVERRIDE id, not the base")
+
+  stub.ClearSpellOverrides()
+  resetActionBarStub()
+end)
+
+-- TEST 3: Ambush is recommended ONLY while stealthed. Mirrors the minimal setup
+-- pattern of the pre-existing P0-1/P0-2 tests (no manual knownSpells/cooldown
+-- overrides) so it exercises the real Assist/RefreshFast/Engine pipeline exactly
+-- like those, just asserting the NOT-stealthed side too.
+test("state-transition: Ambush recommended only while stealthed", function()
+  OA.State.inCombat = false
+  stub.state.stealthed = false
+  OA.State.stealthed = false
+  OA.Assist.Update()
+  OA.State.RefreshFast()
+
+  local rNotStealthed = OA.Engine.Evaluate()
+  local ambushFoundNotStealthed = false
+  for _, entry in ipairs(rNotStealthed.queue or {}) do
+    if entry.spellID == OA.SpellIDs.ambush then ambushFoundNotStealthed = true end
+  end
+  assert_false(ambushFoundNotStealthed, "Ambush is NOT recommended anywhere in the queue while not stealthed")
+
+  OA.State.inCombat = true
+  stub.state.stealthed = true
+  OA.State.stealthed = true
+  OA.Assist.Update()
+  OA.State.RefreshFast()
+
+  local rStealthed = OA.Engine.Evaluate()
+  assert_true(#rStealthed.queue > 0, "queue has entries while stealthed")
+  assert_eq(rStealthed.queue[1].spellID, OA.SpellIDs.ambush, "Ambush pins at position 1 when stealthed")
+
+  stub.state.stealthed = false
+  OA.State.stealthed = false
+end)
+
+-- TEST 4: every registered cache-invalidation event actually invalidates the keybind
+-- cache (proves the event registrations added to Display.lua are wired correctly,
+-- not just present).
+test("state-transition: every registered event invalidates the keybind cache", function()
+  local events = { "UPDATE_STEALTH", "ACTIONBAR_PAGE_CHANGED", "UPDATE_BONUS_ACTIONBAR",
+                    "ACTIONBAR_SLOT_CHANGED", "SPELLS_CHANGED", "UPDATE_BINDINGS",
+                    "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED" }
+  makeButtonFrameStub("ActionButton1")
+  OA.db.display.iconCount = 4
+
+  for idx, eventName in ipairs(events) do
+    local testSpellID = 555100 + idx
+    stub.state.actionSlots = {}
+    stub.state.bonusBarOffset = 0
+
+    local result = { queue = { { spellID = testSpellID, kind = "rotation", source = "test" } } }
+    OA.Display.Render(result)
+    assert_false(OA.Display.anchor.icons[1].keyText.visible,
+      eventName .. ": no keybind before the spell is placed on any slot")
+
+    -- Place the spell on the always-current slot 1 WITHOUT firing an invalidation
+    -- event yet: the stale cached miss must persist (proves the cache is real).
+    stub.state.actionSlots[1] = { "spell", testSpellID }
+    OA.Display.Render(result)
+    assert_false(OA.Display.anchor.icons[1].keyText.visible,
+      eventName .. ": stale cached miss persists until an invalidation event fires")
+
+    stub.FireEvent(eventName)
+    OA.Display.Render(result)
+    assert_true(OA.Display.anchor.icons[1].keyText.visible,
+      eventName .. ": keybind resolves once this event invalidates the cache")
+  end
+
+  resetActionBarStub()
+  OA.State.inCombat = false
+end)
+
+-- TEST 5: nothing errors when the recommended spell is on no action bar at all
+-- (common while levelling: many abilities aren't dragged onto any bar yet).
+test("state-transition: no error when spell is on no action bar at all", function()
+  resetActionBarStub()
+  stub.state.actionSlots = {}  -- nothing placed anywhere
+  OA.db.display.iconCount = 4
+  OA.db.highlight = OA.db.highlight or {}
+  OA.db.highlight.enabled = true
+
+  local result = { queue = { { spellID = 777777, kind = "rotation", source = "test" } } }
+
+  local okDisplay = pcall(OA.Display.Render, result)
+  assert_true(okDisplay, "Display.Render does not error when the spell is on no action bar")
+  assert_false(OA.Display.anchor.icons[1].keyText.visible, "keybind hidden (not found) rather than erroring")
+
+  local okHighlight = pcall(OA.Highlight.Update, result)
+  assert_true(okHighlight, "Highlight.Update does not error when the spell is on no action bar")
+
+  resetActionBarStub()
+  OA.Highlight.Update({ queue = {} })
+end)
+
+-- TEST 6: regression coverage for the coordinator-reported OA.safe / forward-reference
+-- fixes made alongside the state-transition work (same files, directly relevant).
+test("state-transition: OA.Rotation.SPELL_TO_CDKEY is populated (forward-reference fix)", function()
+  assert_true(type(OA.Rotation.SPELL_TO_CDKEY) == "table", "SPELL_TO_CDKEY is a table, not nil")
+  local count = 0
+  for _ in pairs(OA.Rotation.SPELL_TO_CDKEY) do count = count + 1 end
+  assert_true(count > 0, "SPELL_TO_CDKEY is populated (was permanently nil before the export-order fix)")
+  assert_eq(OA.Rotation.SPELL_TO_CDKEY[OA.SpellIDs.ambush], "ambush", "SPELL_TO_CDKEY maps Ambush's spellID back to its cooldown key")
+end)
+
+test("state-transition: modern C_ActionBar.FindSpellActionButtons path is actually used (OA.safe fix)", function()
+  resetActionBarStub()
+  makeButtonFrameStub("ActionButton1")
+  OA.db.display.iconCount = 4
+
+  -- The stub's C_ActionBar.FindSpellActionButtons only answers for 193315 (slot 1).
+  -- Count how many times the 120-slot fallback (GetActionInfo) is invoked while
+  -- resolving that spell's keybind: with the OA.safe single-return fix, TIER 1
+  -- succeeds and the fallback loop is never reached for this spellID.
+  local fallbackCalls = 0
+  local originalGetActionInfo = _G.GetActionInfo
+  _G.GetActionInfo = function(slot)
+    fallbackCalls = fallbackCalls + 1
+    return originalGetActionInfo(slot)
+  end
+
+  stub.FireEvent("UPDATE_STEALTH")  -- force cache invalidation
+  local result = { queue = { { spellID = 193315, kind = "rotation", source = "test" } } }
+  OA.Display.Render(result)
+
+  _G.GetActionInfo = originalGetActionInfo
+
+  assert_true(OA.Display.anchor.icons[1].keyText.visible, "keybind resolved for the spell covered by the modern API stub")
+  assert_eq(fallbackCalls, 0,
+    "GetActionInfo fallback was NOT called: the modern C_ActionBar.FindSpellActionButtons path resolved it directly (was dead before the OA.safe fix)")
+
+  resetActionBarStub()
+end)
+
 if passCount ~= testCount then
   os.exit(1)
 end

@@ -13,6 +13,18 @@ local selfDrawnGlows = {}
 local lastHighlightedButton = nil
 local lastHighlightedSpellID = nil
 
+-- Set true whenever the action-bar LAYOUT might have changed (stealth/bonus-bar
+-- swap, page change, slot edit, binding edit, talent/spell change, combat
+-- enter/exit). The spellID-equality cache below is only valid when the layout is
+-- ALSO unchanged: a stealth transition can leave the recommended spellID identical
+-- while moving it to a different button, and without this flag the glow would stay
+-- pinned to the button it left -- the "stuck highlight" class of the reported bug.
+-- Starts true so the very first Update() always resolves.
+local barDirty = true
+local function MarkBarDirty()
+	barDirty = true
+end
+
 -- Probe for available glow mechanisms (run once at startup)
 local function ProbeGlowMechanisms()
 	-- Try classic Blizzard helpers first
@@ -46,11 +58,46 @@ local function ProbeGlowMechanisms()
 	glowMechanism = "self-drawn"
 end
 
+-- Bonus-bar-aware main-bar slot math (see Display.lua's copy for the full derivation
+-- and citations; duplicated locally rather than shared to keep Display/Highlight
+-- decoupled). STEALTH SWAPS THE ACTION BAR PAGE: GetBonusBarOffset() > 0 takes
+-- priority over GetActionBarPage() (VERIFIED, warcraft.wiki.gg: GetActionBarPage
+-- "might not actually be available if overridden by ... temporary shapeshift or
+-- other similar mechanics"; Rogue Stealth = bonus offset 1, VERIFIED).
+local function CurrentMainBarSlot(buttonIndex)
+	local numPages = tonumber(_G.NUM_ACTIONBAR_PAGES) or 6
+	local numButtons = tonumber(_G.NUM_ACTIONBAR_BUTTONS) or 12
+
+	local bonusOffset = 0
+	if _G.GetBonusBarOffset then
+		local ok, off = pcall(_G.GetBonusBarOffset)
+		if ok and type(off) == "number" and off > 0 then bonusOffset = off end
+	end
+	if bonusOffset > 0 then
+		return buttonIndex + (numPages + bonusOffset - 1) * numButtons
+	end
+
+	local page = 1
+	if _G.GetActionBarPage then
+		local ok, p = pcall(_G.GetActionBarPage)
+		if ok and type(p) == "number" and p > 0 then page = p end
+	end
+	return buttonIndex + (page - 1) * numButtons
+end
+
 -- Map action slot (1-108) to the action button frame name
 -- Canonical layout: 1-12 ActionButton, 13-24 ActionButton (page 2), 25-36 MultiBarRightButton, etc.
 local function GetActionButtonFrameName(slot)
 	if type(slot) ~= "number" or slot < 1 or slot > 108 then
 		return nil
+	end
+
+	-- Whichever absolute slot is CURRENTLY showing on the main 12 buttons (accounting
+	-- for stealth/bonus-bar swaps) wins over the static page table below.
+	for i = 1, 12 do
+		if CurrentMainBarSlot(i) == slot then
+			return "ActionButton" .. i
+		end
 	end
 
 	if slot >= 1 and slot <= 12 then
@@ -79,19 +126,43 @@ end
 local function GetActionSlotForSpell(spellID)
 	if not spellID then return nil end
 
-	-- Try C_ActionBar.FindSpellActionButtons (modern)
+	-- TIER 1: C_ActionBar.FindSpellActionButtons (modern). Expects a BASE spell ID and
+	-- resolves overrides internally (VERIFIED, warcraft.wiki.gg).
+	-- BUGFIX: OA.safe returns a SINGLE value (see Core.lua: `return result`), not an
+	-- (ok, result) pair. `local ok, buttons = OA.safe(...)` put the buttons array in
+	-- `ok` and left `buttons` always nil, so `if ok and buttons` never passed and this
+	-- modern path was permanently dead -- every lookup fell through to the uncached
+	-- 120-slot scan below, on the 0.1s combat tick. pcall directly instead.
 	if _G.C_ActionBar and _G.C_ActionBar.FindSpellActionButtons then
-		local ok, buttons = OA.safe(function() return _G.C_ActionBar.FindSpellActionButtons(spellID) end)
+		local ok, buttons = pcall(function() return _G.C_ActionBar.FindSpellActionButtons(spellID) end)
 		if ok and buttons and #buttons > 0 then
 			return buttons[1]
 		end
 	end
 
-	-- Fallback: iterate action buttons 1-120
+	-- TIER 2: the CURRENTLY VISIBLE main-bar slots (bonus-bar aware), so the glow
+	-- follows a stealth-only spell (e.g. Ambush) to whatever button is ACTUALLY
+	-- showing it right now instead of a static page-1 guess. Override-aware match.
+	if _G.GetActionInfo then
+		for i = 1, 12 do
+			local slot = CurrentMainBarSlot(i)
+			local actionType, actionID = _G.GetActionInfo(slot)
+			local matches = (actionType == "spell" or actionType == "talent" or actionType == "action")
+				and ((OA.SpellMatchesAction and OA.SpellMatchesAction(spellID, actionID)) or actionID == spellID)
+			if matches then
+				return slot
+			end
+		end
+	end
+
+	-- TIER 3: fallback full sweep of all 120 action slots (fixed multibars unaffected
+	-- by the main-bar page/bonus swap, plus a catch-all for anything TIER 1/2 missed).
 	if _G.GetActionInfo then
 		for slot = 1, 120 do
 			local actionType, actionID = _G.GetActionInfo(slot)
-			if actionID == spellID and (actionType == "spell" or actionType == "talent" or actionType == "action") then
+			local matches = (actionType == "spell" or actionType == "talent" or actionType == "action")
+				and ((OA.SpellMatchesAction and OA.SpellMatchesAction(spellID, actionID)) or actionID == spellID)
+			if matches then
 				return slot
 			end
 		end
@@ -202,10 +273,13 @@ function OA.Highlight.Update(result)
 		currentSpellID = result.queue[1].spellID
 	end
 
-	-- If recommendation hasn't changed, do nothing (cache hit)
-	if currentSpellID == lastHighlightedSpellID and lastHighlightedButton then
+	-- Cache hit only holds when BOTH the recommendation AND the action-bar layout are
+	-- unchanged (see barDirty declaration for why: a stealth/bonus-bar swap can leave
+	-- the recommended spellID identical while moving it to a different button).
+	if not barDirty and currentSpellID == lastHighlightedSpellID and lastHighlightedButton then
 		return
 	end
+	barDirty = false
 
 	-- Clear previous glow
 	if lastHighlightedButton then
@@ -274,6 +348,21 @@ local function RegisterHighlightEvents()
 			lastHighlightedSpellID = nil
 		end
 	end)
+
+	-- STEALTH SWAPS THE ACTION BAR PAGE: the glow target must be re-resolved even when
+	-- the recommended spellID hasn't changed, because the underlying bar layout might
+	-- have. VERIFIED events (warcraft.wiki.gg, 2026-08-01): UPDATE_STEALTH,
+	-- ACTIONBAR_PAGE_CHANGED, UPDATE_BONUS_ACTIONBAR fire with no payload.
+	-- ACTIONBAR_SLOT_CHANGED/UPDATE_BINDINGS/SPELLS_CHANGED/PLAYER_REGEN_DISABLED are
+	-- pre-existing, verified WoW events used elsewhere in this addon.
+	OA.RegisterEvent("UPDATE_STEALTH", MarkBarDirty)
+	OA.RegisterEvent("ACTIONBAR_PAGE_CHANGED", MarkBarDirty)
+	OA.RegisterEvent("UPDATE_BONUS_ACTIONBAR", MarkBarDirty)
+	OA.RegisterEvent("ACTIONBAR_SLOT_CHANGED", MarkBarDirty)
+	OA.RegisterEvent("SPELLS_CHANGED", MarkBarDirty)
+	OA.RegisterEvent("UPDATE_BINDINGS", MarkBarDirty)
+	OA.RegisterEvent("PLAYER_REGEN_DISABLED", MarkBarDirty)
+	OA.RegisterEvent("PLAYER_REGEN_ENABLED", MarkBarDirty)
 end
 
 -- Initialization: probe glow mechanisms and register events
