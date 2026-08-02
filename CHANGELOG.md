@@ -2,6 +2,18 @@
 
 All notable changes to OutlawAssist are documented here.
 
+## [1.8.2] - 2026-08-02
+
+### Fixed
+- Adversarial audit: three ways the bar could show something you cannot press.
+  1. Energy pooling was applied to the IMMEDIATE recommendation, so at 40 energy the bar
+     said "press Sinister Strike" for a 45-cost ability. Step 1 must be castable now;
+     pooling still applies to later steps.
+  2. A legacy rule hardcoded an energy threshold of 40 against a real cost of 45; costs
+     now come from the ability table.
+  3. PIN entries bypassed the position-1 cooldown check, so an on-cooldown Between the
+     Eyes could be pinned ahead of the finisher that was actually ready.
+
 ## [1.8.1] - 2026-08-02
 
 ### Fixed

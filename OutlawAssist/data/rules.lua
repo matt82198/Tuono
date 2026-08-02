@@ -128,7 +128,12 @@ OA.Rules = {
     when = function(S, A)
       -- FIX P0-3: gate to <= 4 CP so Dispatch is not demoted when at 5 CP. Rotation.lua Dispatch_finisher
       -- (priority 10) correctly puts Dispatch first; this PREFER should not override it.
-      return S.comboPoints <= 4 and S.energy >= 40
+      -- Cost comes from the ability table, never a hardcoded threshold: this said 40
+      -- while Sinister Strike actually costs 45, so it recommended an unaffordable cast.
+      local ab = OA.Rotation and OA.Rotation.ABILITIES
+        and OA.Rotation.ABILITIES[OA.SpellIDs.sinisterStrike]
+      local cost = (ab and ab.cost) or 45
+      return S.comboPoints <= 4 and S.energy >= cost
     end,
     source = "outlaw-rotation.md §1 (Priority Order: 'Sinister Strike – Bread-and-butter combo-point generator at 5 or fewer Combo Points'); FIX: gated to <= 4 CP to prevent demoting Dispatch finisher (P0-3)"
   },

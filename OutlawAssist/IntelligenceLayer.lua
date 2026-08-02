@@ -278,11 +278,21 @@ function OA.Engine.Evaluate()
       -- sequence steps are legitimately on cooldown at this instant -- that is the
       -- point of a forward simulation -- so filtering them against live cooldowns
       -- would delete correct future steps.
-      if not skip and i == 1 and entry.isSequence and entry.spellID then
-        local key = OA.Rotation and OA.Rotation.SPELL_TO_CDKEY and OA.Rotation.SPELL_TO_CDKEY[entry.spellID]
-        local cd = key and S.cooldowns[key]
-        if cd and cd.known and not cd.ready then
-          skip = true
+      -- ALL position-1 entries, not just simulated ones. PIN entries from the legacy
+      -- rules were skipping this check, so a Between the Eyes on a 38s cooldown could be
+      -- pinned to position 1 while the actually-ready finisher sat at position 2.
+      if not skip and i == 1 and entry.spellID and entry.source ~= "blizzard" then
+        -- Only meaningful for abilities that HAVE a cooldown. A zero-cooldown ability
+        -- (Ambush, Sinister Strike, Dispatch) can never be "not ready", so a stale
+        -- not-ready entry for one must not suppress a correct recommendation.
+        local ab = OA.Rotation and OA.Rotation.ABILITIES and OA.Rotation.ABILITIES[entry.spellID]
+        local hasCooldown = ab and (ab.cd or 0) > 0
+        if hasCooldown then
+          local key = OA.Rotation.SPELL_TO_CDKEY and OA.Rotation.SPELL_TO_CDKEY[entry.spellID]
+          local cd = key and S.cooldowns[key]
+          if cd and cd.known and not cd.ready then
+            skip = true
+          end
         end
       end
 

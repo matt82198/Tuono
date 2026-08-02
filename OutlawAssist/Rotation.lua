@@ -427,6 +427,13 @@ function OA.Rotation.Predict(state, steps)
 				end
 			end
 
+			-- STEP 1 MUST BE CASTABLE RIGHT NOW. Pooling advances virtual time to let energy
+			-- regenerate, which is correct for FUTURE steps but wrong for the immediate
+			-- recommendation: at 40 energy with a 45-cost builder the bar would say "press
+			-- Sinister Strike" for an ability the player cannot afford this instant.
+			if not spellID and step == 1 then
+				break
+			end
 			if not spellID and poolAttempts < maxPoolAttempts then
 				-- No castable ability and we haven't tried pooling yet.
 				-- Check if this is energy starvation: advance time 1 GCD and retry.
