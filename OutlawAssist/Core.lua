@@ -171,6 +171,11 @@ OA.RegisterEvent("PLAYER_LOGIN", function()
     OA.safe(OA.Display.Init)
   end
 
+  -- Initialize Highlight (idempotent; guards against double-init)
+  if OA.Highlight and OA.Highlight.Init then
+    OA.safe(OA.Highlight.Init)
+  end
+
   -- Register update handler with base idle interval 0.5s; dynamic override to 0.1s in combat
   OA.RegisterUpdate(function()
     OA.safe(function()
@@ -186,6 +191,9 @@ OA.RegisterEvent("PLAYER_LOGIN", function()
       end
       if OA.Display and OA.Display.Render then
         OA.Display.Render(r)
+      end
+      if OA.Highlight and OA.Highlight.Update then
+        OA.Highlight.Update(r)
       end
     end)
   end, 0.5)
