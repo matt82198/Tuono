@@ -208,6 +208,21 @@ OA.RegisterEvent("PLAYER_LOGIN", function()
   end)
 
   -- UNIT_SPELLCAST_INTERRUPTED: recover from interrupt, force re-poll for next viable spell
+  -- A cast that FAILS (out of range, line of sight, moving, not facing) must force a
+  -- re-evaluate. Without this the bar keeps glowing the same unusable button forever --
+  -- and a levelling rogue is out of melee range constantly while questing and kiting.
+  OA.RegisterEvent("UNIT_SPELLCAST_FAILED", function(event, unit, ...)
+    if unit == "player" then
+      OA.RequestImmediateUpdate()
+    end
+  end)
+
+  OA.RegisterEvent("UNIT_SPELLCAST_FAILED_QUIET", function(event, unit, ...)
+    if unit == "player" then
+      OA.RequestImmediateUpdate()
+    end
+  end)
+
   OA.RegisterEvent("UNIT_SPELLCAST_INTERRUPTED", function(event, unit, ...)
     if unit == "player" then
       OA.RequestImmediateUpdate()

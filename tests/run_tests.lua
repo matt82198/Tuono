@@ -3466,6 +3466,21 @@ test("stealth clears when IsStealthed() goes false (Ambush must not pin forever)
     "stealth stayed true after leaving stealth - the opener would pin to the bar forever")
 end)
 
+-- === failed-cast tests ===
+test("a failed cast forces an immediate re-evaluate (out of range recovery)", function()
+  -- Regression: with no UNIT_SPELLCAST_FAILED handler an out-of-range cast changed
+  -- nothing, so the bar kept glowing the same unusable button indefinitely.
+  local handlers = OA.eventHandlers and OA.eventHandlers["UNIT_SPELLCAST_FAILED"]
+  assert_true(handlers ~= nil and #handlers > 0,
+    "UNIT_SPELLCAST_FAILED is not registered - a failed cast would never refresh the bar")
+  local ran = false
+  local realRequest = OA.RequestImmediateUpdate
+  OA.RequestImmediateUpdate = function() ran = true end
+  for _, fn in ipairs(handlers) do fn("UNIT_SPELLCAST_FAILED", "player") end
+  OA.RequestImmediateUpdate = realRequest
+  assert_true(ran, "failed cast did not request an immediate update")
+end)
+
 print("")
 print(passCount .. "/" .. testCount .. " tests passed")
 
