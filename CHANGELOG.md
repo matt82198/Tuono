@@ -2,6 +2,23 @@
 
 All notable changes to OutlawAssist are documented here.
 
+## [1.6.0] - 2026-08-01
+
+### Added
+- **Action bar glow highlight** — Highlights the recommended ability on the action bar for visual feedback. Probes for available glow mechanisms at runtime (Blizzard API, discovered APIs, self-drawn fallback) and applies to the current position-1 recommendation. Feature can be toggled with `/oa glow` and configured for combat-only mode with `/oa glow combat`.
+- **Highlight configuration** — New config options: `highlight.enabled` (default true) and `highlight.combatOnly` (default false) for customizing glow behavior in and out of combat.
+- **Debug output extension** — Glow state added to debug output via new `OA.Highlight.AppendDebugOutput()` function for diagnostics (resolved slot, button frame, glow mechanism in use).
+
+### Tests Added
+- `highlight: module initializes without error`
+- `highlight: stub action button frames in globals`
+- `highlight: resolves spellID to correct action button`
+- `highlight: exactly one button glows at a time`
+- `highlight: clears on disabled toggle`
+- `highlight: handles missing spell on action bar`
+- `highlight: config defaults include highlight settings`
+- `highlight: debug output function exists`
+
 ## [1.5.0] - 2026-08-01
 
 ### Fixed — Release Blockers (Expert Audit)

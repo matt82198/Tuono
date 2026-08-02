@@ -14,6 +14,10 @@ OA.defaults = {
 		x = 0,
 		y = -180,
 		iconCount = 4
+	},
+	highlight = {
+		enabled = true,
+		combatOnly = false
 	}
 }
 
@@ -99,6 +103,10 @@ local function HandleStatus()
 	OA.print("Scale: " .. (OA.db.display.scale or 1))
 	OA.print("Icon count: " .. (OA.db.display.iconCount or 4))
 	OA.print("AoE mode: " .. (OA.db.aoeMode and "ON" or "OFF"))
+	OA.print("Highlight: " .. (OA.db.highlight.enabled and "ON" or "OFF"))
+	if OA.db.highlight.enabled then
+		OA.print("  Combat-only: " .. (OA.db.highlight.combatOnly and "ON" or "OFF"))
+	end
 end
 
 local function HandleHelp()
@@ -112,6 +120,8 @@ local function HandleHelp()
 	OA.print("  /oa reset — Reset to defaults and reposition display")
 	OA.print("Features:")
 	OA.print("  /oa aoe — Toggle AoE mode")
+	OA.print("  /oa glow — Toggle action bar highlight")
+	OA.print("  /oa glow combat — Toggle combat-only mode")
 	OA.print("Diagnostics:")
 	OA.print("  /oa status — Print current settings")
 	OA.print("  /oa apitest — Verify API compatibility")
@@ -144,6 +154,16 @@ local function HandleIcons(arg)
 	end
 	OA.print("Icon count set to " .. count)
 end
+
+-- Module debug aggregator (called after ApiTest debug)
+local function HandleDebugModules()
+	if OA.Highlight and OA.Highlight.AppendDebugOutput then
+		OA.Highlight.AppendDebugOutput()
+	end
+end
+
+-- Register module debug hook; will be called from ApiTest or independently
+OA.HandleDebugModules = HandleDebugModules
 
 OA.RegisterSlash("lock", HandleLock, "Lock the display (disable dragging).")
 OA.RegisterSlash("unlock", HandleUnlock, "Unlock the display (enable dragging).")
