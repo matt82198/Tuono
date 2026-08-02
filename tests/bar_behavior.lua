@@ -181,9 +181,12 @@ local function runBarBehaviorTests(OA, stub, assert_eq, assert_true, assert_fals
                         "killingSpree","rollTheBones","keepItRolling","bladeFlurry","ambush"}) do
       OA.State.knownSpells[OA.SpellIDs[k]] = false
     end
-    for k, v in pairs(OA.State.cooldowns) do
+    -- Rebinding the loop-local `v` writes NOTHING back to the table: this whole loop
+    -- was a no-op, so the test never actually established the cooldown state its own
+    -- comment claimed. Assign through the key instead.
+    for k in pairs(OA.State.cooldowns) do
       if k ~= "sinisterStrike" and k ~= "dispatch" then
-        v = { known = true, ready = false, remaining = 60 }
+        OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
       end
     end
     OA.State.cooldowns.dispatch = { known = true, ready = true, remaining = 0 }
