@@ -140,6 +140,7 @@ end
 test("assist available - queue adapts to varying nextSpellID values", function()
   -- Self-sufficient: prevent opener rule from pinning by setting inCombat=true
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
 
   _G.C_AssistedCombat.GetNextCastSpell = function() return 193315 end
@@ -162,6 +163,7 @@ end)
 test("adrenaline rush PIN when CP<=2 and ready", function()
   -- Self-sufficient state setup
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   stub.state.comboPoints = 2
   stub.state.cooldowns[13750] = {startTime = 0, duration = 0}
@@ -183,6 +185,7 @@ end)
 test("between the eyes PIN when CP>=6", function()
   -- Self-sufficient state setup
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   stub.state.comboPoints = 6
   stub.state.cooldowns[13750] = {startTime = 100, duration = 10}
@@ -197,6 +200,7 @@ end)
 test("engine.evaluate produces valid queue and advisory structures", function()
   -- Self-sufficient state setup
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   stub.state.comboPoints = 2
   OA.Assist.Update()
@@ -233,6 +237,7 @@ test("trinket advisory rule exists for AR buff + trinket ready", function()
 
   -- Self-sufficient state setup
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.buffs.adrenalineRush.up = true
   OA.State.trinkets[13].ready = true
@@ -310,6 +315,7 @@ end)
 test("intelligence layer evaluate with various states", function()
   -- Self-sufficient state setup
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   stub.state.comboPoints = 3
   OA.Assist.Update()
@@ -323,6 +329,7 @@ end)
 test("intelligence layer queue reflects specific spell IDs based on combo point state", function()
   -- Self-sufficient state setup
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   stub.state.comboPoints = 2
   OA.Assist.Update()
@@ -814,6 +821,7 @@ test("pistol shot rule resolves spellID lazily at evaluate time", function()
   OA.Assist.Update()
   OA.State.RefreshFast()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.buffs.opportunity.up = true
   OA.State.energy = 30
@@ -853,6 +861,7 @@ test("unified queue: cooldown entry when AR ready + rule fires", function()
   OA.Assist.Update()
   OA.State.RefreshFast()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.cooldowns.adrenalineRush.ready = true
   OA.State.comboPoints = 2
@@ -895,6 +904,7 @@ test("unified queue: RtB entry at stage 0", function()
   OA.Assist.Update()
   OA.State.RefreshFast()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.buffs.rtb.stage = 0
   OA.State.buffs.rtb.expires = 0
@@ -929,6 +939,7 @@ end)
 -- TEST: Opener pins when OOC+unstealthed
 test("unified queue: opener stealth pins when OOC + unstealthed", function()
   OA.State.inCombat = false
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.Assist.Update()
   OA.State.RefreshFast()
@@ -946,6 +957,7 @@ test("unified queue: dedup by spellID", function()
   OA.Assist.Update()
   OA.State.RefreshFast()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.cooldowns.adrenalineRush.ready = true
   OA.State.comboPoints = 2
@@ -980,13 +992,16 @@ end)
 
 -- TEST: Stealth state tracking
 test("unified queue: stealth state tracked", function()
+  stub.state.stealthed = false
   OA.State.stealthed = false
   assert_false(OA.State.stealthed, "stealthed initially false")
 
+  stub.state.stealthed = true  -- RefreshFast reads IsStealthed(), so drive the source
   OA.State.stealthed = true
   assert_true(OA.State.stealthed, "stealthed set to true")
 
   OA.State.inCombat = false
+  stub.state.stealthed = true  -- RefreshFast reads IsStealthed(), so drive the source
   OA.State.stealthed = true
   OA.Assist.Update()
   OA.State.RefreshFast()
@@ -1486,6 +1501,7 @@ end)
 -- P0 TEST 1: AR does NOT pin OOC - opener wins instead
 test("P0-1: AR does not pin before opener (OOC+unstealthed)", function()
   OA.State.inCombat = false
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.comboPoints = 0
   OA.State.cooldowns.adrenalineRush.ready = true  -- AR is ready
@@ -1503,6 +1519,7 @@ end)
 -- P0 TEST 2: Ambush recommended when stealthed
 test("P0-2: Ambush recommended when stealthed", function()
   OA.State.inCombat = true
+  stub.state.stealthed = true  -- RefreshFast reads IsStealthed(), so drive the source
   OA.State.stealthed = true
 
   OA.Assist.Update()
@@ -1530,6 +1547,7 @@ end)
 -- P0 TEST 4: No queue entry has spellID whose cooldown is not ready (ghost icon guard)
 test("P0-4: No queue entry for spell whose cooldown is not ready (ghost icon guard)", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.buffs.adrenalineRush.up = true  -- AR is UP
   OA.State.cooldowns.adrenalineRush.ready = false  -- AR is NOT READY (on cooldown)
@@ -1628,6 +1646,7 @@ end)
 -- LIVE QUEUE TEST 2: Positions 2+ contain ONLY rule-derived entries, not static rotation
 test("live-queue: positions 2+ contain no entries from static rotation list", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.comboPoints = 2  -- AR PIN at low CP
 
@@ -1650,6 +1669,7 @@ end)
 -- LIVE QUEUE TEST 3: Queue does not pad with static rotation entries
 test("live-queue: queue does not pad with static rotation entries", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.comboPoints = 4  -- Mid-range CP (no PIN)
   OA.State.buffs.adrenalineRush.up = false
@@ -1755,6 +1775,7 @@ end)
 -- TEST: Secret cooldowns do NOT produce queue entries (regression test for user bug #1)
 test("v1.1.0: secret cooldown fails closed - not queued", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.comboPoints = 2
 
@@ -1792,6 +1813,7 @@ end)
 -- TEST: On-cooldown abilities are never queued
 test("v1.1.0: on-cooldown abilities not queued (remaining > 0)", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.comboPoints = 2
 
@@ -1929,6 +1951,7 @@ end)
 -- TEST: Trinket cooldowns respect fail-closed logic
 test("v1.1.0: trinket cooldowns fail closed - unknown trinket not ready", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.buffs.adrenalineRush.up = true
 
@@ -1988,6 +2011,7 @@ end)
 -- TEST: Engine-level castability filter (belt-and-braces)
 test("v1.1.0: engine filter removes non-position-1 entries with unknown cooldowns", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.comboPoints = 2
 
@@ -2021,6 +2045,7 @@ end)
 -- TEST: Unknown spell is not queued (talent-gated spell missing)
 test("v1.1.0: talent-gated spell not known - filtered from queue", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.cooldowns.bladeRush.ready = true
   OA.State.knownUnavailable = false
@@ -2048,6 +2073,7 @@ end)
 -- TEST: Known spell IS queued (talent acquired)
 test("v1.1.0: talent-gated spell known - queued when ready", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.cooldowns.bladeRush.ready = true
   OA.State.knownUnavailable = false
@@ -2100,6 +2126,7 @@ end)
 -- TEST: Known API unavailable - fail-open (all spells allowed)
 test("v1.1.0: known API unavailable - fail-open", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.cooldowns.bladeRush.ready = true
   OA.State.knownUnavailable = true  -- API unavailable
@@ -2321,6 +2348,7 @@ end)
 -- Test: Predict with full energy and ready cooldowns
 test("rotation simulator: predict returns array at full energy", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.energy = 100
   OA.State.energyMax = 100
@@ -2345,6 +2373,7 @@ test("rotation simulator: degraded aura data still predicts (lower confidence)",
   -- the first icon never changed in live play. Energy/CP/cooldowns remain readable and
   -- drive most of the priority list, so predict anyway and mark confidence down.
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.energy = 100
   OA.State.energyMax = 100
@@ -2363,6 +2392,7 @@ end)
 -- Test: Predict entries have required fields
 test("rotation simulator: predict entries have spellID, confidence, reason", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.energy = 100
   OA.State.energyMax = 100
@@ -2385,6 +2415,7 @@ end)
 -- Test: Confidence is high for steps 1-3
 test("rotation simulator: confidence high for steps 1-3", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.buffs.degraded = false  -- "high" requires readable aura data
   OA.State.energy = 100
@@ -2405,6 +2436,7 @@ end)
 -- Test: Confidence is low for step 4+
 test("rotation simulator: confidence low for step 4+", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.energy = 100
   OA.State.energyMax = 100
@@ -2426,6 +2458,7 @@ end)
 -- Test: Energy is spent and regenerated correctly
 test("rotation simulator: energy spent and regenerated across steps", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.energy = 100
   OA.State.energyMax = 100
@@ -2447,6 +2480,7 @@ end)
 -- Test: Combo points increase with builders
 test("rotation simulator: combo points generated by builders", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.energy = 100
   OA.State.energyMax = 100
@@ -2466,6 +2500,7 @@ end)
 -- Test: Finisher applies Restless Blades CDR
 test("rotation simulator: finisher applies Restless Blades CDR", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.energy = 100
   OA.State.energyMax = 100
@@ -2495,6 +2530,7 @@ end)
 -- Test: Stage 3 RtB buff affects next prediction
 test("rotation simulator: stage 3 RtB buff affects next prediction", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.energy = 100
   OA.State.energyMax = 100
@@ -2512,6 +2548,7 @@ end)
 -- Test: IntelligenceLayer wires predictions into queue
 test("rotation simulator: predictions wired into intelligence layer queue", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.energy = 100
   OA.State.energyMax = 100
@@ -2543,6 +2580,7 @@ end)
 -- TEST: CRITICAL — Assist unavailable → our predictions still returned (COORDINATOR FINDING)
 test("rotation simulator: Assist unavailable → predictions work standalone", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.energy = 100
   OA.State.energyMax = 100
@@ -2568,6 +2606,7 @@ end)
 -- TEST: Static fallback behavior — empty prediction + Assist available → confidence="static-fallback"
 test("rotation simulator: empty prediction + Assist → static-fallback entry marked", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.energy = 0  -- Out of energy → likely no castable ability
   OA.State.energyMax = 100
@@ -2928,6 +2967,7 @@ end)
 -- fails for a reason that has nothing to do with what it is testing.
 local function decisionsBaseline()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.buffs.degraded = false
   OA.State.buffs.opportunity.up = false
@@ -2964,6 +3004,7 @@ end
 test("decisions: CP pooling — SS at 5 CP if BtE will be ready within ~1 GCD", function()
   decisionsBaseline()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.energy = 50  -- Enough for SS
   OA.State.energyMax = 100
@@ -2992,6 +3033,7 @@ end)
 test("decisions: Dispatch fallback — cast at 6 CP when both 6-CP finishers unavailable", function()
   decisionsBaseline()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.energy = 50
   OA.State.energyMax = 100
@@ -3016,6 +3058,7 @@ end)
 test("decisions: Preparation reset — fires when AR/BtE/BR down", function()
   decisionsBaseline()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.energy = 80
   OA.State.energyMax = 100
@@ -3043,6 +3086,7 @@ end)
 test("decisions: Opportunity buff cleared after PS — no double-cast in simulation", function()
   decisionsBaseline()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.energy = 100
   OA.State.energyMax = 100
@@ -3077,6 +3121,7 @@ end)
 test("decisions: leveling build — SS + Dispatch loop at low level", function()
   decisionsBaseline()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.energy = 100
   OA.State.energyMax = 100
@@ -3115,6 +3160,7 @@ end)
 test("decisions: Dispatch at 6 CP — only when both BtE/KS unavailable", function()
   decisionsBaseline()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.energy = 50
   OA.State.energyMax = 100
@@ -3150,6 +3196,7 @@ end
 
 local function p0Baseline()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.buffs.degraded = false
   OA.State.buffs.opportunity.up = false
@@ -3177,6 +3224,7 @@ end
 
 test("p0: stealth opener appears ONCE, not four times", function()
   p0Baseline()
+  stub.state.stealthed = true  -- RefreshFast reads IsStealthed(), so drive the source
   OA.State.stealthed = true
   OA.State.comboPoints = 0
   local pred = OA.Rotation.Predict(OA.State, 4)
@@ -3367,6 +3415,57 @@ test("highlight: debug output function exists", function()
   assert_true(true, "AppendDebugOutput executed without error")
 end)
 
+-- === pipeline isolation tests ===
+test("pipeline: a Display error does not disable Highlight (stage isolation)", function()
+  -- Regression: Render and Highlight.Update shared one pcall, so a bad SetText in
+  -- Render aborted the tick and the action-bar glow silently never ran.
+  local realRender = OA.Display.Render
+  local highlightRan = false
+  local realHL = OA.Highlight and OA.Highlight.Update
+  OA.Display.Render = function() error("simulated render failure") end
+  if OA.Highlight then
+    OA.Highlight.Update = function() highlightRan = true end
+  end
+
+  for _, h in ipairs(OA.updateHandlers or {}) do
+    OA.safe(h.fn)
+  end
+
+  OA.Display.Render = realRender
+  if OA.Highlight then OA.Highlight.Update = realHL end
+  assert_true(highlightRan,
+    "Highlight did not run after a Display error - one broken stage disables the rest")
+end)
+
+test("keybind cache miss returns nil, never the sentinel table", function()
+  -- Regression: `(cached == MISS) and nil or cached` returns the sentinel in Lua,
+  -- which reached SetText and threw "bad argument #1 to SetText".
+  if OA.Display and OA.Display.GetKeybindTextForTest then
+    local v = OA.Display.GetKeybindTextForTest(999999)
+    assert_true(v == nil or type(v) == "string",
+      "keybind lookup returned a " .. type(v) .. " - SetText would throw")
+  else
+    -- fall back to exercising it through a render with an unbound spell
+    local ok = pcall(OA.Display.Render, { queue = { { spellID = 999999, kind = "rotation",
+      source = "test", confidence = "high", isSequence = true } }, advisories = {} })
+    assert_true(ok, "render threw on an unbound spell (sentinel leaked into SetText)")
+  end
+end)
+
+-- === stealth source tests ===
+test("stealth clears when IsStealthed() goes false (Ambush must not pin forever)", function()
+  -- Regression: stealth was derived from the aura scan, which goes blind in combat, so
+  -- the flag never cleared and Ambush stayed pinned at position 1 permanently.
+  stub.state.stealthed = true
+  OA.State.RefreshFast()
+  assert_true(OA.State.stealthed, "stealth detected while stealthed")
+
+  stub.state.stealthed = false
+  OA.State.RefreshFast()
+  assert_false(OA.State.stealthed,
+    "stealth stayed true after leaving stealth - the opener would pin to the bar forever")
+end)
+
 print("")
 print(passCount .. "/" .. testCount .. " tests passed")
 
@@ -3375,6 +3474,7 @@ print(passCount .. "/" .. testCount .. " tests passed")
 -- TEST: Rule 1 fires at stage 0
 test("spec-priority: rule 1 (RtB) fires at stage 0", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.buffs.rtb.stage = 0
   OA.State.energy = 100
@@ -3395,6 +3495,7 @@ end)
 -- TEST: Rule 2 (KIR) fires at stage 2
 test("spec-priority: rule 2 (KIR) fires at stage 2", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.buffs.rtb.stage = 2
   OA.State.energy = 100
@@ -3417,6 +3518,7 @@ end)
 -- TEST: Rule 3 (AR) fires at low CP (<=2)
 test("spec-priority: rule 3 (AR) fires at low CP", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.buffs.rtb.stage = 0
   OA.State.energy = 100
@@ -3438,6 +3540,7 @@ end)
 -- TEST: Rule 4 (Blade Rush) fires on cooldown
 test("spec-priority: rule 4 (Blade Rush) fires on cooldown", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.buffs.rtb.stage = 0
   OA.State.energy = 100
@@ -3459,6 +3562,7 @@ end)
 -- TEST: Rule 5 (BtE) fires at 6+ CP
 test("spec-priority: rule 5 (BtE) fires at 6+ CP", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.buffs.rtb.stage = 0
   OA.State.energy = 100
@@ -3480,6 +3584,7 @@ end)
 -- TEST: Rule 6 (Preparation) fires when reset targets are down
 test("spec-priority: rule 6 (Preparation) fires when AR down", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.buffs.rtb.stage = 0
   OA.State.energy = 100
@@ -3503,6 +3608,7 @@ end)
 -- TEST: Rule 7 (Killing Spree) fires at 6+ CP
 test("spec-priority: rule 7 (Killing Spree) fires at 6+ CP", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.buffs.rtb.stage = 0
   OA.State.energy = 100
@@ -3525,6 +3631,7 @@ end)
 -- TEST: Rule 8 (Dispatch) fires at 6+ CP when finishers unavailable
 test("spec-priority: rule 8 (Dispatch) fires at 6+ CP finisher unavailable", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.buffs.rtb.stage = 0
   OA.State.energy = 100
@@ -3548,6 +3655,7 @@ end)
 -- TEST: Rule 9 (Pistol Shot) fires with 6+ Opportunity stacks at any CP
 test("spec-priority: rule 9 (PS) fires with 6+ stacks at any CP", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.buffs.rtb.stage = 0
   OA.State.buffs.opportunity.up = true
@@ -3571,6 +3679,7 @@ end)
 -- TEST: Rule 9 (Pistol Shot) fires with 3-5 stacks only at 1-3 CP
 test("spec-priority: rule 9 (PS) fires with 3-5 stacks only at 1-3 CP", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.buffs.rtb.stage = 0
   OA.State.buffs.opportunity.up = true
@@ -3594,6 +3703,7 @@ end)
 -- TEST: Rule 9 (Pistol Shot) does NOT fire with 3-5 stacks at 4+ CP
 test("spec-priority: rule 9 (PS) does NOT fire with 3-5 stacks at 4+ CP", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.buffs.rtb.stage = 0
   OA.State.buffs.opportunity.up = true
@@ -3617,6 +3727,7 @@ end)
 -- TEST: Rule 10 (Sinister Strike) fires as default builder
 test("spec-priority: rule 10 (SS) fires as default builder", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.buffs.rtb.stage = 0
   OA.State.energy = 100
@@ -3636,6 +3747,7 @@ end)
 -- TEST: Blade Flurry fires at low CP with 2+ enemies
 test("spec-priority: Blade Flurry fires at low CP with 2+ enemies", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.buffs.rtb.stage = 0
   OA.State.energy = 100
@@ -3658,6 +3770,7 @@ end)
 -- TEST: Blade Flurry does NOT fire at 3+ CP even with 2+ enemies
 test("spec-priority: Blade Flurry does NOT fire at 3+ CP", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.buffs.rtb.stage = 0
   OA.State.energy = 100
@@ -3680,6 +3793,7 @@ end)
 -- TEST: Rule ordering - rule N+1 doesn't fire if rule N fires
 test("spec-priority: rule ordering (RtB before KIR)", function()
   OA.State.inCombat = true
+  stub.state.stealthed = false
   OA.State.stealthed = false
   OA.State.buffs.rtb.stage = 0  -- RtB fires at stage < 2
   OA.State.energy = 100

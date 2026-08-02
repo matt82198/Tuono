@@ -178,24 +178,25 @@ OA.RegisterEvent("PLAYER_LOGIN", function()
 
   -- Register update handler with base idle interval 0.5s; dynamic override to 0.1s in combat
   OA.RegisterUpdate(function()
-    OA.safe(function()
-      if OA.State and OA.State.RefreshFast then
-        OA.State.RefreshFast()
-      end
-      if OA.Assist and OA.Assist.Update then
-        OA.Assist.Update()
-      end
-      local r
-      if OA.Engine and OA.Engine.Evaluate then
-        r = OA.Engine.Evaluate()
-      end
-      if OA.Display and OA.Display.Render then
-        OA.Display.Render(r)
-      end
-      if OA.Highlight and OA.Highlight.Update then
-        OA.Highlight.Update(r)
-      end
-    end)
+    -- Each stage is protected INDIVIDUALLY. They used to share one pcall, so a single
+    -- error in Display.Render aborted the closure and silently disabled everything
+    -- after it -- that is how a bad SetText call turned into "the glow never works".
+    if OA.State and OA.State.RefreshFast then
+      OA.safe(OA.State.RefreshFast)
+    end
+    if OA.Assist and OA.Assist.Update then
+      OA.safe(OA.Assist.Update)
+    end
+    local r
+    if OA.Engine and OA.Engine.Evaluate then
+      r = OA.safe(OA.Engine.Evaluate)
+    end
+    if OA.Display and OA.Display.Render then
+      OA.safe(OA.Display.Render, r)
+    end
+    if OA.Highlight and OA.Highlight.Update then
+      OA.safe(OA.Highlight.Update, r)
+    end
   end, 0.5)
 
   -- Register event-forced re-evaluate triggers
