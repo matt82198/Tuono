@@ -34,7 +34,7 @@ OA.State = {
 	comboPointsMax = 0,
 	buffs = {
 		rtb = { stage = 0, expires = 0, names = {} },
-		opportunity = { up = false, expires = 0 },
+		opportunity = { up = false, expires = 0, stacks = 0 },
 		adrenalineRush = { up = false, expires = 0 },
 		degraded = false
 	},
@@ -173,6 +173,7 @@ local function BootstrapBuffState()
 					OA.State.buffs.rtb.expires = OA.num(aura.expirationTime, now)
 				elseif item.key == "opportunity" then
 					OA.State.buffs.opportunity.up = true
+					OA.State.buffs.opportunity.stacks = OA.num(aura.applications, 0)
 					OA.State.buffs.opportunity.expires = OA.num(aura.expirationTime, now)
 				elseif item.key == "stealthed" then
 					OA.State.stealthed = true
@@ -213,6 +214,7 @@ local function ProcessAuraDelta(updateInfo)
 				wipe(OA.State.buffs.rtb.names)
 			elseif key == "opportunity" then
 				OA.State.buffs.opportunity.up = false
+				OA.State.buffs.opportunity.stacks = 0
 				OA.State.buffs.opportunity.expires = 0
 			elseif key == "stealthed" then
 				OA.State.stealthed = false
@@ -246,6 +248,7 @@ local function ProcessAuraDelta(updateInfo)
 				elseif spellID == 195627 then
 					instanceMap[instanceID] = "opportunity"
 					OA.State.buffs.opportunity.up = true
+					OA.State.buffs.opportunity.stacks = OA.num(auraData.applications, 0)
 					OA.State.buffs.opportunity.expires = OA.num(auraData.expirationTime, now)
 					OA.State.buffs.degraded = false
 				elseif spellID == OA.SpellIDs.stealth then
@@ -268,6 +271,7 @@ local function ProcessAuraDelta(updateInfo)
 						elseif lastCast.spellID == 195627 then
 							instanceMap[instanceID] = "opportunity"
 							OA.State.buffs.opportunity.up = true
+							OA.State.buffs.opportunity.stacks = OA.num(auraData.applications, 0)
 							OA.State.buffs.opportunity.expires = OA.num(auraData.expirationTime, now)
 							OA.State.buffs.degraded = false
 						end
@@ -330,6 +334,7 @@ local function RefreshBuffsFallback()
 			end
 			if auraSpellId == OA.SpellIDs.opportunity and not OA.State.buffs.opportunity.up then
 				OA.State.buffs.opportunity.up = true
+				OA.State.buffs.opportunity.stacks = OA.num(aura.applications, 0)
 				OA.State.buffs.opportunity.expires = OA.num(aura.expirationTime, now)
 			end
 			if auraSpellId == OA.SpellIDs.stealth then
@@ -376,8 +381,9 @@ local function RefreshBuffsFallback()
 				OA.State.buffs.degraded = true
 			end
 			if name == "Opportunity" and not OA.State.buffs.opportunity.up then
-				local _, _, _, _, _, expTime = UnitBuff("player", i)
+				local _, _, count, _, _, expTime = UnitBuff("player", i)
 				OA.State.buffs.opportunity.up = true
+				OA.State.buffs.opportunity.stacks = OA.num(count, 0)
 				OA.State.buffs.opportunity.expires = OA.num(expTime, now)
 				OA.State.buffs.degraded = true
 			end

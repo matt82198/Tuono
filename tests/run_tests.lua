@@ -2988,13 +2988,13 @@ test("decisions: CP pooling — SS at 5 CP if BtE will be ready within ~1 GCD", 
 end)
 
 -- TEST: Dispatch at 5 CP when BOTH BtE and KS are on long cooldowns
-test("decisions: Dispatch fallback — cast at 5 CP when both 6-CP finishers unavailable", function()
+test("decisions: Dispatch fallback — cast at 6 CP when both 6-CP finishers unavailable", function()
   decisionsBaseline()
   OA.State.inCombat = true
   OA.State.stealthed = false
   OA.State.energy = 50
   OA.State.energyMax = 100
-  OA.State.comboPoints = 5
+  OA.State.comboPoints = 6
   OA.State.comboPointsMax = 6
   OA.State.buffs.rtb.stage = 2
   OA.State.buffs.adrenalineRush.up = false
@@ -3006,7 +3006,7 @@ test("decisions: Dispatch fallback — cast at 5 CP when both 6-CP finishers una
   local pred = OA.Rotation.Predict(OA.State, 1)
   assert_true(pred ~= nil, "prediction returned with both finishers down")
   if #pred > 0 then
-    -- With both 6-CP finishers on cooldown, should recommend Dispatch at 5 CP
+    -- With both 6-CP finishers on cooldown, should recommend Dispatch at 6 CP
     assert_eq(pred[1].spellID, OA.SpellIDs.dispatch, "recommends Dispatch when finishers unavailable")
   end
 end)
@@ -3100,18 +3100,14 @@ test("decisions: leveling build — SS + Dispatch loop at low level", function()
     [OA.SpellIDs.ambush] = false
   }
 
-  local pred = OA.Rotation.Predict(OA.State, 6)
+  -- Start at 6 CP so Dispatch can fire (takes 6 SS to reach 6 CP)
+  OA.State.comboPoints = 6
+  local pred = OA.Rotation.Predict(OA.State, 1)
   assert_true(pred ~= nil, "prediction returned for leveling build")
-  assert_true(#pred > 0, "prediction is not empty for leveling build")
+  assert_true(#pred > 0, "prediction is not empty for leveling build at 6 CP")
 
-  -- Verify the sequence makes sense: should build CP with SS, then spend with Dispatch
-  local foundSS = false
-  local foundDispatch = false
-  for _, entry in ipairs(pred) do
-    if entry.spellID == OA.SpellIDs.sinisterStrike then foundSS = true end
-    if entry.spellID == OA.SpellIDs.dispatch then foundDispatch = true end
-  end
-  assert_true(foundSS and foundDispatch, "leveling sequence includes both SS and Dispatch")
+  -- At 6 CP with only SS and Dispatch learned, should recommend Dispatch (6+ CP rule)
+  assert_eq(pred[1].spellID, OA.SpellIDs.dispatch, "leveling sequence uses Dispatch at 6 CP")
 end)
 
 -- TEST: Dispatch at 6 CP when finishers available (should prefer finisher)
@@ -3203,18 +3199,18 @@ test("p0: at max combo points the finisher is position 1, not buried behind cool
     "bar would stall at max CP without spending (position 1 was " .. tostring(first) .. ")")
 end)
 
-test("p0: levelling build (SS + Dispatch) spends at 5 CP", function()
+test("p0: levelling build (SS + Dispatch) spends at 6 CP", function()
   p0Baseline()
   for _, id in pairs(OA.SpellIDs) do
     if type(id) == "number" then OA.State.knownSpells[id] = false end
   end
   OA.State.knownSpells[OA.SpellIDs.sinisterStrike] = true
   OA.State.knownSpells[OA.SpellIDs.dispatch] = true
-  OA.State.comboPoints = 5
+  OA.State.comboPoints = 6
   local r = OA.Engine.Evaluate()
   assert_true(#r.queue > 0, "levelling queue is non-empty")
   assert_eq(r.queue[1].spellID, OA.SpellIDs.dispatch,
-    "levelling bar told the player to keep building instead of spending at 5 CP")
+    "levelling bar told the player to spend Dispatch at 6 CP")
 end)
 
 test("p0: Killing Spree is not modelled as a combo-point spender", function()
@@ -3227,6 +3223,336 @@ end)
 
 print("")
 print(passCount .. "/" .. testCount .. " tests passed")
+
+-- === spec-priority tests ===
+
+-- TEST: Rule 1 fires at stage 0
+test("spec-priority: rule 1 (RtB) fires at stage 0", function()
+  OA.State.inCombat = true
+  OA.State.stealthed = false
+  OA.State.buffs.rtb.stage = 0
+  OA.State.energy = 100
+  OA.State.comboPoints = 0
+  OA.State.knownSpells[OA.SpellIDs.rollTheBones] = true
+  OA.State.cooldowns.rollTheBones = { known = true, ready = true, remaining = 0 }
+  OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+  for _, k in ipairs({"adrenalineRush","bladeRush","preparation","betweenTheEyes",
+                      "killingSpree","keepItRolling","bladeFlurry","ambush","dispatch","pistolShot"}) do
+    OA.State.knownSpells[OA.SpellIDs[k]] = false
+    OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+  end
+  local p = OA.Rotation.Predict(OA.State, 1)
+  assert_true(#p > 0, "prediction returned")
+  assert_eq(p[1].spellID, OA.SpellIDs.rollTheBones, "RtB fires at stage 0")
+end)
+
+-- TEST: Rule 2 (KIR) fires at stage 2
+test("spec-priority: rule 2 (KIR) fires at stage 2", function()
+  OA.State.inCombat = true
+  OA.State.stealthed = false
+  OA.State.buffs.rtb.stage = 2
+  OA.State.energy = 100
+  OA.State.comboPoints = 0
+  OA.State.knownSpells[OA.SpellIDs.keepItRolling] = true
+  OA.State.knownSpells[OA.SpellIDs.rollTheBones] = true
+  OA.State.cooldowns.keepItRolling = { known = true, ready = true, remaining = 0 }
+  OA.State.cooldowns.rollTheBones = { known = true, ready = false, remaining = 30 }
+  OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+  for _, k in ipairs({"adrenalineRush","bladeRush","preparation","betweenTheEyes",
+                      "killingSpree","bladeFlurry","ambush","dispatch","pistolShot"}) do
+    OA.State.knownSpells[OA.SpellIDs[k]] = false
+    OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+  end
+  local p = OA.Rotation.Predict(OA.State, 1)
+  assert_true(#p > 0, "prediction returned")
+  assert_eq(p[1].spellID, OA.SpellIDs.keepItRolling, "KIR fires at stage 2")
+end)
+
+-- TEST: Rule 3 (AR) fires at low CP (<=2)
+test("spec-priority: rule 3 (AR) fires at low CP", function()
+  OA.State.inCombat = true
+  OA.State.stealthed = false
+  OA.State.buffs.rtb.stage = 0
+  OA.State.energy = 100
+  OA.State.comboPoints = 2
+  OA.State.knownSpells[OA.SpellIDs.adrenalineRush] = true
+  OA.State.knownSpells[OA.SpellIDs.sinisterStrike] = true
+  OA.State.cooldowns.adrenalineRush = { known = true, ready = true, remaining = 0 }
+  OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+  for _, k in ipairs({"bladeRush","preparation","betweenTheEyes","killingSpree",
+                      "rollTheBones","keepItRolling","bladeFlurry","ambush","dispatch","pistolShot"}) do
+    OA.State.knownSpells[OA.SpellIDs[k]] = false
+    OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+  end
+  local p = OA.Rotation.Predict(OA.State, 1)
+  assert_true(#p > 0, "prediction returned")
+  assert_eq(p[1].spellID, OA.SpellIDs.adrenalineRush, "AR fires at low CP")
+end)
+
+-- TEST: Rule 4 (Blade Rush) fires on cooldown
+test("spec-priority: rule 4 (Blade Rush) fires on cooldown", function()
+  OA.State.inCombat = true
+  OA.State.stealthed = false
+  OA.State.buffs.rtb.stage = 0
+  OA.State.energy = 100
+  OA.State.comboPoints = 4
+  OA.State.knownSpells[OA.SpellIDs.bladeRush] = true
+  OA.State.knownSpells[OA.SpellIDs.sinisterStrike] = true
+  OA.State.cooldowns.bladeRush = { known = true, ready = true, remaining = 0 }
+  OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+  for _, k in ipairs({"adrenalineRush","preparation","betweenTheEyes","killingSpree",
+                      "rollTheBones","keepItRolling","bladeFlurry","ambush","dispatch","pistolShot"}) do
+    OA.State.knownSpells[OA.SpellIDs[k]] = false
+    OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+  end
+  local p = OA.Rotation.Predict(OA.State, 1)
+  assert_true(#p > 0, "prediction returned")
+  assert_eq(p[1].spellID, OA.SpellIDs.bladeRush, "Blade Rush fires on cooldown")
+end)
+
+-- TEST: Rule 5 (BtE) fires at 6+ CP
+test("spec-priority: rule 5 (BtE) fires at 6+ CP", function()
+  OA.State.inCombat = true
+  OA.State.stealthed = false
+  OA.State.buffs.rtb.stage = 0
+  OA.State.energy = 100
+  OA.State.comboPoints = 6
+  OA.State.knownSpells[OA.SpellIDs.betweenTheEyes] = true
+  OA.State.knownSpells[OA.SpellIDs.sinisterStrike] = true
+  OA.State.cooldowns.betweenTheEyes = { known = true, ready = true, remaining = 0 }
+  OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+  for _, k in ipairs({"adrenalineRush","bladeRush","preparation","killingSpree",
+                      "rollTheBones","keepItRolling","bladeFlurry","ambush","dispatch","pistolShot"}) do
+    OA.State.knownSpells[OA.SpellIDs[k]] = false
+    OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+  end
+  local p = OA.Rotation.Predict(OA.State, 1)
+  assert_true(#p > 0, "prediction returned")
+  assert_eq(p[1].spellID, OA.SpellIDs.betweenTheEyes, "BtE fires at 6+ CP")
+end)
+
+-- TEST: Rule 6 (Preparation) fires when reset targets are down
+test("spec-priority: rule 6 (Preparation) fires when AR down", function()
+  OA.State.inCombat = true
+  OA.State.stealthed = false
+  OA.State.buffs.rtb.stage = 0
+  OA.State.energy = 100
+  OA.State.comboPoints = 0
+  OA.State.knownSpells[OA.SpellIDs.preparation] = true
+  OA.State.knownSpells[OA.SpellIDs.sinisterStrike] = true
+  OA.State.cooldowns.preparation = { known = true, ready = true, remaining = 0 }
+  OA.State.cooldowns.adrenalineRush = { known = true, ready = false, remaining = 20 }
+  OA.State.cooldowns.bladeRush = { known = true, ready = false, remaining = 20 }
+  OA.State.cooldowns.betweenTheEyes = { known = true, ready = false, remaining = 20 }
+  OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+  for _, k in ipairs({"adrenalineRush","bladeRush","betweenTheEyes","killingSpree",
+                      "rollTheBones","keepItRolling","bladeFlurry","ambush","dispatch","pistolShot"}) do
+    OA.State.knownSpells[OA.SpellIDs[k]] = false
+  end
+  local p = OA.Rotation.Predict(OA.State, 1)
+  assert_true(#p > 0, "prediction returned")
+  assert_eq(p[1].spellID, OA.SpellIDs.preparation, "Preparation fires when targets down")
+end)
+
+-- TEST: Rule 7 (Killing Spree) fires at 6+ CP
+test("spec-priority: rule 7 (Killing Spree) fires at 6+ CP", function()
+  OA.State.inCombat = true
+  OA.State.stealthed = false
+  OA.State.buffs.rtb.stage = 0
+  OA.State.energy = 100
+  OA.State.comboPoints = 6
+  OA.State.knownSpells[OA.SpellIDs.killingSpree] = true
+  OA.State.knownSpells[OA.SpellIDs.sinisterStrike] = true
+  OA.State.cooldowns.killingSpree = { known = true, ready = true, remaining = 0 }
+  OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+  OA.State.cooldowns.betweenTheEyes = { known = true, ready = false, remaining = 20 }
+  for _, k in ipairs({"adrenalineRush","bladeRush","preparation","rollTheBones",
+                      "keepItRolling","bladeFlurry","ambush","dispatch","pistolShot"}) do
+    OA.State.knownSpells[OA.SpellIDs[k]] = false
+    OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+  end
+  local p = OA.Rotation.Predict(OA.State, 1)
+  assert_true(#p > 0, "prediction returned")
+  assert_eq(p[1].spellID, OA.SpellIDs.killingSpree, "Killing Spree fires at 6+ CP")
+end)
+
+-- TEST: Rule 8 (Dispatch) fires at 6+ CP when finishers unavailable
+test("spec-priority: rule 8 (Dispatch) fires at 6+ CP finisher unavailable", function()
+  OA.State.inCombat = true
+  OA.State.stealthed = false
+  OA.State.buffs.rtb.stage = 0
+  OA.State.energy = 100
+  OA.State.comboPoints = 6
+  OA.State.knownSpells[OA.SpellIDs.dispatch] = true
+  OA.State.knownSpells[OA.SpellIDs.sinisterStrike] = true
+  OA.State.cooldowns.dispatch = { known = true, ready = true, remaining = 0 }
+  OA.State.cooldowns.betweenTheEyes = { known = true, ready = false, remaining = 20 }
+  OA.State.cooldowns.killingSpree = { known = true, ready = false, remaining = 20 }
+  OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+  for _, k in ipairs({"adrenalineRush","bladeRush","preparation","rollTheBones",
+                      "keepItRolling","bladeFlurry","ambush","pistolShot"}) do
+    OA.State.knownSpells[OA.SpellIDs[k]] = false
+    OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+  end
+  local p = OA.Rotation.Predict(OA.State, 1)
+  assert_true(#p > 0, "prediction returned")
+  assert_eq(p[1].spellID, OA.SpellIDs.dispatch, "Dispatch fires at 6+ CP when finishers unavailable")
+end)
+
+-- TEST: Rule 9 (Pistol Shot) fires with 6+ Opportunity stacks at any CP
+test("spec-priority: rule 9 (PS) fires with 6+ stacks at any CP", function()
+  OA.State.inCombat = true
+  OA.State.stealthed = false
+  OA.State.buffs.rtb.stage = 0
+  OA.State.buffs.opportunity.up = true
+  OA.State.buffs.opportunity.stacks = 6
+  OA.State.energy = 100
+  OA.State.comboPoints = 3
+  OA.State.knownSpells[OA.SpellIDs.pistolShot] = true
+  OA.State.knownSpells[OA.SpellIDs.sinisterStrike] = true
+  OA.State.cooldowns.pistolShot = { known = true, ready = true, remaining = 0 }
+  OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+  for _, k in ipairs({"adrenalineRush","bladeRush","preparation","betweenTheEyes","killingSpree",
+                      "rollTheBones","keepItRolling","bladeFlurry","ambush","dispatch"}) do
+    OA.State.knownSpells[OA.SpellIDs[k]] = false
+    OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+  end
+  local p = OA.Rotation.Predict(OA.State, 1)
+  assert_true(#p > 0, "prediction returned")
+  assert_eq(p[1].spellID, OA.SpellIDs.pistolShot, "PS fires with 6+ stacks")
+end)
+
+-- TEST: Rule 9 (Pistol Shot) fires with 3-5 stacks only at 1-3 CP
+test("spec-priority: rule 9 (PS) fires with 3-5 stacks only at 1-3 CP", function()
+  OA.State.inCombat = true
+  OA.State.stealthed = false
+  OA.State.buffs.rtb.stage = 0
+  OA.State.buffs.opportunity.up = true
+  OA.State.buffs.opportunity.stacks = 3
+  OA.State.energy = 100
+  OA.State.comboPoints = 2
+  OA.State.knownSpells[OA.SpellIDs.pistolShot] = true
+  OA.State.knownSpells[OA.SpellIDs.sinisterStrike] = true
+  OA.State.cooldowns.pistolShot = { known = true, ready = true, remaining = 0 }
+  OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+  for _, k in ipairs({"adrenalineRush","bladeRush","preparation","betweenTheEyes","killingSpree",
+                      "rollTheBones","keepItRolling","bladeFlurry","ambush","dispatch"}) do
+    OA.State.knownSpells[OA.SpellIDs[k]] = false
+    OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+  end
+  local p = OA.Rotation.Predict(OA.State, 1)
+  assert_true(#p > 0, "prediction returned")
+  assert_eq(p[1].spellID, OA.SpellIDs.pistolShot, "PS fires with 3 stacks at 2 CP")
+end)
+
+-- TEST: Rule 9 (Pistol Shot) does NOT fire with 3-5 stacks at 4+ CP
+test("spec-priority: rule 9 (PS) does NOT fire with 3-5 stacks at 4+ CP", function()
+  OA.State.inCombat = true
+  OA.State.stealthed = false
+  OA.State.buffs.rtb.stage = 0
+  OA.State.buffs.opportunity.up = true
+  OA.State.buffs.opportunity.stacks = 3
+  OA.State.energy = 100
+  OA.State.comboPoints = 4
+  OA.State.knownSpells[OA.SpellIDs.pistolShot] = true
+  OA.State.knownSpells[OA.SpellIDs.sinisterStrike] = true
+  OA.State.cooldowns.pistolShot = { known = true, ready = true, remaining = 0 }
+  OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+  for _, k in ipairs({"adrenalineRush","bladeRush","preparation","betweenTheEyes","killingSpree",
+                      "rollTheBones","keepItRolling","bladeFlurry","ambush","dispatch"}) do
+    OA.State.knownSpells[OA.SpellIDs[k]] = false
+    OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+  end
+  local p = OA.Rotation.Predict(OA.State, 1)
+  assert_true(#p > 0, "prediction returned")
+  assert_eq(p[1].spellID, OA.SpellIDs.sinisterStrike, "PS does NOT fire with 3 stacks at 4 CP, SS used instead")
+end)
+
+-- TEST: Rule 10 (Sinister Strike) fires as default builder
+test("spec-priority: rule 10 (SS) fires as default builder", function()
+  OA.State.inCombat = true
+  OA.State.stealthed = false
+  OA.State.buffs.rtb.stage = 0
+  OA.State.energy = 100
+  OA.State.comboPoints = 2
+  OA.State.knownSpells[OA.SpellIDs.sinisterStrike] = true
+  OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+  for _, k in ipairs({"adrenalineRush","bladeRush","preparation","betweenTheEyes","killingSpree",
+                      "rollTheBones","keepItRolling","bladeFlurry","ambush","dispatch","pistolShot"}) do
+    OA.State.knownSpells[OA.SpellIDs[k]] = false
+    OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+  end
+  local p = OA.Rotation.Predict(OA.State, 1)
+  assert_true(#p > 0, "prediction returned")
+  assert_eq(p[1].spellID, OA.SpellIDs.sinisterStrike, "SS fires as default builder")
+end)
+
+-- TEST: Blade Flurry fires at low CP with 2+ enemies
+test("spec-priority: Blade Flurry fires at low CP with 2+ enemies", function()
+  OA.State.inCombat = true
+  OA.State.stealthed = false
+  OA.State.buffs.rtb.stage = 0
+  OA.State.energy = 100
+  OA.State.comboPoints = 1
+  OA.State.enemyCount = 2
+  OA.State.knownSpells[OA.SpellIDs.bladeFlurry] = true
+  OA.State.knownSpells[OA.SpellIDs.sinisterStrike] = true
+  OA.State.cooldowns.bladeFlurry = { known = true, ready = true, remaining = 0 }
+  OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+  for _, k in ipairs({"adrenalineRush","bladeRush","preparation","betweenTheEyes","killingSpree",
+                      "rollTheBones","keepItRolling","ambush","dispatch","pistolShot"}) do
+    OA.State.knownSpells[OA.SpellIDs[k]] = false
+    OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+  end
+  local p = OA.Rotation.Predict(OA.State, 1)
+  assert_true(#p > 0, "prediction returned")
+  assert_eq(p[1].spellID, OA.SpellIDs.bladeFlurry, "BF fires at 1 CP with 2+ enemies")
+end)
+
+-- TEST: Blade Flurry does NOT fire at 3+ CP even with 2+ enemies
+test("spec-priority: Blade Flurry does NOT fire at 3+ CP", function()
+  OA.State.inCombat = true
+  OA.State.stealthed = false
+  OA.State.buffs.rtb.stage = 0
+  OA.State.energy = 100
+  OA.State.comboPoints = 3
+  OA.State.enemyCount = 2
+  OA.State.knownSpells[OA.SpellIDs.bladeFlurry] = true
+  OA.State.knownSpells[OA.SpellIDs.sinisterStrike] = true
+  OA.State.cooldowns.bladeFlurry = { known = true, ready = true, remaining = 0 }
+  OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+  for _, k in ipairs({"adrenalineRush","bladeRush","preparation","betweenTheEyes","killingSpree",
+                      "rollTheBones","keepItRolling","ambush","dispatch","pistolShot"}) do
+    OA.State.knownSpells[OA.SpellIDs[k]] = false
+    OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+  end
+  local p = OA.Rotation.Predict(OA.State, 1)
+  assert_true(#p > 0, "prediction returned")
+  assert_eq(p[1].spellID, OA.SpellIDs.sinisterStrike, "BF does NOT fire at 3 CP, SS used instead")
+end)
+
+-- TEST: Rule ordering - rule N+1 doesn't fire if rule N fires
+test("spec-priority: rule ordering (RtB before KIR)", function()
+  OA.State.inCombat = true
+  OA.State.stealthed = false
+  OA.State.buffs.rtb.stage = 0  -- RtB fires at stage < 2
+  OA.State.energy = 100
+  OA.State.comboPoints = 0
+  OA.State.knownSpells[OA.SpellIDs.rollTheBones] = true
+  OA.State.knownSpells[OA.SpellIDs.keepItRolling] = true
+  OA.State.cooldowns.rollTheBones = { known = true, ready = true, remaining = 0 }
+  OA.State.cooldowns.keepItRolling = { known = true, ready = true, remaining = 0 }
+  OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+  for _, k in ipairs({"adrenalineRush","bladeRush","preparation","betweenTheEyes","killingSpree",
+                      "bladeFlurry","ambush","dispatch","pistolShot"}) do
+    OA.State.knownSpells[OA.SpellIDs[k]] = false
+    OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+  end
+  local p = OA.Rotation.Predict(OA.State, 1)
+  assert_true(#p > 0, "prediction returned")
+  -- RtB (rule 1) should fire before KIR (rule 2)
+  assert_eq(p[1].spellID, OA.SpellIDs.rollTheBones, "RtB (rule 1) fires before KIR (rule 2)")
+end)
 
 if passCount ~= testCount then
   os.exit(1)

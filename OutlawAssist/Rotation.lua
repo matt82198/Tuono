@@ -32,6 +32,10 @@ local ABILITIES = {
 	[OA.SpellIDs.keepItRolling] = { cost=0, cpGen=0, cpSpend=0, cd=360, gcd=false },
 }
 
+-- Define LOW_CP as our interpretation of the guide's wording. This is tunable and should be
+-- considered a strategic parameter, not a hardcoded constant from WoW mechanics.
+local LOW_CP = 2
+
 -- Defensive cooldown accessor: StateTracker now tracks all ability cooldowns, so a rule
 -- referencing any rotation ability gets valid cooldown data. This accessor is a safety
 -- belt for any future abilities; if a cooldown is not tracked, it returns ready=true.
@@ -76,79 +80,55 @@ local function canAfford(S, spellID)
 	return S.energy >= ability.cost
 end
 
--- PRIORITY LIST: SINGLE-TARGET (research/rotation-model.md §1b)
--- Each rule: { name, spellID, requiresSpell (or nil for basic builder), when(S, A) -> bool }
+-- AUTHORITATIVE PRIORITY LIST (10 RULES, verbatim from guide)
 -- Ordered; first condition match wins. Talent-gating via requiresSpell.
 -- Rules filter dynamically based on OA.State.knownSpells; unlearned abilities are skipped.
 local PRIORITY_SINGLE = {
-	{
-		name = "Ambush_stealth_opener",
-		spellID = OA.SpellIDs.ambush,
-		requiresSpell = OA.SpellIDs.ambush,
-		when = function(S, A)
-			-- Ambush only available when stealthed (per research/rotation-model.md §1a)
-			return S.stealthed and canAfford(S, OA.SpellIDs.ambush)
-		end
-	},
+	-- Rule 1: Use Roll the Bones on cooldown unless you are already in Stage 2 or higher.
 	{
 		name = "RtB_reroll_low_stage",
 		spellID = OA.SpellIDs.rollTheBones,
 		requiresSpell = OA.SpellIDs.rollTheBones,
 		when = function(S, A)
-			-- Reroll RtB at low stage, but not at 5-6 CP when a finisher is available (spend finisher first)
-			if S.comboPoints >= 5 and (cdOf(S, "betweenTheEyes").ready or cdOf(S, "killingSpree").ready) then
-				return false
-			end
 			return S.buffs.rtb.stage < 2 and cdOf(S, "rollTheBones").ready and canAfford(S, OA.SpellIDs.rollTheBones)
 		end
 	},
+
+	-- Rule 2: Use Keep It Rolling when you are in Stage 3. If your next Roll the Bones is
+	-- unlikely to be used alongside Loaded Dice, you can KIR at Stage 2 as well.
+	-- NOTE: We default to Stage 2+ (the consistency choice the note recommends) and explain why.
+	-- Stage 3 is authoritative, but Stage 2 allowance enables more consistent uptime.
 	{
 		name = "KIR_maintain_buff",
 		spellID = OA.SpellIDs.keepItRolling,
 		requiresSpell = OA.SpellIDs.keepItRolling,
 		when = function(S, A)
-			return S.buffs.rtb.stage >= 3 and cdOf(S, "keepItRolling").ready and canAfford(S, OA.SpellIDs.keepItRolling)
+			-- Default to Stage 2+ for consistency (note recommendation); Stage 3 is the hard trigger.
+			return S.buffs.rtb.stage >= 2 and cdOf(S, "keepItRolling").ready and canAfford(S, OA.SpellIDs.keepItRolling)
 		end
 	},
+
+	-- Rule 3: Use Adrenaline Rush on cooldown, at low Combo Points.
 	{
 		name = "AR_on_cooldown",
 		spellID = OA.SpellIDs.adrenalineRush,
 		requiresSpell = OA.SpellIDs.adrenalineRush,
 		when = function(S, A)
-			-- Use AR on cooldown at low combo points (consistent with rules.lua:adrenaline_rush_low_cp)
-			-- At 5-6 CP with finisher available, hold for better uptime window
-			return S.comboPoints <= 2 and cdOf(S, "adrenalineRush").ready and canAfford(S, OA.SpellIDs.adrenalineRush)
+			return S.comboPoints <= LOW_CP and cdOf(S, "adrenalineRush").ready and canAfford(S, OA.SpellIDs.adrenalineRush)
 		end
 	},
+
+	-- Rule 4: Use Blade Rush on cooldown as if it were a regular builder.
 	{
 		name = "BR_on_cooldown",
 		spellID = OA.SpellIDs.bladeRush,
 		requiresSpell = OA.SpellIDs.bladeRush,
 		when = function(S, A)
-			-- Use BR on cooldown, but not at 5-6 CP when a finisher is available (spend finisher first)
-			if S.comboPoints >= 5 and (cdOf(S, "betweenTheEyes").ready or cdOf(S, "killingSpree").ready) then
-				return false
-			end
 			return cdOf(S, "bladeRush").ready and canAfford(S, OA.SpellIDs.bladeRush)
 		end
 	},
-	{
-		name = "Prep_reset_cooldowns",
-		spellID = OA.SpellIDs.preparation,
-		requiresSpell = OA.SpellIDs.preparation,
-		when = function(S, A)
-			-- Use Preparation when any of its cooldown-reset targets are down
-			-- Per rotation-model.md §1b rule 6: reset AR/BtE/Blade Rush when any are down and Prep is up
-			-- Gate: do not use at 5-6 CP when a finisher is available (spend finisher first)
-			if S.comboPoints >= 5 and cdOf(S, "betweenTheEyes").ready then
-				return false  -- BtE available, spend it first
-			end
-			local arDown = not cdOf(S, "adrenalineRush").ready and cdOf(S, "adrenalineRush").remaining > 0
-			local bteDown = not cdOf(S, "betweenTheEyes").ready and cdOf(S, "betweenTheEyes").remaining > 0
-			local brDown = not cdOf(S, "bladeRush").ready and cdOf(S, "bladeRush").remaining > 0
-			return cdOf(S, "preparation").ready and (arDown or bteDown or brDown) and canAfford(S, OA.SpellIDs.preparation)
-		end
-	},
+
+	-- Rule 5: Cast Between the Eyes on cooldown with 6+ CP.
 	{
 		name = "BtE_finisher_6cp",
 		spellID = OA.SpellIDs.betweenTheEyes,
@@ -157,65 +137,74 @@ local PRIORITY_SINGLE = {
 			return S.comboPoints >= 6 and cdOf(S, "betweenTheEyes").ready and canAfford(S, OA.SpellIDs.betweenTheEyes)
 		end
 	},
+
+	-- Rule 6: Use Preparation to reset the cooldown of your AR, BtE, and Blade Rush.
+	{
+		name = "Prep_reset_cooldowns",
+		spellID = OA.SpellIDs.preparation,
+		requiresSpell = OA.SpellIDs.preparation,
+		when = function(S, A)
+			-- Use Preparation when any of its cooldown-reset targets are down
+			local arDown = not cdOf(S, "adrenalineRush").ready and cdOf(S, "adrenalineRush").remaining > 0
+			local bteDown = not cdOf(S, "betweenTheEyes").ready and cdOf(S, "betweenTheEyes").remaining > 0
+			local brDown = not cdOf(S, "bladeRush").ready and cdOf(S, "bladeRush").remaining > 0
+			return cdOf(S, "preparation").ready and (arDown or bteDown or brDown) and canAfford(S, OA.SpellIDs.preparation)
+		end
+	},
+
+	-- Rule 7: Use Killing Spree on cooldown, at 6+ Combo Points. Try to avoid using it while
+	-- Supercharger is active (Energy overcap risk).
+	-- TODO: Supercharger buff ID not yet verified from live source. Implement rule without the
+	-- Supercharger condition until buff ID is confirmed via Wowhead.
 	{
 		name = "KS_burst_cooldown",
 		spellID = OA.SpellIDs.killingSpree,
 		requiresSpell = OA.SpellIDs.killingSpree,
 		when = function(S, A)
-			-- Killing Spree is a combo-point-independent burst cooldown, use on cooldown like Blade Rush
-			return cdOf(S, "killingSpree").ready and canAfford(S, OA.SpellIDs.killingSpree)
+			return S.comboPoints >= 6 and cdOf(S, "killingSpree").ready and canAfford(S, OA.SpellIDs.killingSpree)
 		end
 	},
-	{
-		name = "SS_at_5cp_if_6cp_finisher_coming",
-		spellID = OA.SpellIDs.sinisterStrike,
-		requiresSpell = nil,
-		when = function(S, A)
-			-- CP Pooling decision (P1-1): at 5 CP, if BtE or KS will be ready within ~1 GCD,
-			-- pool 1 more CP to hit 6 for better CDR instead of casting Dispatch now.
-			-- ~1 GCD = ~1.0s (or ~0.8s during AR). Check if either is within 1.5s (conservative margin).
-			-- Only if Dispatch is available (otherwise this is not a choice).
-			if S.comboPoints ~= 5 then return false end
-			if not canAfford(S, OA.SpellIDs.sinisterStrike) then return false end
-			if not OA.SpellIDs.dispatch or not (OA.State and OA.State.knownSpells and OA.State.knownSpells[OA.SpellIDs.dispatch] ~= false) then
-				return false  -- Dispatch not available
-			end
-			-- Check if BtE or KS will be ready soon
-			local bteCDRemaining = cdOf(S, "betweenTheEyes").remaining or 0
-			local ksCDRemaining = cdOf(S, "killingSpree").remaining or 0
-			local finisherReadySoon = (bteCDRemaining <= 1.5 and bteCDRemaining > 0) or (ksCDRemaining <= 1.5 and ksCDRemaining > 0)
-			-- Only pool if at least one finisher is coming back up soon
-			return finisherReadySoon
-		end
-	},
+
+	-- Rule 8: Cast Dispatch as your main finisher with 6+ CP if no other finishers are available to be used.
 	{
 		name = "Dispatch_finisher",
 		spellID = OA.SpellIDs.dispatch,
 		requiresSpell = OA.SpellIDs.dispatch,
 		when = function(S, A)
-			-- Dispatch when at 5-6 CP, but only if both BtE and KS are unavailable
-			-- or if pooling is not beneficial. This ensures CP pooling happens first.
-			if S.comboPoints < 5 then return false end
+			if S.comboPoints < 6 then return false end
 			if not canAfford(S, OA.SpellIDs.dispatch) then return false end
-			-- Verify both 6-CP finishers are on cooldown before casting Dispatch
+			-- Only use Dispatch if both BtE and KS are on cooldown
 			local bteReady = cdOf(S, "betweenTheEyes").ready
 			local ksReady = cdOf(S, "killingSpree").ready
-			-- At 5 CP: only use Dispatch if both 6-CP finishers are on cooldown
-			if S.comboPoints == 5 then
-				return not bteReady and not ksReady
-			end
-			-- At 6 CP: use Dispatch if both 6-CP finishers are on cooldown (avoid this at 6 CP if finisher is up)
 			return not bteReady and not ksReady
 		end
 	},
+
+	-- Rule 9: Cast Pistol Shot if you have 6 stacks of Opportunity. If you have 3 stacks,
+	-- use it at 1-3 CPs only.
 	{
 		name = "PS_opportunity",
 		spellID = OA.SpellIDs.pistolShot,
 		requiresSpell = OA.SpellIDs.pistolShot,
 		when = function(S, A)
-			return S.buffs.opportunity.up and canAfford(S, OA.SpellIDs.pistolShot)
+			if not S.buffs.opportunity.up or not canAfford(S, OA.SpellIDs.pistolShot) then
+				return false
+			end
+			local stacks = S.buffs.opportunity.stacks or 0
+			-- 6+ stacks: cast at any CP
+			if stacks >= 6 then
+				return true
+			end
+			-- 3-5 stacks: only at 1-3 CP
+			if stacks >= 3 then
+				return S.comboPoints >= 1 and S.comboPoints <= 3
+			end
+			-- Less than 3 stacks: don't cast
+			return false
 		end
 	},
+
+	-- Rule 10: Cast Sinister Strike to generate Combo Points.
 	{
 		name = "SS_default_builder",
 		spellID = OA.SpellIDs.sinisterStrike,
@@ -226,29 +215,36 @@ local PRIORITY_SINGLE = {
 			return canAfford(S, OA.SpellIDs.sinisterStrike) and S.comboPoints < S.comboPointsMax
 		end
 	},
-}
 
--- PRIORITY LIST: MULTI-TARGET (AoE when 2+ enemies or aoeMode=true)
--- Insert Blade Flurry after Adrenaline Rush
-local PRIORITY_AOE = {
-	PRIORITY_SINGLE[1], -- RtB_reroll_low_stage
-	PRIORITY_SINGLE[2], -- KIR_maintain_buff
-	PRIORITY_SINGLE[3], -- AR_on_cooldown
+	-- Stealth opener (not in the numbered rules but necessary for rotation start)
 	{
-		name = "BF_aoe_low_cp",
-		spellID = OA.SpellIDs.bladeFlurry,
-		requiresSpell = nil,
+		name = "Ambush_stealth_opener",
+		spellID = OA.SpellIDs.ambush,
+		requiresSpell = OA.SpellIDs.ambush,
 		when = function(S, A)
-			-- Check energy cost (15), CD, and CP threshold. Off-GCD toggle but still costs energy.
-			return cdOf(S, "bladeFlurry").ready and S.comboPoints < 5 and canAfford(S, OA.SpellIDs.bladeFlurry)
+			-- Ambush only available when stealthed
+			return S.stealthed and canAfford(S, OA.SpellIDs.ambush)
 		end
 	},
-	PRIORITY_SINGLE[4], -- BR_on_cooldown
-	PRIORITY_SINGLE[5], -- BtE_finisher_6cp
-	PRIORITY_SINGLE[6], -- KS_finisher_6cp
-	PRIORITY_SINGLE[7], -- Dispatch_finisher
-	PRIORITY_SINGLE[8], -- PS_opportunity
-	PRIORITY_SINGLE[9], -- SS_default_builder
+}
+
+-- BLADE FLURRY RULE for AoE (single rule, fires when enemyCount >= 2 or aoeMode, at low CP)
+-- This is the ONLY single-target/AoE difference per the guide.
+local BLADE_FLURRY_RULE = {
+	name = "BF_aoe_low_cp",
+	spellID = OA.SpellIDs.bladeFlurry,
+	requiresSpell = nil,
+	when = function(S, A)
+		-- Check: 2+ enemies OR manual aoeMode override
+		if not S.enemyCount or S.enemyCount < 2 then
+			-- Fall back to aoeMode if available (from the config)
+			if not A or not A.aoeMode then
+				return false
+			end
+		end
+		-- Blade Flurry at LOW CP only (to gain full benefit of Deft Maneuvers)
+		return S.comboPoints <= LOW_CP and cdOf(S, "bladeFlurry").ready and canAfford(S, OA.SpellIDs.bladeFlurry)
+	end
 }
 
 -- Deep copy a state table for simulation (no side effects on real state)
@@ -340,15 +336,19 @@ function OA.Rotation.Predict(state, steps)
 	-- Deep copy state into virtual state (no side effects on real state)
 	local S = deepCopyState(state)
 
-	-- Determine priority list based on enemy count
-	local basePriorityList = PRIORITY_SINGLE
+	-- Build priority list: Ambush first (stealth opener), then numbered rules, then Blade Flurry if AoE
+	local priorityList = buildActivePriorityList(PRIORITY_SINGLE, state.knownSpells or {})
+
+	-- Check if we should use Blade Flurry (only if 2+ enemies or aoeMode)
+	local useBladeFlurry = false
 	if S.enemyCount and S.enemyCount >= 2 then
-		basePriorityList = PRIORITY_AOE
+		useBladeFlurry = true
 	end
 
-	-- Build active priority list (filter by known talents)
-	local priorityList = buildActivePriorityList(basePriorityList, state.knownSpells or {})
 	OA.Rotation.activeRuleCount = #priorityList
+	if useBladeFlurry then
+		OA.Rotation.activeRuleCount = OA.Rotation.activeRuleCount + 1
+	end
 
 	local result = {}
 	local maxEnergy = 100
@@ -367,11 +367,20 @@ function OA.Rotation.Predict(state, steps)
 		local poolAttempts = 0
 		local maxPoolAttempts = 3
 		repeat
-			for _, rule in ipairs(priorityList) do
-				if rule.when(S, OA.Assist) then
-					spellID = rule.spellID
-					reason = rule.name
-					break
+			-- Check Blade Flurry first if AoE conditions met
+			if useBladeFlurry and BLADE_FLURRY_RULE.when(S, state) then
+				spellID = BLADE_FLURRY_RULE.spellID
+				reason = BLADE_FLURRY_RULE.name
+			end
+
+			-- If Blade Flurry not available, check regular priority list
+			if not spellID then
+				for _, rule in ipairs(priorityList) do
+					if rule.when(S, state) then
+						spellID = rule.spellID
+						reason = rule.name
+						break
+					end
 				end
 			end
 
@@ -443,14 +452,15 @@ function OA.Rotation.Predict(state, steps)
 				cdOf(S, "keepItRolling").remaining = math.max(0, cdOf(S, "keepItRolling").remaining - cdr)
 			end
 
-			-- Clear Opportunity buff after Pistol Shot (P1-3: simulation must not assume reproc for free).
+			-- Clear Opportunity buff after Pistol Shot (simulation must not assume reproc for free).
 			-- Without this, multi-step predictions recommend consecutive Pistol Shots as if Opportunity resets instantly.
 			if spellID == OA.SpellIDs.pistolShot then
 				S.buffs.opportunity.up = false
+				S.buffs.opportunity.stacks = 0
 				S.buffs.opportunity.expires = 0
 			end
 
-			-- Clear stealth after Ambush (P0-1: Ambush breaks stealth on cast, so subsequent steps should not predict Ambush again).
+			-- Clear stealth after Ambush (Ambush breaks stealth on cast, so subsequent steps should not predict Ambush again).
 			-- Without this, the simulation predicts Ambush 4 times in a row, which is impossible in live play.
 			if spellID == OA.SpellIDs.ambush then
 				S.stealthed = false
