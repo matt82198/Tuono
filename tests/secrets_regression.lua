@@ -99,7 +99,24 @@ _G.C_Spell = {
     end
     return { startTime = 0, duration = 0, isEnabled = true, isActive = false }
   end,
-  GetSpellTexture = function() return 1 end,
+  GetSpellTexture = function(spellID)
+    -- The "Waiting for Energy" sentinel is identified by this icon.
+    if spellID == 1249752 then return 134377 end
+    return 1
+  end,
+  -- Bracketing surface. Both are flagged never-secret, which is the whole reason they
+  -- are usable in combat when UnitPower is not.
+  GetSpellPowerCost = function(spellID)
+    local cost = scenario.costOf and scenario.costOf(spellID) or nil
+    if not cost or cost == 0 then return {} end
+    return { { type = 3, cost = cost } }
+  end,
+  IsSpellUsable = function(spellID)
+    local cost = scenario.costOf and scenario.costOf(spellID) or nil
+    if not cost or cost == 0 then return true, false end
+    if scenario.energy >= cost then return true, false end
+    return false, true            -- unusable, specifically for want of power
+  end,
 }
 _G.C_SpellBook = { IsSpellKnown = function() return true end }
 _G.C_UnitAuras = {
@@ -167,6 +184,13 @@ end
 Tuono.db = Tuono.defaults or {}
 Tuono.State.inCombat = true
 
+-- Late-bound so the C_Spell stubs above can read the profile's real cost table, which
+-- only exists once the profile has registered.
+scenario.costOf = function(spellID)
+  local ab = Tuono.Rotation and Tuono.Rotation.ABILITIES and Tuono.Rotation.ABILITIES[spellID]
+  return ab and ab.cost or nil
+end
+
 -- Core.lua drives each stage through Tuono.safe (a pcall), so a throw inside one stage is
 -- swallowed and merely leaves that stage's state stale. Mirror that exactly: a test
 -- that let the error propagate would report a crash where production reports a FREEZE,
@@ -207,8 +231,14 @@ check("R2: secret energy yields a positive ESTIMATE, not a confident zero",
     .. " known=" .. tostring(Tuono.State.energyKnown)
     .. " source=" .. tostring(Tuono.State.energySource))
 
-check("R2: energy is labelled as an estimate, not as a measurement",
-  Tuono.State.energySource == "estimated" or Tuono.State.energySource == "stale",
+-- The point of this assertion is that a derived value is never passed off as a direct
+-- read. "bracketed" satisfies that just as well as "estimated" -- and is strictly
+-- better, being bounded by IsSpellUsable rather than extrapolated. What must NEVER
+-- appear here is "measured", which would claim we read the secret.
+check("R2: energy is labelled as derived, never as a direct measurement",
+  Tuono.State.energySource == "estimated"
+    or Tuono.State.energySource == "stale"
+    or Tuono.State.energySource == "bracketed",
   "energySource=" .. tostring(Tuono.State.energySource))
 
 local preds = Tuono.Rotation.Predict(Tuono.State, 4)
@@ -435,6 +465,78 @@ Tuono.Engine.Evaluate()
 check("drift sensor records agreement state without queueing it",
   Tuono.Engine.disagreeStreak ~= nil,
   "disagreeStreak=" .. tostring(Tuono.Engine.disagreeStreak))
+
+-- ===========================================================================
+-- "Waiting for Energy" sentinel must never be treated as a recommendation
+-- ===========================================================================
+scenario.assistSecretAvail = false
+scenario.assistNext = 1249752          -- Blizzard's pooling placeholder
+tick(0.1)
+check("sentinel is not stored as an assist pick",
+  Tuono.Assist.nextSpellID == nil,
+  "nextSpellID=" .. tostring(Tuono.Assist.nextSpellID))
+check("sentinel sets the waiting-for-resource flag",
+  Tuono.Assist.waitingForResource == true,
+  "waiting=" .. tostring(Tuono.Assist.waitingForResource))
+
+-- Detection must also work by icon, so a sibling sentinel Blizzard adds later is
+-- caught without an addon update.
+check("sentinel is detected by icon as well as by ID",
+  Tuono.Assist.IsWaitSentinel(1249752) == true, "icon path failed")
+
+scenario.assistNext = Tuono.SpellIDs.sinisterStrike
+tick(0.1)
+check("a real pick clears the waiting flag",
+  Tuono.Assist.waitingForResource == false
+    and Tuono.Assist.nextSpellID == Tuono.SpellIDs.sinisterStrike,
+  "waiting=" .. tostring(Tuono.Assist.waitingForResource))
+
+-- ===========================================================================
+-- Energy bracketing via IsSpellUsable  (the measurement, not the estimate)
+-- ===========================================================================
+-- Outlaw ladder: Blade Flurry 15, RtB/BtE 25, Dispatch 35, Pistol Shot 40, SS/KS 45.
+scenario.energySecret = true           -- UnitPower hidden, as in real Midnight combat
+scenario.energy = 42                   -- affords 40, cannot afford 45
+
+local lower, upper = Tuono.Energy.Bracket()
+check("bracket derives a lower bound from the costliest usable ability",
+  lower == 40, "lower=" .. tostring(lower))
+check("bracket derives an upper bound from the cheapest unaffordable ability",
+  upper == 45, "upper=" .. tostring(upper))
+
+-- Cold start: no direct read has EVER succeeded, so dead reckoning has no seed.
+-- Bracketing alone must be able to establish a usable value.
+Tuono.Energy.confidence = "unknown"
+Tuono.Energy.lastSyncAt = 0
+Tuono.Energy.value = 0
+Tuono.Energy.lastAdvanceAt = 0
+Tuono.Energy.Advance()
+check("bracketing cold-starts the model with no prior direct read",
+  Tuono.Energy.confidence == "bracketed" and Tuono.Energy.value >= 40,
+  "conf=" .. tostring(Tuono.Energy.confidence)
+    .. " value=" .. tostring(Tuono.Energy.value))
+
+-- Drift correction: force the estimate far above what the bracket permits.
+Tuono.Energy.value = 95
+Tuono.Energy.ApplyBracket()
+check("bracket clamps an over-estimate down below the upper bound",
+  Tuono.Energy.value < 45, "value=" .. tostring(Tuono.Energy.value))
+
+Tuono.Energy.value = 5
+Tuono.Energy.ApplyBracket()
+check("bracket clamps an under-estimate up to the lower bound",
+  Tuono.Energy.value >= 40, "value=" .. tostring(Tuono.Energy.value))
+
+check("a bracketed value is not reported as stale",
+  select(3, Tuono.Energy.Get()) == "bracketed",
+  "conf=" .. tostring(select(3, Tuono.Energy.Get())))
+
+-- Full energy: nothing is unaffordable, so there is no upper bound to infer.
+scenario.energy = 100
+local lo2, up2 = Tuono.Energy.Bracket()
+check("no upper bound when everything is affordable",
+  lo2 == 45 and up2 == nil,
+  "lower=" .. tostring(lo2) .. " upper=" .. tostring(up2))
 
 print("")
 print(string.format("SECRETS REGRESSION: %d passed, %d failed", results.passed, results.failed))

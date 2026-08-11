@@ -90,6 +90,36 @@ local function reportResources()
 		Tuono.print(string.format("  |cff88ccffshadow energy|r          %s  (confidence=%s, drift=%.1fs)",
 			usable and string.format("%.0f", val) or "unusable",
 			tostring(conf), Tuono.Energy.driftSeconds or 0))
+
+		-- THE CLAIM THIS COMMAND EXISTS TO TEST.
+		-- IsSpellUsable is reported never-secret, which is what makes energy bracketing
+		-- possible at all while UnitPower stays hidden. That is secondary-source
+		-- information, so verify it here rather than trusting it: if these read
+		-- SECRET in a keystone, the bracket is worthless and the model falls back to
+		-- pure dead reckoning.
+		if C_Spell and C_Spell.IsSpellUsable and Tuono.SpellIDs then
+			local probe = Tuono.SpellIDs.sinisterStrike
+			local ok, usableRet, insufficient = pcall(C_Spell.IsSpellUsable, probe)
+			if ok then
+				line("IsSpellUsable isUsable", usableRet)
+				line("IsSpellUsable noPower", insufficient)
+			else
+				Tuono.print("  IsSpellUsable |cffff5555THREW|r")
+			end
+		end
+		if C_Spell and C_Spell.GetSpellPowerCost and Tuono.SpellIDs then
+			local ok, costs = pcall(C_Spell.GetSpellPowerCost, Tuono.SpellIDs.sinisterStrike)
+			if ok and type(costs) == "table" and costs[1] then
+				line("GetSpellPowerCost cost", costs[1].cost)
+			else
+				Tuono.print("  GetSpellPowerCost: no data")
+			end
+		end
+
+		local lower, upper = Tuono.Energy.Bracket()
+		Tuono.print("  |cff88ccffenergy bracket|r         " ..
+			tostring(lower or "-") .. " <= energy < " .. tostring(upper or "max") ..
+			"   (corrections=" .. tostring(Tuono.Energy.corrections or 0) .. ")")
 	end
 end
 

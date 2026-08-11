@@ -100,6 +100,124 @@ function Tuono.Energy.RegenPerSecond()
 	return rate + COMBAT_POTENCY_AVG
 end
 
+-- ============================================================================
+-- ENERGY BRACKETING VIA IsSpellUsable
+-- ============================================================================
+-- The dead-reckoning above drifts, because Combat Potency is stochastic. This is the
+-- correction, and it is a MEASUREMENT rather than an estimate.
+--
+-- C_Spell.IsSpellUsable(spellID) -> isUsable, insufficientPower. It is flagged
+-- never-secret, so unlike UnitPower it still answers in combat. Costs come from
+-- C_Spell.GetSpellPowerCost, which is static data and also never secret.
+--
+-- Together they bracket the hidden value from both sides:
+--   costliest ability still usable        -> energy >= that cost   (lower bound)
+--   cheapest ability short on power       -> energy <  that cost   (upper bound)
+--
+-- Outlaw's cost ladder is 15 / 25 / 35 / 40 / 45, so this pins energy into a band
+-- every frame without ever reading the secret. The wider the ability set, the tighter
+-- the band.
+--
+-- ASYMMETRY IN WHAT WE TRUST:
+-- `isUsable == false` is NOT evidence of low energy -- a spell is also unusable when
+-- unlearned, out of range, or lacking a target. Only `insufficientPower == true` is
+-- specifically about resources, so only that sets the upper bound. Conversely
+-- `isUsable == true` does prove affordability, so it safely sets the lower bound.
+-- Cooldowns do not affect isUsable, so a spell on cooldown still reports honestly.
+-- ============================================================================
+
+local bracketCostCache = {}
+
+-- Energy cost for a spell, preferring the live API over our profile table so a talent
+-- that changes a cost does not silently invalidate the bracket.
+local function energyCostOf(spellID)
+	local cached = bracketCostCache[spellID]
+	if cached ~= nil then return cached end
+
+	local cost = nil
+	local energyType = (Enum and Enum.PowerType and Enum.PowerType.Energy) or 3
+	if C_Spell and C_Spell.GetSpellPowerCost then
+		local ok, costs = pcall(C_Spell.GetSpellPowerCost, spellID)
+		if ok and type(costs) == "table" then
+			for _, entry in ipairs(costs) do
+				if type(entry) == "table" and entry.type == energyType then
+					local c, known = Tuono.readNum(entry.cost)
+					if known and c and c > 0 then cost = c end
+				end
+			end
+		end
+	end
+	if cost == nil then
+		cost = abilityCost(spellID)
+		if cost == 0 then cost = nil end
+	end
+
+	bracketCostCache[spellID] = cost or false
+	return cost
+end
+
+-- Returns lower, upper (either may be nil when no ability constrains that side).
+function Tuono.Energy.Bracket()
+	if not (C_Spell and C_Spell.IsSpellUsable) then return nil, nil end
+	local profile = Tuono.Profiles and Tuono.Profiles.Active()
+	if not profile then return nil, nil end
+
+	local lower, upper = nil, nil
+
+	for _, spellID in pairs(profile.spells or {}) do
+		local cost = energyCostOf(spellID)
+		if cost then
+			local ok, usable, insufficient = pcall(C_Spell.IsSpellUsable, spellID)
+			if ok then
+				local isUsable = Tuono.readBool(usable)
+				local noPower = Tuono.readBool(insufficient)
+
+				if noPower == true then
+					if upper == nil or cost < upper then upper = cost end
+				elseif isUsable == true then
+					if lower == nil or cost > lower then lower = cost end
+				end
+			end
+		end
+	end
+
+	return lower, upper
+end
+
+-- Fold the bracket into the running estimate. Only ever CLAMPS -- it never invents a
+-- value, so a spec whose abilities do not span the range degrades to plain dead
+-- reckoning rather than to nonsense.
+function Tuono.Energy.ApplyBracket()
+	local lower, upper = Tuono.Energy.Bracket()
+	if lower == nil and upper == nil then return false end
+
+	-- A contradictory bracket (lower >= upper) means something upstream is lying --
+	-- a stale cost, a talent-swapped ability, an unlearned spell reporting usable.
+	-- Trust neither side rather than clamping to a value we know is wrong.
+	if lower and upper and lower >= upper then return false end
+
+	local before = E.value
+	if lower and E.value < lower then E.value = lower end
+	if upper and E.value >= upper then E.value = math.max(0, upper - 1) end
+
+	E.lastBracket = { lower = lower, upper = upper }
+
+	if E.value ~= before then
+		E.corrections = (E.corrections or 0) + 1
+	end
+	-- A bracketed value is measured evidence, not extrapolation, so the drift clock
+	-- resets: this is as good as a direct read for decision-making purposes.
+	E.driftSeconds = 0
+	E.lastSyncAt = GetTime()
+	if E.confidence == "unknown" then
+		-- Bracketing can COLD-START the model. Without a real read we would otherwise
+		-- never have a seed, and dead reckoning would stay disabled forever.
+		E.value = lower or math.max(0, (upper or 1) - 1)
+	end
+	E.confidence = "bracketed"
+	return true
+end
+
 -- Attempt a real read. Returns true when a hard measurement landed.
 function Tuono.Energy.TrySync()
 	local powerType = (Enum and Enum.PowerType and Enum.PowerType.Energy) or 3
@@ -131,23 +249,28 @@ function Tuono.Energy.Advance()
 		return
 	end
 
-	-- Never measured at all: we have nothing to integrate from.
-	if E.confidence == "unknown" and E.lastSyncAt == 0 then
-		return
+	-- Integrate forward FIRST, then correct. Order matters: bracketing clamps whatever
+	-- the model currently believes, so applying it before regen would immediately be
+	-- undone by this tick's regen and the correction would never stick.
+	local hadSeed = not (E.confidence == "unknown" and E.lastSyncAt == 0)
+
+	if hadSeed and last > 0 then
+		local dt = now - last
+		if dt > 5 then
+			-- A long gap (loading screen, /reload, afk) makes the estimate meaningless.
+			E.confidence = "unknown"
+		elseif dt > 0 then
+			E.value = math.min(E.max, E.value + Tuono.Energy.RegenPerSecond() * dt)
+			E.confidence = "estimated"
+			E.driftSeconds = now - E.lastSyncAt
+		end
 	end
 
-	if last <= 0 then return end
-	local dt = now - last
-	if dt <= 0 then return end
-	-- A long gap (loading screen, /reload, afk) makes the estimate meaningless.
-	if dt > 5 then
-		E.confidence = "unknown"
-		return
-	end
-
-	E.value = math.min(E.max, E.value + Tuono.Energy.RegenPerSecond() * dt)
-	E.confidence = "estimated"
-	E.driftSeconds = now - E.lastSyncAt
+	-- IsSpellUsable-derived bounds. This both corrects accumulated drift and can COLD
+	-- START the model when energy has never once been directly readable -- which is the
+	-- normal case in Midnight, where UnitPower is secret unconditionally. Without it,
+	-- a player who logs in mid-combat would have no seed and stay "unknown" forever.
+	pcall(Tuono.Energy.ApplyBracket)
 end
 
 -- Debit a cast from the model. Called from UNIT_SPELLCAST_SUCCEEDED.

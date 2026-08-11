@@ -12,6 +12,33 @@ Tuono.Assist = {
 
 local warned = false
 
+-- Known "Waiting for <resource>" placeholder spell IDs. Only Energy exists as of
+-- 12.1.0 (verified against the live SpellName DB2); the icon check below is what
+-- catches any sibling Blizzard adds later without an addon update.
+local WAIT_SENTINEL_IDS = { [1249752] = true }
+local WAIT_SENTINEL_ICON = 134377
+
+local sentinelIconCache = {}
+
+function Tuono.Assist.IsWaitSentinel(spellID)
+	if not spellID then return false end
+	if WAIT_SENTINEL_IDS[spellID] then return true end
+
+	local cached = sentinelIconCache[spellID]
+	if cached ~= nil then return cached end
+
+	local isSentinel = false
+	if C_Spell and C_Spell.GetSpellTexture then
+		local ok, tex = pcall(C_Spell.GetSpellTexture, spellID)
+		if ok then
+			local icon, known = Tuono.readNum(tex)
+			isSentinel = known and icon == WAIT_SENTINEL_ICON or false
+		end
+	end
+	sentinelIconCache[spellID] = isSentinel
+	return isSentinel
+end
+
 function Tuono.Assist.Update()
 	-- Clear deviation flag at start of update; it will be re-set by event handler if player casts ~= recommendation
 	Tuono.Assist.deviated = false
@@ -72,11 +99,35 @@ function Tuono.Assist.Update()
 	local okNext, rawNext = pcall(C_AssistedCombat.GetNextCastSpell, false)
 	if okNext then
 		local id, known = Tuono.readNum(rawNext)
-		Tuono.Assist.nextSpellID = (known and id and id > 0) and id or nil
+		id = (known and id and id > 0) and id or nil
+
+		-- "WAITING FOR ENERGY" IS NOT A RECOMMENDATION.
+		-- When the player cannot afford the next action, Blizzard's engine does not
+		-- return nil and does not return the unaffordable ability -- it returns a
+		-- SENTINEL pseudo-spell (1249752, "Waiting for Energy", icon 134377, flagged
+		-- DO_NOT_DISPLAY | DO_NOT_LOG). It is a UI placeholder, not something castable.
+		--
+		-- This is load-bearing in two directions:
+		--   * treating it as a real pick would compare a placeholder against our own
+		--     recommendation and score every pooling moment as a disagreement, which
+		--     poisons the drift signal precisely when the player is resource-starved
+		--   * its PRESENCE is itself information: the engine, which can see the energy
+		--     we cannot, is telling us the player is below the next action's cost
+		--
+		-- Detected by ID and by icon, because the sentinel set may grow: the icon is
+		-- locale-invariant and shared by any future "Waiting for <resource>" placeholder.
+		Tuono.Assist.waitingForResource = false
+		if id and Tuono.Assist.IsWaitSentinel(id) then
+			Tuono.Assist.waitingForResource = true
+			id = nil
+		end
+
+		Tuono.Assist.nextSpellID = id
 		Tuono.Assist.pickSecret = (rawNext ~= nil) and not known or false
 	else
 		Tuono.Assist.nextSpellID = nil
 		Tuono.Assist.pickSecret = false
+		Tuono.Assist.waitingForResource = false
 	end
 
 	-- Track when position 1 changes (diagnostic: lastChangeAt timestamp)
