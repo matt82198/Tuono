@@ -195,8 +195,21 @@ local function BootstrapBuffState()
 	-- Query-by-ID bootstrap. The live client exposes GetPlayerAuraBySpellID; some
 	-- builds/docs also carry GetAuraDataBySpellID. Prefer the former, accept either --
 	-- calling only one name is how a rename silently disables this whole tier.
-	local queryByID = C_UnitAuras and
-		(C_UnitAuras.GetPlayerAuraBySpellID or C_UnitAuras.GetAuraDataBySpellID)
+	-- THE TWO FUNCTIONS HAVE DIFFERENT ARITY AND MUST NOT BE CALLED INTERCHANGEABLY.
+	--   C_UnitAuras.GetPlayerAuraBySpellID(spellID)          -- ONE arg; player implied
+	--   C_UnitAuras.GetAuraDataBySpellID(unit, spellID)      -- two args
+	-- This used to pick either and call it with ("player", spellID). Against the
+	-- one-arg form that puts the STRING "player" in the spellID slot, so every lookup
+	-- returned nil, foundAny was never true, and buffs.degraded was pinned true for the
+	-- entire session -- which killed RtB stage, Adrenaline Rush and Opportunity
+	-- tracking, forced the legacy name scan, and held every prediction at "medium"
+	-- confidence. Verified signature: warcraft.wiki.gg API_C_UnitAuras.GetPlayerAuraBySpellID.
+	local queryByID = nil
+	if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
+		queryByID = function(spellID) return C_UnitAuras.GetPlayerAuraBySpellID(spellID) end
+	elseif C_UnitAuras and C_UnitAuras.GetAuraDataBySpellID then
+		queryByID = function(spellID) return C_UnitAuras.GetAuraDataBySpellID("player", spellID) end
+	end
 	if queryByID then
 		local trackedSpells = {
 			{ spellID = Tuono.SpellIDs.adrenalineRush, key = "adrenalineRush" },
@@ -207,7 +220,8 @@ local function BootstrapBuffState()
 
 		local foundAny = false
 		for _, item in ipairs(trackedSpells) do
-			local aura = queryByID("player", item.spellID)
+			local ok, aura = pcall(queryByID, item.spellID)
+			if not ok then aura = nil end
 			if aura then
 				foundAny = true
 				local instanceID = Tuono.num(aura.auraInstanceID, 0)

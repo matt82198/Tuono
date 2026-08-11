@@ -216,6 +216,17 @@ Tuono.RegisterEvent("PLAYER_LOGIN", function()
 
   -- Register update handler with base idle interval 0.5s; dynamic override to 0.1s in combat
   Tuono.RegisterUpdate(function()
+    -- CLASS/SPEC GATE, FIRST THING. Only Display.Render checked this, and it checked
+    -- AFTER RefreshFast, Assist.Update, a full 4-step Predict and Highlight.Update had
+    -- already run. Since ResolveForPlayer leaves the first-registered profile active
+    -- when nothing matches, a Mage was running an Outlaw simulation every tick -- and
+    -- Highlight then failed to find any of those spells on the bar, hitting the
+    -- uncached 120-slot sweep forever. Bail before doing any work.
+    if Tuono.Profiles and not Tuono.Profiles.MatchesPlayer() then
+      if Tuono.Display and Tuono.Display.anchor then Tuono.Display.anchor:Hide() end
+      return
+    end
+
     -- Each stage is protected INDIVIDUALLY. They used to share one pcall, so a single
     -- error in Display.Render aborted the closure and silently disabled everything
     -- after it -- that is how a bad SetText call turned into "the glow never works".

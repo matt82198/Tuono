@@ -408,7 +408,9 @@ function Tuono.Display.Render(result)
 
 	-- Track degraded state for visual indication
 	local isDegraded = Tuono.State and Tuono.State.buffs and Tuono.State.buffs.degraded or false
-	local assistAvailable = Tuono.Assist and Tuono.Assist.available ~= false or true
+	-- `A and B or true` parses as `(A and B) or true`, which is unconditionally true --
+	-- so the "assist unavailable" status text below was unreachable.
+	local assistAvailable = not (Tuono.Assist and Tuono.Assist.available == false)
 
 	-- Calculate visible entry count for dynamic strip resize
 	local visibleCount = 0

@@ -426,9 +426,18 @@ end
 _G.C_UnitAuras = {
   GetAuraDataByIndex = C_UnitAuras_GetAuraDataByIndex,
   GetAuraDataBySpellID = C_UnitAuras_GetAuraDataBySpellID,
-  -- Real client exposes GetPlayerAuraBySpellID; alias it so tests exercise the
-  -- name the addon prefers (a stub that models only our assumption proves nothing).
-  GetPlayerAuraBySpellID = C_UnitAuras_GetAuraDataBySpellID,
+  -- ARITY MATTERS. The real GetPlayerAuraBySpellID takes ONE argument (spellID);
+  -- GetAuraDataBySpellID takes two (unit, spellID). This stub used to alias the
+  -- one-arg name straight to the two-arg function, so the suite happily certified a
+  -- call site that passed ("player", spellID) to the one-arg form -- putting the
+  -- string "player" in the spellID slot and returning nil for every aura in the real
+  -- client. A stub that is more permissive than the client tests nothing.
+  GetPlayerAuraBySpellID = function(spellID)
+    if type(spellID) ~= "number" then
+      error("GetPlayerAuraBySpellID takes a spellID, got " .. tostring(spellID))
+    end
+    return C_UnitAuras_GetAuraDataBySpellID("player", spellID)
+  end,
   GetAuraDataByAuraInstanceID = C_UnitAuras_GetAuraDataByAuraInstanceID
 }
 

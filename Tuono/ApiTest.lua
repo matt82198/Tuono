@@ -627,8 +627,11 @@ local function procProbe()
       for _, aura in ipairs(auraList) do
         pcall(function()
           local auraData = nil
+          -- GetPlayerAuraBySpellID takes ONE arg (player is implied); only
+          -- GetAuraDataBySpellID takes a unit. Passing "player" to the former put a
+          -- string in the spellID slot and returned nil for every aura.
           if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
-            auraData = C_UnitAuras.GetPlayerAuraBySpellID("player", aura.spellID)
+            auraData = C_UnitAuras.GetPlayerAuraBySpellID(aura.spellID)
           end
           if not auraData and C_UnitAuras and C_UnitAuras.GetAuraDataBySpellID then
             auraData = C_UnitAuras.GetAuraDataBySpellID("player", aura.spellID)

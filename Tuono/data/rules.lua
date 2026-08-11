@@ -94,11 +94,19 @@ Tuono.Rules = {
     spellID = 13877,
     itemSlot = nil,
     when = function(S, A)
-      local db = Tuono.db or {}
-      local aoeMode = db.aoeMode
-      local aoeDetected = (A and A.aoeDetected) or false
+      -- aoeMode became a TRI-STATE STRING ("auto"/"on"/"off"). The old test was a bare
+      -- `return aoeMode or ...`, and every one of those strings is truthy -- including
+      -- "auto" and even "off" -- so this rule fired on literally every tick and pinned
+      -- Blade Flurry into slot 2 permanently, in single target, for every user.
+      -- Changing a stored value's TYPE means auditing every read site, not just the
+      -- writer and the migration.
+      local mode = (Tuono.db or {}).aoeMode
+      if mode == true then mode = "on" elseif mode == false then mode = "auto" end
+      if mode == "off" then return false end
+
       local enemyCountSignal = (S.enemyCount ~= nil and S.enemyCount >= 2) or false
-      return aoeMode or aoeDetected or enemyCountSignal
+      if mode == "on" then return true end
+      return enemyCountSignal or ((A and A.aoeDetected) or false)
     end,
     source = "CONTRACT.md (Mandatory rules: 'Blade Flurry PREFER when Tuono.db.aoeMode (manual AoE toggle — enemy counting is not legally readable)'); threat-table detector v0.3 (composite: manual aoeMode OR A.aoeDetected OR (S.enemyCount ~= nil and S.enemyCount >= 2), threshold 2); outlaw-rotation.md §1 (Blade Flurry & AoE Rotation: 'Maintain on 2+ targets')"
   },
@@ -189,7 +197,10 @@ Tuono.Rules = {
     spellID = nil,
     itemSlot = nil,
     when = function(S, A)
-      return S.buffs.rtb.expires < 10 and S.buffs.rtb.stage > 0
+      -- `expires` is an ABSOLUTE GetTime() timestamp, not a remaining duration. Compared
+      -- raw it is a 5-6 digit number, so `< 10` was never true and this rule was dead.
+      local remaining = (S.buffs.rtb.expires or 0) - GetTime()
+      return S.buffs.rtb.stage > 0 and (S.buffs.rtb.expires or 0) > 0 and remaining < 10
     end,
     source = "outlaw-rotation.md §1 (Roll the Bones Mechanics: 'Stage resets if the buff expires')"
   },
@@ -203,7 +214,10 @@ Tuono.Rules = {
     spellID = nil,
     itemSlot = nil,
     when = function(S, A)
-      return S.buffs.opportunity.up and S.buffs.opportunity.expires < 3
+      -- Same absolute-timestamp bug as the RtB rule above; this one was dead too.
+      local remaining = (S.buffs.opportunity.expires or 0) - GetTime()
+      return S.buffs.opportunity.up
+        and (S.buffs.opportunity.expires or 0) > 0 and remaining < 3
     end,
     source = "outlaw-rotation.md §1 (Opportunity & Audacity Procs: 'Both procs maintain high action-per-minute gameplay during Adrenaline Rush windows')"
   },

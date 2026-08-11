@@ -132,14 +132,23 @@ function Tuono.Engine.Evaluate()
         if rule.action == "PIN" then
           if not pinApplied and ruleSpellID then
             -- First PIN wins: move or insert at position 1
+            -- MOVE the existing entry, never rebuild it. Rebuilding dropped every field
+            -- the rule does not know about -- `isSequence`, so Step 3 dedup then
+            -- collapsed a legitimate "Sinister Strike x4" back into one icon, and
+            -- `confidence`, so Display defaulted it to "high" and a pooling pick
+            -- rendered at full alpha as though it were castable now. Three separately
+            -- documented fixes were being silently undone here.
             local existingPos = queueSet[ruleSpellID]
+            local pinEntry
             if existingPos then
-              -- Remove from current position
-              table.remove(resultQueue, existingPos)
-              rebuildQueueSet()
+              pinEntry = table.remove(resultQueue, existingPos)
+              pinEntry.source = rule.name
+              if rule.kind then pinEntry.kind = rule.kind end
+              if rule.itemSlot then pinEntry.itemSlot = rule.itemSlot end
+            else
+              pinEntry = { spellID = ruleSpellID, source = rule.name,
+                           kind = rule.kind or "rotation", itemSlot = rule.itemSlot }
             end
-            -- Insert at position 1
-            local pinEntry = { spellID = ruleSpellID, source = rule.name, kind = rule.kind or "rotation", itemSlot = rule.itemSlot }
             table.insert(resultQueue, 1, pinEntry)
             rebuildQueueSet()
             pinApplied = true
@@ -149,9 +158,13 @@ function Tuono.Engine.Evaluate()
           if ruleSpellID then
             local pos = queueSet[ruleSpellID]
             if pos and pos > 1 then
-              -- Move one slot forward (toward position 1)
-              table.remove(resultQueue, pos)
-              table.insert(resultQueue, pos - 1, { spellID = ruleSpellID, source = rule.name, kind = rule.kind or "rotation", itemSlot = rule.itemSlot })
+              -- Move the existing entry forward; see the PIN branch above for why
+              -- rebuilding it here silently destroyed isSequence and confidence.
+              local moved = table.remove(resultQueue, pos)
+              moved.source = rule.name
+              if rule.kind then moved.kind = rule.kind end
+              if rule.itemSlot then moved.itemSlot = rule.itemSlot end
+              table.insert(resultQueue, pos - 1, moved)
               rebuildQueueSet()
             elseif not pos then
               -- Not in queue: insert at position 2 (if room)

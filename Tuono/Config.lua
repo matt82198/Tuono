@@ -76,8 +76,14 @@ local function HandleToggle(arg)
 end
 
 local function HandleAoe()
-	Tuono.db.aoeMode = not Tuono.db.aoeMode
-	local state = Tuono.db.aoeMode and "ON" or "OFF"
+	-- Cycle the tri-state rather than negating it. `not "auto"` is false, which
+	-- ResolveMode maps back to "auto" -- so the old toggle flipped between auto and on
+	-- and could never reach off.
+	local order = { auto = "on", on = "off", off = "auto" }
+	local mode = Tuono.db.aoeMode
+	if mode == true then mode = "on" elseif mode == false then mode = "auto" end
+	Tuono.db.aoeMode = order[mode] or "auto"
+	local state = Tuono.db.aoeMode
 	Tuono.print("AoE mode " .. state)
 end
 
@@ -107,7 +113,8 @@ local function HandleStatus()
 	Tuono.print("Out-of-combat: " .. (Tuono.db.show.ooc and "ON" or "OFF"))
 	Tuono.print("Scale: " .. (Tuono.db.display.scale or 1))
 	Tuono.print("Icon count: " .. (Tuono.db.display.iconCount or 4))
-	Tuono.print("AoE mode: " .. (Tuono.db.aoeMode and "ON" or "OFF"))
+	-- Print the mode, not a truthiness test: "off" is a truthy string and reported "ON".
+	Tuono.print("AoE mode: " .. tostring(Tuono.db.aoeMode))
 	Tuono.print("Highlight: " .. (Tuono.db.highlight.enabled and "ON" or "OFF"))
 	if Tuono.db.highlight.enabled then
 		Tuono.print("  Combat-only: " .. (Tuono.db.highlight.combatOnly and "ON" or "OFF"))

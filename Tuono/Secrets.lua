@@ -184,9 +184,15 @@ local function reportAuras()
 	local api = C_UnitAuras
 	if not api then Tuono.print("  C_UnitAuras absent") return end
 
-	local byID = api.GetPlayerAuraBySpellID or api.GetAuraDataBySpellID
+	-- Different arity; see StateTracker's BootstrapBuffState for the full note.
+	local byID = nil
+	if api.GetPlayerAuraBySpellID then
+		byID = function(id) return api.GetPlayerAuraBySpellID(id) end
+	elseif api.GetAuraDataBySpellID then
+		byID = function(id) return api.GetAuraDataBySpellID("player", id) end
+	end
 	if byID and Tuono.SpellIDs then
-		local ok, aura = pcall(byID, "player", Tuono.SpellIDs.rollTheBones)
+		local ok, aura = pcall(byID, Tuono.SpellIDs.rollTheBones)
 		if not ok then
 			Tuono.print("  GetPlayerAuraBySpellID(RtB) |cffff5555THREW|r (aura access restricted)")
 		elseif aura == nil then

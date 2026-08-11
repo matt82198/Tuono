@@ -326,11 +326,19 @@ test("aoe mode toggle via handler", function()
 
   local HandleAoe = Tuono.slashCommands and Tuono.slashCommands.aoe and Tuono.slashCommands.aoe.fn
   assert_true(HandleAoe ~= nil, "aoe handler exists")
+  -- aoeMode is a tri-state cycle now, not a boolean toggle. The old assertions used
+  -- truthiness, which cannot distinguish "off" (a truthy string) from "on" -- the same
+  -- confusion that made /tuono status report OFF as "ON" and left the handler unable
+  -- to ever reach "off".
+  Tuono.db.aoeMode = "auto"
   HandleAoe()
-  assert_true(Tuono.db.aoeMode, "aoe mode toggled true via handler")
+  assert_eq(Tuono.db.aoeMode, "on", "auto -> on")
 
   HandleAoe()
-  assert_false(Tuono.db.aoeMode, "aoe mode toggled false via handler")
+  assert_eq(Tuono.db.aoeMode, "off", "on -> off")
+
+  HandleAoe()
+  assert_eq(Tuono.db.aoeMode, "auto", "off -> auto (full cycle)")
 end)
 
 -- Test 6: IntelligenceLayer integration
@@ -2218,7 +2226,7 @@ test("proc probe: query-by-ID returns data when aura active", function()
 
   local auraData = nil
   if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
-    auraData = C_UnitAuras.GetPlayerAuraBySpellID("player", 195627)
+    auraData = C_UnitAuras.GetPlayerAuraBySpellID(195627)   -- ONE arg: player is implied
   end
   if not auraData and C_UnitAuras and C_UnitAuras.GetAuraDataBySpellID then
     auraData = C_UnitAuras.GetAuraDataBySpellID("player", 195627)
@@ -2282,7 +2290,7 @@ test("proc probe: verdict=DELTA-ONLY when query fails but delta events tracked",
   -- Simulate query failing
   local auraData = nil
   if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
-    auraData = C_UnitAuras.GetPlayerAuraBySpellID("player", 999999)  -- Non-existent aura
+    auraData = C_UnitAuras.GetPlayerAuraBySpellID(999999)  -- Non-existent aura
   end
 
   assert_false(auraData ~= nil, "query-by-ID returns nil for non-existent aura")
