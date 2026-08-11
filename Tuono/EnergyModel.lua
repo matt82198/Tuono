@@ -63,16 +63,59 @@ local COMBAT_POTENCY_AVG = 2.5
 local AR_DURATION = 20
 local MAX_DRIFT_BEFORE_LOW_CONFIDENCE = 8
 
+-- ============================================================================
+-- HASTE IS CONDITIONALLY SECRET AS OF 12.0.5
+-- ============================================================================
+-- GetHaste carries SecretWhenUnitStatsRestricted -- it was readable at Midnight launch
+-- and was locked down in 12.0.5, so anything written against early-Midnight behaviour
+-- is now silently degraded.
+--
+-- The old code fell back to a multiplier of 1, i.e. "this character has 0% haste".
+-- That is the same fail-silent mistake as reading unreadable energy as zero: it is not
+-- a neutral default, it is a specific and wrong claim, and it made the regen model
+-- systematically underestimate for every geared character.
+--
+-- Haste is a GEAR stat, not combat state. It does not meaningfully change mid-pull
+-- (procs aside), so the last value read OUT of combat is a far better estimate than
+-- zero. We cache it and keep using it, and report which source we are on.
+E.lastKnownHaste = 0
+E.hasteSource = "unread"
+
+-- Runtime authority beats a hardcoded assumption -- Blizzard has already moved this
+-- once mid-expansion, so ask rather than assume.
+function Tuono.Energy.StatsAreSecret()
+	if _G.C_Secrets and _G.C_Secrets.ShouldUnitStatsBeSecret then
+		local ok, res = pcall(_G.C_Secrets.ShouldUnitStatsBeSecret)
+		if ok then
+			local b, known = Tuono.readBool(res)
+			if known then return b end
+		end
+	end
+	return nil   -- cannot tell
+end
+
 local function readHasteMultiplier()
 	if _G.GetHaste then
 		local ok, haste = pcall(_G.GetHaste)
 		if ok then
 			local h, known = Tuono.readNum(haste)
-			if known and h then return 1 + (h / 100) end
+			if known and h and h >= 0 then
+				E.lastKnownHaste = h
+				E.hasteSource = "measured"
+				return 1 + (h / 100)
+			end
 		end
 	end
-	return 1
+
+	-- Unreadable. Carry the last real reading rather than asserting zero.
+	E.hasteSource = (E.lastKnownHaste > 0) and "cached" or "unknown"
+	return 1 + (E.lastKnownHaste / 100)
 end
+
+-- Out of combat is when stats are readable, so refresh the cache at every boundary.
+Tuono.RegisterEvent("PLAYER_REGEN_ENABLED", function() readHasteMultiplier() end)
+Tuono.RegisterEvent("PLAYER_EQUIPMENT_CHANGED", function() readHasteMultiplier() end)
+Tuono.RegisterEvent("PLAYER_ENTERING_WORLD", function() readHasteMultiplier() end)
 
 local function abilityCost(spellID)
 	local abilities = Tuono.Rotation and Tuono.Rotation.ABILITIES

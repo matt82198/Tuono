@@ -2,12 +2,8 @@ local ADDON_NAME, Tuono = ...
 
 Tuono.Highlight = Tuono.Highlight or {}
 
--- Glow mechanisms probed at runtime
-local glowMechanism = nil  -- will be set to "blizzard", "api", or "self-drawn"
-local glowFunctions = {}   -- cached glow functions
-
--- Self-drawn glow overlay: map of buttonFrame -> glowTexture for fallback
-local selfDrawnGlows = {}
+-- Retained only for /tuono debug output; there is one mechanism now (see below).
+local glowMechanism = "own-frame overlay"
 
 -- Cache: last highlighted button to avoid redundant work
 local lastHighlightedButton = nil
@@ -26,36 +22,13 @@ local function MarkBarDirty()
 end
 
 -- Probe for available glow mechanisms (run once at startup)
-local function ProbeGlowMechanisms()
-	-- Try classic Blizzard helpers first
-	if _G.ActionButton_ShowOverlayGlow and _G.ActionButton_HideOverlayGlow then
-		glowMechanism = "blizzard"
-		glowFunctions.show = _G.ActionButton_ShowOverlayGlow
-		glowFunctions.hide = _G.ActionButton_HideOverlayGlow
-		return
+-- Pre-create the overlay pool. Called at login so nothing allocates during a fight.
+-- (Allocating our OWN frames in combat would be safe -- the taint risk was only ever
+-- writing to Blizzard's secure buttons -- but pooling keeps the combat tick clean.)
+local function PrewarmGlowPool()
+	for _ = 1, GLOW_POOL_SIZE do
+		table.insert(glowPool, makeGlow())
 	end
-
-	-- Try C_ActionBar or other discovered APIs at runtime
-	if _G.C_ActionBar then
-		-- Enumerate C_ActionBar table for glow-related functions
-		for k, v in pairs(_G.C_ActionBar) do
-			if type(k) == "string" and string.match(k:lower(), "glow") and type(v) == "function" then
-				-- Heuristic: if we find a glow function, prefer show/hide pair
-				if string.match(k:lower(), "show") then
-					glowFunctions.show = v
-				elseif string.match(k:lower(), "hide") then
-					glowFunctions.hide = v
-				end
-			end
-		end
-		if glowFunctions.show and glowFunctions.hide then
-			glowMechanism = "discovered API"
-			return
-		end
-	end
-
-	-- Fall back to self-drawn glow
-	glowMechanism = "self-drawn"
 end
 
 -- Bonus-bar-aware main-bar slot math (see Display.lua's copy for the full derivation
@@ -181,78 +154,95 @@ local function GetButtonFrame(frameName)
 	return nil
 end
 
--- Create or retrieve a self-drawn glow overlay for a button frame
-local function GetOrCreateSelfDrawnGlow(buttonFrame)
-	if not buttonFrame then return nil end
+-- ============================================================================
+-- GLOW OVERLAYS  --  WE NEVER TOUCH THE SECURE BUTTON
+-- ============================================================================
+-- The previous implementation called buttonFrame:CreateTexture() on Blizzard's
+-- ActionButtons -- SecureActionButtonTemplate derivatives -- lazily, from the 0.1s
+-- combat tick. Creating a region on a secure frame from addon-tainted execution taints
+-- that frame's region list, and the taint surfaces later when Blizzard's own code
+-- handles a click on it. That is the "Interface action failed because of an AddOn"
+-- report. It was also LAZY, so the first creation landed mid-fight, exactly when a
+-- stealth bar swap moved the glow onto an undecorated button.
+--
+-- Now: the overlay is OUR frame, parented to UIParent, merely ANCHORED to the button.
+-- SetPoint against a secure frame reads its position; it writes nothing to it. Frames
+-- are pooled and pre-created at login so no allocation happens in combat.
+--
+-- The Blizzard-helper and "discovered API" paths are gone too. ActionButton_ShowOverlayGlow
+-- was removed in the 10.1 spell-alert refactor, so it was dead; and if it did exist it
+-- would attach a Blizzard alert frame to the secure button -- the same taint class via
+-- someone else's code. The C_ActionBar name-sniffing loop was worse than useless: it
+-- would happily bind show/hide to two unrelated functions with mismatched signatures
+-- and then call them with a frame.
+local GLOW_POOL_SIZE = 4
+local glowPool = {}
+local glowByButton = {}
 
-	if selfDrawnGlows[buttonFrame] then
-		return selfDrawnGlows[buttonFrame]
+local function makeGlow()
+	local f = CreateFrame("Frame", nil, UIParent)
+	-- Frame API surface varies across builds and harnesses; none of these are worth
+	-- taking the whole highlight module down for.
+	if f.SetFrameStrata then pcall(f.SetFrameStrata, f, "HIGH") end
+	if f.Hide then f:Hide() end
+	if f.CreateTexture then
+		local tex = f:CreateTexture(nil, "OVERLAY")
+		if tex and tex.SetAllPoints then pcall(tex.SetAllPoints, tex, f) end
+		if tex and tex.SetColorTexture then pcall(tex.SetColorTexture, tex, 0, 1, 0.35) end
+		f.tex = tex
 	end
-
-	-- Create a new glow overlay: bright border texture parented to the button
-	local glowTexture = buttonFrame:CreateTexture(nil, "OVERLAY")
-	glowTexture:SetAllPoints(buttonFrame)
-	glowTexture:SetColorTexture(0, 1, 1, 0.3)  -- cyan, semi-transparent
-	glowTexture:Hide()
-	selfDrawnGlows[buttonFrame] = glowTexture
-
-	return glowTexture
+	return f
 end
 
--- Show glow on a button frame
+local function acquireGlow()
+	return table.remove(glowPool) or makeGlow()
+end
+
 local function ShowGlow(buttonFrame)
 	if not buttonFrame then return false end
+	if glowByButton[buttonFrame] then return true end
 
-	-- Try Blizzard mechanism
-	if glowMechanism == "blizzard" and glowFunctions.show then
-		Tuono.safe(glowFunctions.show, buttonFrame)
-		return true
+	local f = acquireGlow()
+	-- Anchoring to the secure frame is a READ of it. Nothing is written to the button.
+	local ok = pcall(function()
+		f:ClearAllPoints()
+		f:SetAllPoints(buttonFrame)
+	end)
+	if not ok then
+		table.insert(glowPool, f)
+		return false
 	end
 
-	-- Try discovered API
-	if glowMechanism == "discovered API" and glowFunctions.show then
-		Tuono.safe(glowFunctions.show, buttonFrame)
-		return true
-	end
-
-	-- Self-drawn fallback
-	if glowMechanism == "self-drawn" then
-		local glowTexture = GetOrCreateSelfDrawnGlow(buttonFrame)
-		if glowTexture then
-			glowTexture:Show()
-			return true
+	-- Parented to UIParent, so the overlay does NOT inherit the button's visibility.
+	-- Without this a hidden bar (vehicle UI, bar fade, page swap) would leave a glow
+	-- floating over nothing.
+	--
+	-- Only an EXPLICIT false counts as hidden. `not buttonFrame:IsVisible()` also
+	-- catches nil, which means "this build/harness does not answer", and refusing to
+	-- glow on an unanswered question is the same unknown-as-negative mistake this
+	-- codebase keeps making.
+	if buttonFrame.IsVisible then
+		local okVis, vis = pcall(buttonFrame.IsVisible, buttonFrame)
+		if okVis and vis == false then
+			table.insert(glowPool, f)
+			return false
 		end
 	end
 
-	return false
+	f:Show()
+	glowByButton[buttonFrame] = f
+	return true
 end
 
--- Hide glow on a button frame
 local function HideGlow(buttonFrame)
 	if not buttonFrame then return false end
-
-	-- Try Blizzard mechanism
-	if glowMechanism == "blizzard" and glowFunctions.hide then
-		Tuono.safe(glowFunctions.hide, buttonFrame)
-		return true
-	end
-
-	-- Try discovered API
-	if glowMechanism == "discovered API" and glowFunctions.hide then
-		Tuono.safe(glowFunctions.hide, buttonFrame)
-		return true
-	end
-
-	-- Self-drawn fallback
-	if glowMechanism == "self-drawn" then
-		local glowTexture = selfDrawnGlows[buttonFrame]
-		if glowTexture then
-			glowTexture:Hide()
-			return true
-		end
-	end
-
-	return false
+	local f = glowByButton[buttonFrame]
+	if not f then return false end
+	f:Hide()
+	f:ClearAllPoints()
+	glowByButton[buttonFrame] = nil
+	table.insert(glowPool, f)
+	return true
 end
 
 -- Main highlight update: called after Display.Render
@@ -367,7 +357,13 @@ end
 
 -- Initialization: probe glow mechanisms and register events
 function Tuono.Highlight.Init()
-	ProbeGlowMechanisms()
+	-- Init is called once from Core, but guard anyway: it used to have no guard while
+	-- Core's comment claimed it was idempotent, so a second call double-registered
+	-- eight event handlers and the slash command.
+	if Tuono.Highlight._inited then return end
+	Tuono.Highlight._inited = true
+
+	PrewarmGlowPool()
 	RegisterHighlightEvents()
 	Tuono.RegisterSlash("glow", HandleGlow, "Toggle action bar glow highlighting (or 'combat' for combat-only mode).")
 end

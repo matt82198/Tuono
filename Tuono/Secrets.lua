@@ -128,6 +128,14 @@ local function reportResources()
 		Tuono.print("  |cff88ccffsentinel anchors|r       " ..
 			tostring(Tuono.Energy.anchors or 0) ..
 			"   waiting-now=" .. tostring(Tuono.Assist and Tuono.Assist.waitingForResource))
+		-- Haste went secret in 12.0.5, so show which source the regen model is on.
+		-- "cached" means we are extrapolating from the last out-of-combat reading.
+		local statsSecret = Tuono.Energy.StatsAreSecret()
+		Tuono.print("  |cff88ccffhaste|r  source=" .. tostring(Tuono.Energy.hasteSource) ..
+			"  lastKnown=" .. string.format("%.1f%%", Tuono.Energy.lastKnownHaste or 0) ..
+			"  statsSecret=" .. (statsSecret == nil and "?" or tostring(statsSecret)))
+		if _G.GetHaste then line("GetHaste()", _G.GetHaste()) end
+
 		Tuono.print(string.format("  |cff88ccffregen|r  modelled=%.1f/s  measured=%s  (%d samples)",
 			Tuono.Energy.RegenPerSecond(),
 			Tuono.Energy.measuredRegen and string.format("%.1f/s", Tuono.Energy.measuredRegen)

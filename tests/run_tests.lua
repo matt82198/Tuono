@@ -3992,10 +3992,50 @@ end)
 -- Helper: create a minimal stub button frame (GetButtonFrame requires .GetName) and
 -- register it in _G under the given name, matching the pattern already used by the
 -- pre-existing "highlight: stub action button frames in globals" test.
+-- TAINT GUARD. The glow used to call buttonFrame:CreateTexture() on Blizzard's secure
+-- ActionButtons, lazily, from the 0.1s combat tick -- which taints the button's region
+-- list and surfaces later as "Interface action failed because of an AddOn" when the
+-- player clicks it. The overlay is now our own UIParent-parented frame merely anchored
+-- to the button, so nothing is ever written to the secure frame.
+--
+-- This test fails the moment anyone reintroduces a write. Anchoring (SetAllPoints
+-- against the button) is a read and stays allowed.
+test("taint: glow never creates regions on the secure action button", function()
+  local touched = {}
+  local btn = {
+    name = "ActionButton1",
+    GetName = function(self) return self.name end,
+    IsVisible = function() return true end,
+    CreateTexture = function() touched[#touched + 1] = "CreateTexture" return nil end,
+    CreateFontString = function() touched[#touched + 1] = "CreateFontString" return nil end,
+    CreateAnimationGroup = function() touched[#touched + 1] = "CreateAnimationGroup" return nil end,
+    SetScript = function() touched[#touched + 1] = "SetScript" end,
+  }
+  _G.ActionButton1 = btn
+
+  Tuono.Highlight.Init()
+  Tuono.db.highlight.enabled = true
+  stub.SetActionSlot(1, "spell", Tuono.SpellIDs.sinisterStrike)
+
+  Tuono.Highlight.Update({ queue = { { spellID = Tuono.SpellIDs.sinisterStrike } } })
+  Tuono.Highlight.Update({ queue = { { spellID = Tuono.SpellIDs.dispatch } } })
+
+  assert_eq(#touched, 0,
+    "wrote to the secure button: " .. table.concat(touched, ", "))
+end)
+
 local function makeButtonFrameStub(name)
   local btn = {
     name = name,
     GetName = function(self) return self.name end,
+    -- A real ActionButton on screen IS visible. The glow now skips buttons that report
+    -- hidden (so a faded or vehicle-swapped bar does not leave an overlay floating over
+    -- nothing), so a stub that reports hidden models a bar nobody can see and would
+    -- suppress every glow in the suite.
+    IsVisible = function() return true end,
+    IsShown = function() return true end,
+    -- Kept only so the addon can still ANCHOR to it. Nothing writes to a real secure
+    -- button any more -- creating regions on one from a combat tick is what tainted it.
     CreateTexture = function(self, texName, layer)
       local tex = { visible = false }
       function tex:SetAllPoints() end
