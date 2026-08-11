@@ -2,6 +2,41 @@ local ADDON_NAME, Tuono = ...
 
 Tuono.Engine = Tuono.Engine or {}
 
+-- ==========================================================================
+-- STALL DETECTION
+-- ==========================================================================
+-- The documented trust-killer for assisted-combat addons: the recommender gets stuck on
+-- a suggestion the player is deliberately ignoring (Blizzard's own engine is reported to
+-- stall on AoE abilities against a single target and refuse to advance until you obey).
+-- A helper that keeps insisting is worse than one that admits doubt.
+--
+-- Both halves are exactly knowable: what we recommended, and what the player actually
+-- cast. If they keep diverging, the panel should visibly lose confidence in itself
+-- rather than keep shouting. It does not warn and pops nothing -- it fades, which is
+-- the one honest signal that costs no attention.
+Tuono.Engine.stallCount = 0
+local STALL_THRESHOLD = 3
+
+Tuono.RegisterEvent("UNIT_SPELLCAST_SUCCEEDED", function(event, unit, castGUID, spellID)
+  if unit ~= "player" then return end
+  local id = Tuono.readNum(spellID)
+  if not id then return end
+  local recommended = Tuono.Engine.lastPos1
+  if recommended and id ~= recommended then
+    Tuono.Engine.stallCount = (Tuono.Engine.stallCount or 0) + 1
+  else
+    Tuono.Engine.stallCount = 0
+  end
+end)
+
+Tuono.RegisterEvent("PLAYER_REGEN_ENABLED", function()
+  Tuono.Engine.stallCount = 0
+end)
+
+function Tuono.Engine.IsStalled()
+  return (Tuono.Engine.stallCount or 0) >= STALL_THRESHOLD
+end
+
 -- Reusable result tables (allocation-light per contract)
 local resultQueue = {}
 local resultAdvisories = {}
@@ -332,6 +367,16 @@ function Tuono.Engine.Evaluate()
   wipeTable(resultQueue)
   for i, entry in ipairs(filteredQueue) do
     resultQueue[i] = entry
+  end
+
+  -- Remember what we are about to recommend, so the stall detector can compare the
+  -- player's next cast against it. Reset the counter when the recommendation CHANGES:
+  -- a stall is "same advice, repeatedly ignored", not "advice that happens to differ
+  -- from what you pressed once".
+  local newPos1 = resultQueue[1] and resultQueue[1].spellID or nil
+  if newPos1 ~= Tuono.Engine.lastPos1 then
+    Tuono.Engine.stallCount = 0
+    Tuono.Engine.lastPos1 = newPos1
   end
 
   -- Step 5: Truncate queue to 8

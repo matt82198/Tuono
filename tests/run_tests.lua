@@ -2460,11 +2460,44 @@ test("rotation simulator: confidence high for steps 1-3", function()
   Tuono.State.cooldowns.adrenalineRush.ready = true
   Tuono.State.cooldowns.bladeRush.ready = true
 
+  Tuono.State.comboPointsKnown = true
+  Tuono.State.energySource = "measured"
+
   local pred = Tuono.Rotation.Predict(Tuono.State, 4)
 
+  -- Confidence is now PROVENANCE-based, not index-based: it describes what the firing
+  -- rule depended on, so a step derived from exactly-readable inputs is "certain"
+  -- regardless of where it sits in the queue.
   for i = 1, math.min(3, #pred) do
-    assert_eq(pred[i].confidence, "high", "step " .. i .. " has high confidence")
+    assert_true(pred[i].confidence == "certain" or pred[i].confidence == "bounded",
+      "step " .. i .. " rated from readable inputs, got " .. tostring(pred[i].confidence))
   end
+end)
+
+-- The point of provenance rating: an UNREADABLE input degrades the step that depends on
+-- it, wherever it lands. Index has nothing to do with it.
+test("rotation simulator: a step gated on hidden aura state is rated unknown", function()
+  Tuono.State.inCombat = true
+  stub.state.stealthed = false
+  Tuono.State.stealthed = false
+  Tuono.State.energy = 100
+  Tuono.State.energySource = "measured"
+  Tuono.State.comboPoints = 0
+  Tuono.State.comboPointsKnown = true
+  -- Roll the Bones stage is exactly the input Midnight hides in combat.
+  Tuono.State.buffs.rtb.stage = 0
+  Tuono.State.buffs.rtb.stageKnown = false
+
+  local rule = {
+    spellKey = "rollTheBones",
+    conditions = { { type = "rtbStage", op = "<", value = 2 } },
+  }
+  assert_eq(Tuono.Rotation.RateRule(rule, Tuono.State, Tuono.SpellIDs.rollTheBones),
+    "unknown", "rtbStage rule is unknown while the stage is unreadable")
+
+  Tuono.State.buffs.rtb.stageKnown = true
+  assert_true(Tuono.Rotation.RateRule(rule, Tuono.State, Tuono.SpellIDs.rollTheBones) ~= "unknown",
+    "same rule is rated better once the stage is readable")
 end)
 
 -- Test: Confidence is low for step 4+
@@ -2482,10 +2515,25 @@ test("rotation simulator: confidence low for step 4+", function()
 
   local pred = Tuono.Rotation.Predict(Tuono.State, 8)
 
-  if #pred >= 4 then
-    for i = 4, #pred do
-      assert_eq(pred[i].confidence, "low", "step " .. i .. " has low confidence")
+  -- INVERTED FROM "step 4+ is low". Index-based decay was arbitrary: a step derived
+  -- entirely from combo points and cooldown readiness is not less true for sitting in
+  -- slot 4. What DOES distinguish later steps is that they assume you follow the
+  -- sequence -- reported separately as assumesPriorSteps and encoded by icon size, not
+  -- by fading, because it is a conditional rather than missing knowledge.
+  Tuono.State.comboPointsKnown = true
+  Tuono.State.energySource = "measured"
+  local pred2 = Tuono.Rotation.Predict(Tuono.State, 8)
+
+  if #pred2 >= 4 then
+    for i = 4, #pred2 do
+      assert_true(pred2[i].confidence ~= "low",
+        "step " .. i .. " is rated by provenance, not by index, got "
+          .. tostring(pred2[i].confidence))
+      assert_true(pred2[i].assumesPriorSteps == true,
+        "step " .. i .. " is flagged as conditional on the preceding steps")
     end
+    assert_true(pred2[1].assumesPriorSteps == false,
+      "step 1 assumes nothing prior")
   end
 end)
 

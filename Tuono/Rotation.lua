@@ -210,6 +210,93 @@ local function buildActivePriorityList(priorityList, knownSpells, spells)
 	return active
 end
 
+-- ============================================================================
+-- PROVENANCE-BASED CONFIDENCE
+-- ============================================================================
+-- Confidence used to be assigned by INDEX -- `step >= 4 -> low` -- which is arbitrary
+-- and has no relationship to whether we actually knew anything. A step derived entirely
+-- from combo points and cooldown readiness (both exactly readable) is not less true
+-- because it sits in slot 4; a step gated on Roll the Bones stage is a guess even in
+-- slot 1.
+--
+-- So rate each step by WHAT THE FIRING RULE DEPENDED ON, and take the weakest input.
+-- This is the VSUP principle applied properly: bind visual resolution to uncertainty,
+-- not to horizon. The two only coincide for addons whose sole input is Blizzard's
+-- next-cast scalar; ours has real state behind it, of varying quality.
+--
+--   certain  -- every input exactly readable (combo points, cooldown ready, stealth,
+--               enemy count). Render solid, whatever the slot.
+--   bounded  -- depends on energy, which we bracket rather than read. Real bounds, but
+--               a threshold near the bracket edge is a coin flip.
+--   unknown  -- depends on an aura or RtB stage that is hidden in combat. Say so.
+--
+-- Depth is deliberately NOT folded in here. Later steps do assume you follow the
+-- sequence, but that is a conditional, not missing knowledge, and the display already
+-- encodes it by drawing slot 1 larger.
+local CONF_RANK = { certain = 3, bounded = 2, unknown = 1 }
+
+local function weakest(a, b)
+	if (CONF_RANK[b] or 1) < (CONF_RANK[a] or 1) then return b end
+	return a
+end
+
+local function inputConfidence(cond, S, ownKey)
+	local t = cond and cond.type
+	if t == nil or t == "always" or t == "stealthed" then return "certain" end
+
+	if t == "cp" then
+		return cpIsKnown(S) and "certain" or "unknown"
+	elseif t == "cdReady" or t == "cdReadyOf" then
+		-- cdReady is self-referential to the rule's own spell; cdReadyOf names another.
+		local key = (t == "cdReadyOf") and cond.spell or ownKey
+		local cd = key and S.cooldowns and S.cooldowns[key]
+		-- Readiness survives secret timers via the never-secret booleans, so a known
+		-- cooldown is a CERTAIN input even when its countdown is hidden.
+		if cd and cd.known then return "certain" end
+		return "unknown"
+	elseif t == "enemyCount" then
+		return (S.enemyCountKnown ~= false) and "certain" or "unknown"
+	elseif t == "energy" then
+		return energyKnown(S) and "bounded" or "unknown"
+	elseif t == "buffUp" then
+		return (S.buffs and S.buffs.degraded) and "unknown" or "certain"
+	elseif t == "rtbStage" then
+		local rtb = S.buffs and S.buffs.rtb
+		return (rtb and rtb.stageKnown) and "certain" or "unknown"
+	end
+	return "unknown"
+end
+
+-- Rate one firing rule against the live state.
+local function rateRule(rule, S, spellID)
+	local conf = "certain"
+
+	for _, cond in ipairs(rule.conditions or {}) do
+		conf = weakest(conf, inputConfidence(cond, S, rule.spellKey))
+	end
+
+	-- Every rule passes through canAfford, so an ability that COSTS something inherits
+	-- the energy signal even when its declared conditions never mention energy.
+	local ability = spellID and ABILITIES[spellID]
+	if ability and (ability.cost or 0) > 0 then
+		if not energyKnown(S) then
+			conf = weakest(conf, "unknown")
+		elseif S.energySource ~= "measured" then
+			conf = weakest(conf, "bounded")
+		end
+	end
+
+	-- A rule with no declared conditions tells us nothing about its own provenance.
+	-- Do not award it "certain" by default just because the list is empty.
+	if not rule.conditions or #rule.conditions == 0 then
+		conf = weakest(conf, "bounded")
+	end
+
+	return conf
+end
+
+Tuono.Rotation.RateRule = rateRule
+
 local function ruleSpellID(rule, spells)
 	if rule.spellID then return rule.spellID end
 	if rule.spellKey then return spells[rule.spellKey] end
@@ -345,6 +432,7 @@ function Tuono.Rotation.Predict(state, steps)
 		local spellID, reason = nil, nil
 		local poolAttempts, maxPoolAttempts = 0, 3
 		local pooledStepOne = false
+		local firedRule = nil
 
 		repeat
 			for _, rule in ipairs(priorityList) do
@@ -352,7 +440,7 @@ function Tuono.Rotation.Predict(state, steps)
 				if ok and matched then
 					spellID = ruleSpellID(rule, spells)
 					reason = rule.name
-					if spellID then break end
+					if spellID then firedRule = rule break end
 				end
 			end
 
@@ -400,7 +488,7 @@ function Tuono.Rotation.Predict(state, steps)
 					local matched = rule.when(S, state)
 					if matched then
 						local id = ruleSpellID(rule, spells)
-						if id then spellID, reason = id, rule.name break end
+						if id then spellID, reason, firedRule = id, rule.name, rule break end
 					end
 				end
 			end)
@@ -412,19 +500,22 @@ function Tuono.Rotation.Predict(state, steps)
 
 		if not spellID then break end
 
-		local confidence = "high"
-		if step >= 4 then confidence = "low" end
-		-- Pooling outranks every other confidence label: "you cannot press this yet" is
-		-- more important for the player to see than how sure we are about the choice.
-		if pooledStepOne and step == 1 then confidence = "pooling" end
-		-- Buff-dependent decisions are guesses while aura data is hidden; so is any
-		-- energy-gated decision while energy is only an estimate.
-		if (degraded or state.energyKnown == false or state.energySource == "estimated")
-			and confidence == "high" then
-			confidence = "medium"
-		end
+		-- Rate by PROVENANCE, not by slot index. See rateRule above for why.
+		local confidence = firedRule and rateRule(firedRule, S, spellID) or "bounded"
 
-		table.insert(result, { spellID = spellID, confidence = confidence, reason = reason })
+		-- Pooling outranks every other label: "you cannot press this yet" matters more
+		-- to the player than how sure we are that it is the right choice.
+		if pooledStepOne and step == 1 then confidence = "pooling" end
+
+		table.insert(result, {
+			spellID = spellID,
+			confidence = confidence,
+			reason = reason,
+			-- Later steps additionally assume you FOLLOW the sequence. That is a
+			-- conditional rather than missing knowledge, so it is reported separately
+			-- and the display encodes it by size, not by fading.
+			assumesPriorSteps = (step > 1),
+		})
 
 		-- Apply effects to the virtual state so the NEXT step differs from this one.
 		local ability = ABILITIES[spellID]

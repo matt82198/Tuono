@@ -339,6 +339,42 @@ function Tuono.Display.Init()
 		icon.lastCDDuration = nil
 	end
 
+	-- ========================================================================
+	-- READY RAIL -- facts only, no prediction
+	-- ========================================================================
+	-- The wheel answers "what next". The rail answers "what is available", which the
+	-- wheel structurally cannot: it only ever shows abilities the priority list chose,
+	-- so a ready cooldown that lost the priority walk is invisible. Both rows are built
+	-- purely from exactly-readable state -- combo points, and cooldown readiness via the
+	-- never-secret booleans -- so nothing here can be wrong about the future.
+	--
+	-- Deliberately pips, never numbers: we know ready/not-ready, and in instanced combat
+	-- we do NOT know the remaining duration. A digit would claim a measurement we do not
+	-- have. There is also deliberately no energy bar -- energy is an estimate here and
+	-- Blizzard's real one is already on screen two inches away.
+	local rail = CreateFrame("Frame", nil, anchor)
+	rail:SetSize(stripWidth, 14)
+	rail:SetPoint("TOPLEFT", strip, "BOTTOMLEFT", 2, -2)
+	anchor.rail = rail
+
+	anchor.cpPips = {}
+	for i = 1, 7 do
+		local pip = rail:CreateTexture(nil, "ARTWORK")
+		pip:SetSize(7, 7)
+		pip:SetPoint("LEFT", rail, "LEFT", (i - 1) * 10, 0)
+		pip:Hide()
+		anchor.cpPips[i] = pip
+	end
+
+	anchor.cdPips = {}
+	for i = 1, 8 do
+		local pip = rail:CreateTexture(nil, "ARTWORK")
+		pip:SetSize(9, 9)
+		pip:SetPoint("LEFT", rail, "LEFT", 84 + (i - 1) * 12, 0)
+		pip:Hide()
+		anchor.cdPips[i] = pip
+	end
+
 	-- Track last rendered count for dynamic resize
 	anchor.lastCount = 0
 
@@ -443,17 +479,26 @@ function Tuono.Display.Render(result)
 					end
 					icon.texture:SetTexture(tex)
 
-					-- Confidence-aware rendering. "static-fallback" is gone with Blizzard's
-					-- fallback pick; the bar now only ever shows our own rotation.
-					-- high (1.0), medium (0.7), low (0.45), pooling (0.35 + wait marker)
-					local confidence = entry.confidence or "high"
+					-- PROVENANCE-DRIVEN ALPHA. Confidence now describes what the decision
+					-- was DERIVED FROM, not how far down the queue it sits, so a step
+					-- built entirely from combo points and cooldown readiness renders
+					-- solid even in slot 4 -- and a step gated on a hidden aura reads as
+					-- unknown even in slot 1. The sequence visibly dissolves at exactly
+					-- the step where we stopped knowing things, which is the honest
+					-- picture rather than an arbitrary fade.
+					local confidence = entry.confidence or "bounded"
 					local baseAlpha = 1.0
-					if confidence == "medium" then
+					if confidence == "bounded" then
+						baseAlpha = 0.72         -- real bounds, but a threshold could straddle them
+					elseif confidence == "unknown" then
+						baseAlpha = 0.4          -- depends on something Midnight hides
+					elseif confidence == "pooling" then
+						baseAlpha = 0.35
+					-- Legacy tiers, still accepted so older profiles/tests keep rendering.
+					elseif confidence == "medium" then
 						baseAlpha = 0.7
 					elseif confidence == "low" then
 						baseAlpha = 0.45
-					elseif confidence == "pooling" then
-						baseAlpha = 0.35
 					end
 
 					-- Position 1 gets authority ring (silver, always opaque)
@@ -479,6 +524,14 @@ function Tuono.Display.Render(result)
 							-- Badge would be a shape texture here; for now hide
 							icon.badge:Hide()
 						end
+					end
+
+					-- UNKNOWN provenance gets an amber hazard wash, the same language the
+					-- degraded-data state already uses. Dimness alone is ambiguous -- it
+					-- reads as "less preferred" rather than "we could not check this".
+					if confidence == "unknown" and icon.hazard then
+						icon.hazard:SetColorTexture(1, 0.6, 0, 0.22)
+						icon.hazard:Show()
 					end
 
 					-- POOLING: this is "wait for it", not "press it". Dim alpha alone reads as
@@ -576,6 +629,17 @@ function Tuono.Display.Render(result)
 						end
 					end
 
+					-- STALLED: the same advice, ignored repeatedly. Fade position 1 rather
+					-- than keep asserting it. Silent by design -- a warning here would be
+					-- alarm fatigue for something the player is doing on purpose.
+					if i == 1 and Tuono.Engine and Tuono.Engine.IsStalled
+						and Tuono.Engine.IsStalled() then
+						baseAlpha = math.min(baseAlpha, 0.45)
+						if icon.authRing then
+							icon.authRing:SetVertexColor(0.6, 0.6, 0.6, 0.15)
+						end
+					end
+
 					-- Icon transparency follows confidence
 					icon:SetAlpha(baseAlpha)
 					icon:Show()
@@ -584,6 +648,56 @@ function Tuono.Display.Render(result)
 				end
 			else
 				icon:Hide()
+			end
+		end
+
+		-- ====================================================================
+		-- READY RAIL
+		-- ====================================================================
+		if anchor.cpPips then
+			local S = Tuono.State
+			local cpKnown = S.comboPointsKnown ~= false
+			local cpMax = (S.comboPointsMax and S.comboPointsMax > 0) and S.comboPointsMax or 5
+			for i, pip in ipairs(anchor.cpPips) do
+				if i <= cpMax then
+					if not cpKnown then
+						-- Unreadable: show the slots exist, refuse to claim a count.
+						pip:SetColorTexture(0.35, 0.35, 0.4, 0.5)
+					elseif i <= (S.comboPoints or 0) then
+						pip:SetColorTexture(1, 0.85, 0.3, 1)
+					else
+						pip:SetColorTexture(0.3, 0.3, 0.35, 0.8)
+					end
+					pip:Show()
+				else
+					pip:Hide()
+				end
+			end
+
+			local profile = Tuono.Profiles and Tuono.Profiles.Active()
+			local keys = {}
+			if profile then
+				for key, spellID in pairs(profile.spells or {}) do
+					local ab = (profile.abilities or {})[spellID]
+					if ab and (ab.cd or 0) > 0 then table.insert(keys, key) end
+				end
+				table.sort(keys)
+			end
+			for i, pip in ipairs(anchor.cdPips) do
+				local key = keys[i]
+				local cd = key and Tuono.State.cooldowns[key]
+				if cd then
+					if not cd.known then
+						pip:SetColorTexture(0.4, 0.3, 0.15, 0.7)   -- unreadable
+					elseif cd.ready then
+						pip:SetColorTexture(0.3, 0.9, 0.5, 1)      -- usable NOW
+					else
+						pip:SetColorTexture(0.25, 0.25, 0.3, 0.8)  -- on cooldown
+					end
+					pip:Show()
+				else
+					pip:Hide()
+				end
 			end
 		end
 
