@@ -534,8 +534,10 @@ check("a bracketed value is not reported as stale",
 -- Full energy: nothing is unaffordable, so there is no upper bound to infer.
 scenario.energy = 100
 local lo2, up2 = Tuono.Energy.Bracket()
+-- Costliest energy ability is Ambush at 50 (was asserted as 45 back when Ambush was
+-- wrongly modelled as free and Sinister Strike topped the ladder).
 check("no upper bound when everything is affordable",
-  lo2 == 45 and up2 == nil,
+  lo2 == 50 and up2 == nil,
   "lower=" .. tostring(lo2) .. " upper=" .. tostring(up2))
 
 -- ===========================================================================

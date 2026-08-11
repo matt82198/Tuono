@@ -68,10 +68,15 @@ end
 -- Guides say "6+ CP" because 6 is max for a geared character. A levelling one has
 -- comboPointsMax = 5, making a literal >= 6 unreachable: the builder gates below max,
 -- every finisher needs 6, and the sequence goes EMPTY. Spend at 6, or at max when lower.
+-- SimC finishes at cp_max_spend - 1, not at a flat 6:
+--   variable,name=finish_condition,value=combo_points>=cp_max_spend-1-(...)
+-- The old min(6, cpMax) happened to be right at a 7-point cap (Deeper + Devious
+-- Stratagem) but demanded 6 at the far more common 6-point cap, delaying every
+-- finisher by a GCD and overcapping whenever Sinister Strike double-struck.
 local function finisherThreshold(S)
 	local mx = S and S.comboPointsMax
 	if type(mx) ~= "number" or mx < 1 then mx = 6 end
-	return math.min(6, mx)
+	return math.max(1, mx - 1)
 end
 
 -- Effective CP cap. comboPointsMax reads 0 when UnitPowerMax was never readable, and
@@ -175,7 +180,9 @@ end
 
 -- Restless-Blades-style CDR: 1.0s per CP, 1.3s during RtB stage 3.
 local function applyCDR(cpSpent, rtbStage)
-	return cpSpent * ((rtbStage == 3) and 1.3 or 1.0)
+	-- Stages are CUMULATIVE: Stage 4 (Jackpot) includes Stage 3 (Triple Threat), so an
+	-- equality test silently dropped the bonus at the best stage.
+	return cpSpent * (((rtbStage or 0) >= 3) and 1.3 or 1.0)
 end
 
 local function calcGCD(hasteBuffUp)
@@ -226,6 +233,18 @@ local AOE_DWELL_SECONDS = 2.0
 Tuono.Rotation.mode = "single"
 Tuono.Rotation.modeReason = "init"
 local belowThresholdSince = nil
+
+-- The dwell exists to stop the bar strobing WITHIN a pull. Carrying it ACROSS pulls is
+-- a different thing and is wrong: finish an AoE pack, walk to a single-target boss, and
+-- the first two seconds of the new fight would still be running the AoE list. Combat
+-- end is an unambiguous boundary, so reset there.
+function Tuono.Rotation.ResetMode()
+	Tuono.Rotation.mode = "single"
+	Tuono.Rotation.modeReason = "combat reset"
+	belowThresholdSince = nil
+end
+
+Tuono.RegisterEvent("PLAYER_REGEN_ENABLED", function() Tuono.Rotation.ResetMode() end)
 
 function Tuono.Rotation.ResolveMode(S)
 	local db = Tuono.db or {}
@@ -412,10 +431,16 @@ function Tuono.Rotation.Predict(state, steps)
 		if ability then
 			S.energy = math.max(0, S.energy - (ability.cost or 0))
 
-			if (ability.cpGen or 0) > 0 then
-				S.comboPoints = math.min(cpCap(S), S.comboPoints + ability.cpGen)
-			elseif (ability.cpSpend or 0) > 0 then
-				local cpSpent = math.min(S.comboPoints, ability.cpSpend)
+			-- SPEND THEN GENERATE, as two independent steps. This was if/elseif, which
+			-- cannot express an ability that does both -- and Killing Spree does: it is a
+			-- finishing move that also generates points during the channel.
+			local spend = ability.cpSpend or 0
+			if spend ~= 0 then
+				-- -1 means "spends everything up to the cap". Finishers scale with points
+				-- consumed, so a hardcoded 5 or 6 under-credits Restless Blades CDR at a
+				-- 6- or 7-point cap.
+				local want = (spend < 0) and cpCap(S) or spend
+				local cpSpent = math.min(S.comboPoints, want)
 				S.comboPoints = 0
 				local cdr = applyCDR(cpSpent, S.buffs.rtb and S.buffs.rtb.stage or 0)
 				for _, key in pairs(SPELL_TO_CDKEY) do
@@ -425,6 +450,12 @@ function Tuono.Rotation.Predict(state, steps)
 						if slot.remaining <= 0 then slot.ready = true end
 					end
 				end
+			end
+
+			-- Generation applies AFTER any spend, so a spend-and-generate ability
+			-- (Killing Spree) lands on the right combo-point total.
+			if (ability.cpGen or 0) > 0 then
+				S.comboPoints = math.min(cpCap(S), S.comboPoints + ability.cpGen)
 			end
 
 			-- Consumed procs must not re-fire in the simulation, or the wheel recommends

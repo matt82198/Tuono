@@ -1226,6 +1226,7 @@ end)
 
 -- Threat Test 3: single plate (enemyCount=1) → rule doesn't fire (threshold is 2)
 test("threat detector: single plate gives enemyCount=1, rule doesn't fire", function()
+  Tuono.Rotation.ResetMode()
   stub.ClearNamePlates()
   stub.AddNamePlate("nameplate1", 3)
   Tuono.db.aoeMode = false
@@ -2774,7 +2775,7 @@ test("rotation rules: Ambush stealth-opener rule exists", function()
     local ambush_able = Tuono.Rotation.ABILITIES and Tuono.Rotation.ABILITIES[Tuono.SpellIDs.ambush]
     assert_true(ambush_able ~= nil, "Ambush ability is defined in ABILITIES table")
     if ambush_able then
-      assert_eq(ambush_able.cost, 0, "Ambush is free (stealth-only)")
+      assert_eq(ambush_able.cost, 50, "Ambush costs 50 energy (45 with Hidden Opportunity)")
       assert_eq(ambush_able.cpGen, 2, "Ambush generates 2 combo points")
     end
   end
@@ -3108,7 +3109,12 @@ test("decisions: Preparation reset — fires when AR/BtE/BR down", function()
   Tuono.State.cooldowns.preparation.ready = true
   Tuono.State.cooldowns.adrenalineRush.ready = false
   Tuono.State.cooldowns.adrenalineRush.remaining = 60  -- AR down
-  Tuono.State.cooldowns.betweenTheEyes.ready = true
+  -- Preparation now requires AR, Between the Eyes AND Killing Spree all down, per SimC.
+  -- The old OR fired it about two seconds into every pull -- Between the Eyes is on a
+  -- 45s cooldown, so it is down nearly always -- burning a FOUR MINUTE cooldown to
+  -- reset nothing worth resetting.
+  Tuono.State.cooldowns.betweenTheEyes = { known = true, ready = false, remaining = 30 }
+  Tuono.State.cooldowns.killingSpree = { known = true, ready = false, remaining = 90 }
   -- NOTE: Blade Rush is deliberately left on cooldown. Its rule outranks Preparation,
   -- so making it ready would (correctly) win the priority walk and this test would be
   -- asserting against the wrong decision.
@@ -3301,12 +3307,19 @@ test("p0: levelling build (SS + Dispatch) spends at 6 CP", function()
     "levelling bar told the player to spend Dispatch at 6 CP")
 end)
 
-test("p0: Killing Spree is not modelled as a combo-point spender", function()
+-- INVERTED. This test asserted the opposite and encoded a factual error: Killing Spree
+-- is not "a burst cooldown" that spends nothing, it is a FINISHING MOVE -- Wowhead lists
+-- it as "45 Energy / 1 to 7 Combo Points" and its damage and duration scale with the
+-- points consumed. Modelling cpSpend=0 meant the simulation never zeroed combo points
+-- after a predicted Killing Spree and never credited its Restless Blades CDR, so every
+-- step after one in the wheel was wrong.
+test("p0: Killing Spree IS modelled as a combo-point spender", function()
   local ks = Tuono.Rotation.ABILITIES and Tuono.Rotation.ABILITIES[Tuono.SpellIDs.killingSpree]
   assert_true(ks ~= nil, "Killing Spree present in ability table")
-  local spend = ks.cpSpend
-  assert_true(spend == 0 or spend == false or spend == nil,
-    "Killing Spree modelled as spending combo points - it is a burst cooldown")
+  -- -1 is the "spends all points up to the cap" sentinel, which is the correct model
+  -- for a finisher whose value scales with points consumed.
+  assert_true(ks.cpSpend == -1,
+    "Killing Spree spends combo points (SPEND_ALL), got " .. tostring(ks.cpSpend))
 end)
 
 -- === highlight tests ===
@@ -3593,11 +3606,17 @@ test("spec-priority: rule 1 (RtB) fires at stage 0", function()
 end)
 
 -- TEST: Rule 2 (KIR) fires at stage 2
-test("spec-priority: rule 2 (KIR) fires at stage 2", function()
+-- Threshold moved from stage 2 to stage 3, matching SimC (rtb_buffs>=3) and Maxroll
+-- ("Stage 3 or higher"). Locking a six-minute cooldown into Double Trouble when Triple
+-- Threat or Jackpot was one reroll away is a real loss.
+-- stageKnown must be set too: the rule now refuses to act on an unreadable stage,
+-- because treating unknown as 0 is what made it recommend rerolling a Jackpot.
+test("spec-priority: rule 2 (KIR) fires at stage 3", function()
   Tuono.State.inCombat = true
   stub.state.stealthed = false
   Tuono.State.stealthed = false
-  Tuono.State.buffs.rtb.stage = 2
+  Tuono.State.buffs.rtb.stage = 3
+  Tuono.State.buffs.rtb.stageKnown = true
   Tuono.State.energy = 100
   Tuono.State.comboPoints = 0
   Tuono.State.knownSpells[Tuono.SpellIDs.keepItRolling] = true

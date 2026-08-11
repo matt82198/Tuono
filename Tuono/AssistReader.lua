@@ -12,17 +12,44 @@ Tuono.Assist = {
 
 local warned = false
 
--- Known "Waiting for <resource>" placeholder spell IDs. Only Energy exists as of
--- 12.1.0 (verified against the live SpellName DB2); the icon check below is what
--- catches any sibling Blizzard adds later without an addon update.
+-- ============================================================================
+-- ROTATION-STEP SENTINELS  --  READ THE SCOPE NOTE BEFORE RELYING ON THIS
+-- ============================================================================
+-- 1249752 "Waiting for Energy" is NOT a generic "cannot afford the next action"
+-- placeholder. Verified against the live DB2 at build 12.1.0.69273:
+--
+--   AssistedCombatStep rows 13079/13126 -> AssistedCombatID 115
+--   AssistedCombat 115 -> ChrSpecializationID 103 = FERAL DRUID
+--   Tooltip: "Waiting for energy to deal maximum Ferocious Bite damage." Requires Druid.
+--
+-- It is a Feral-specific instruction to POOL for a max-damage Ferocious Bite. It is
+-- scoped to that spec's rotation table and will never appear for Outlaw, or for any
+-- other spec. A sweep of all 331 spellIDs in AssistedCombatStep against SpellName found
+-- exactly one such entry -- there is no family of "Waiting for <resource>" sentinels.
+--
+-- An earlier version of this file claimed the opposite and built energy anchoring on
+-- it. That machinery is retained because it is genuinely correct FOR FERAL, but it is
+-- now opt-in per profile (profile.waitSentinels) rather than assumed universal, and
+-- nothing in the Outlaw path depends on it.
+--
+-- The FILTER below stays unconditional regardless of spec: whatever a sentinel means,
+-- it is a UI placeholder rather than a castable recommendation, and letting one reach
+-- the queue or the drift comparison would be wrong in every case.
+-- ============================================================================
 local WAIT_SENTINEL_IDS = { [1249752] = true }
-local WAIT_SENTINEL_ICON = 134377
+local WAIT_SENTINEL_ICON = 134377   -- inv_misc_pocketwatch_02
 
 local sentinelIconCache = {}
 
 function Tuono.Assist.IsWaitSentinel(spellID)
 	if not spellID then return false end
 	if WAIT_SENTINEL_IDS[spellID] then return true end
+
+	-- A profile may declare additional sentinels for its own spec.
+	local profile = Tuono.Profiles and Tuono.Profiles.Active()
+	if profile and profile.waitSentinels and profile.waitSentinels[spellID] then
+		return true
+	end
 
 	local cached = sentinelIconCache[spellID]
 	if cached ~= nil then return cached end

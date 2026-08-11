@@ -30,7 +30,11 @@ Tuono.State = {
 	comboPointsMaxKnown = false,
 	lastKnownCPMax = nil,
 	buffs = {
-		rtb = { stage = 0, expires = 0, names = {} },
+		-- stageKnown distinguishes "no Roll the Bones buff is up" from "we could not
+		-- read the stage". They are NOT the same, and conflating them made the profile
+		-- recommend rerolling a Jackpot every 45s. Starts FALSE: nothing may assume a
+		-- stage until an aura read actually succeeds.
+		rtb = { stage = 0, stageKnown = false, expires = 0, names = {} },
 		opportunity = { up = false, expires = 0, stacks = 0 },
 		adrenalineRush = { up = false, expires = 0 },
 		degraded = false
@@ -191,6 +195,8 @@ local function BootstrapBuffState()
 	local now = GetTime()
 	wipe(instanceMap)
 	Tuono.State.buffs.degraded = false
+	-- Re-prove the stage on every bootstrap rather than inheriting a stale "known".
+	Tuono.State.buffs.rtb.stageKnown = false
 
 	-- Query-by-ID bootstrap. The live client exposes GetPlayerAuraBySpellID; some
 	-- builds/docs also carry GetAuraDataBySpellID. Prefer the former, accept either --
@@ -234,6 +240,7 @@ local function BootstrapBuffState()
 					Tuono.State.buffs.adrenalineRush.expires = Tuono.num(aura.expirationTime, now)
 				elseif item.key == "rtb" then
 					Tuono.State.buffs.rtb.stage = Tuono.num(aura.applications, 1)
+					Tuono.State.buffs.rtb.stageKnown = true
 					Tuono.State.buffs.rtb.expires = Tuono.num(aura.expirationTime, now)
 				elseif item.key == "opportunity" then
 					Tuono.State.buffs.opportunity.up = true
@@ -274,6 +281,7 @@ local function ProcessAuraDelta(updateInfo)
 				Tuono.State.buffs.adrenalineRush.expires = 0
 			elseif key == "rtb" then
 				Tuono.State.buffs.rtb.stage = 0
+				Tuono.State.buffs.rtb.stageKnown = true
 				Tuono.State.buffs.rtb.expires = 0
 				wipe(Tuono.State.buffs.rtb.names)
 			elseif key == "opportunity" then
@@ -307,6 +315,7 @@ local function ProcessAuraDelta(updateInfo)
 				elseif spellID == Tuono.SpellIDs.rollTheBones then
 					instanceMap[instanceID] = "rtb"
 					Tuono.State.buffs.rtb.stage = Tuono.num(auraData.applications, 1)
+					Tuono.State.buffs.rtb.stageKnown = true
 					Tuono.State.buffs.rtb.expires = Tuono.num(auraData.expirationTime, now)
 					Tuono.State.buffs.degraded = false
 				elseif spellID == 195627 then
@@ -330,6 +339,7 @@ local function ProcessAuraDelta(updateInfo)
 						elseif lastCast.spellID == Tuono.SpellIDs.rollTheBones then
 							instanceMap[instanceID] = "rtb"
 							Tuono.State.buffs.rtb.stage = Tuono.num(auraData.applications, 1)
+							Tuono.State.buffs.rtb.stageKnown = true
 							Tuono.State.buffs.rtb.expires = Tuono.num(auraData.expirationTime, now)
 							Tuono.State.buffs.degraded = false
 						elseif lastCast.spellID == 195627 then
@@ -388,6 +398,7 @@ local function RefreshBuffsFallback()
 			-- Modern path: spell IDs take precedence; only update if delta didn't already set it
 			if auraSpellId == Tuono.SpellIDs.rollTheBones and rtbStageFromModern == 0 then
 				Tuono.State.buffs.rtb.stage = Tuono.num(aura.applications, 1)
+				Tuono.State.buffs.rtb.stageKnown = true
 				Tuono.State.buffs.rtb.expires = Tuono.num(aura.expirationTime, now)
 			end
 
@@ -432,6 +443,7 @@ local function RefreshBuffsFallback()
 			if name == "Roll the Bones" and rtbStageFromModern == 0 then
 				local _, _, count, _, duration, expTime = UnitBuff("player", i)
 				Tuono.State.buffs.rtb.stage = Tuono.num(count, 1)
+				Tuono.State.buffs.rtb.stageKnown = true
 				Tuono.State.buffs.rtb.expires = Tuono.num(expTime, now)
 				table.insert(Tuono.State.buffs.rtb.names, name)
 			end
