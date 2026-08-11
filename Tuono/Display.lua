@@ -441,16 +441,17 @@ function Tuono.Display.Render(result)
 					end
 					icon.texture:SetTexture(tex)
 
-					-- Confidence-aware rendering: opacity based on confidence level
-					-- high (1.0), medium (0.7), low (0.45), static-fallback (0.3 + special mark)
+					-- Confidence-aware rendering. "static-fallback" is gone with Blizzard's
+					-- fallback pick; the bar now only ever shows our own rotation.
+					-- high (1.0), medium (0.7), low (0.45), pooling (0.35 + wait marker)
 					local confidence = entry.confidence or "high"
 					local baseAlpha = 1.0
 					if confidence == "medium" then
 						baseAlpha = 0.7
 					elseif confidence == "low" then
 						baseAlpha = 0.45
-					elseif confidence == "static-fallback" then
-						baseAlpha = 0.3
+					elseif confidence == "pooling" then
+						baseAlpha = 0.35
 					end
 
 					-- Position 1 gets authority ring (silver, always opaque)
@@ -478,11 +479,18 @@ function Tuono.Display.Render(result)
 						end
 					end
 
-					-- Static-fallback gets special mark (will be visible even with low alpha)
-					if confidence == "static-fallback" and icon.badge then
-						-- Show a special marker indicating frozen/static value
-						icon.badge:SetColorTexture(0.5, 0.5, 0.5, 0.6)
-						icon.badge:Show()
+					-- POOLING: this is "wait for it", not "press it". Dim alpha alone reads as
+					-- low confidence, which is a different message, so position 1 also gets
+					-- a blue marker and its authority ring is muted -- the ring is what says
+					-- "press this now" and it must not say that here.
+					if confidence == "pooling" then
+						if icon.badge then
+							icon.badge:SetColorTexture(0.3, 0.6, 1, 0.9)
+							icon.badge:Show()
+						end
+						if i == 1 and icon.authRing then
+							icon.authRing:SetVertexColor(0.3, 0.6, 1, 0.25)
+						end
 					end
 
 					-- Degraded overlay: amber hazard stripes

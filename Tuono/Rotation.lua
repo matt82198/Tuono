@@ -121,11 +121,17 @@ end
 -- energy and when the read failed. Blocking on the second case failed every gate at
 -- once and emptied the sequence. When energy is unknown we cannot prove
 -- unaffordability, so the ability passes and confidence carries the uncertainty.
+-- When set, affordability checks pass unconditionally. Used for ONE narrow purpose:
+-- answering "what is the player waiting to afford?" after normal evaluation has found
+-- nothing castable. See the pooling fallback in Predict. Never leave this true.
+local ignoreEnergy = false
+
 local function canAfford(S, spellID)
 	if not spellID then return true end
 	local ability = ABILITIES[spellID]
 	if not ability then return false end
 	if (ability.cost or 0) == 0 then return true end
+	if ignoreEnergy then return true end
 	if not energyKnown(S) then return true end
 	return S.energy >= ability.cost
 end
@@ -319,6 +325,7 @@ function Tuono.Rotation.Predict(state, steps)
 	for step = 1, steps do
 		local spellID, reason = nil, nil
 		local poolAttempts, maxPoolAttempts = 0, 3
+		local pooledStepOne = false
 
 		repeat
 			for _, rule in ipairs(priorityList) do
@@ -330,11 +337,21 @@ function Tuono.Rotation.Predict(state, steps)
 				end
 			end
 
-			-- STEP 1 MUST BE CASTABLE RIGHT NOW. Pooling advances virtual time to let
-			-- energy regenerate, which is correct for FUTURE steps but wrong for the
-			-- immediate recommendation: at 40 energy with a 45-cost builder the bar would
-			-- say "press Sinister Strike" for something unaffordable this instant.
-			if not spellID and step == 1 then break end
+			-- STEP 1 MUST NEVER *ASSERT* CASTABILITY. Pooling advances virtual time to let
+			-- energy regenerate, which is right for future steps but wrong to present as
+			-- "press this now": at 40 energy with a 45-cost builder the bar would be
+			-- telling you to press something you cannot afford this instant.
+			--
+			-- It used to hard-break here, which produced an EMPTY sequence -- and the
+			-- empty sequence is what handed the whole bar to Blizzard's fallback pick.
+			-- Now that the fallback is gone, breaking would leave a blank bar during
+			-- energy starvation, which reads as "the addon is broken" when the honest
+			-- answer is "wait, this is next". So we still pool, and mark the result
+			-- POOLING so the display can dim it and show it as a wait rather than a
+			-- command. The invariant is preserved: we never claim it is castable now.
+			if not spellID and step == 1 then
+				pooledStepOne = true
+			end
 
 			if not spellID and poolAttempts < maxPoolAttempts then
 				local gcd = calcGCD(hasteBuff)
@@ -351,10 +368,36 @@ function Tuono.Rotation.Predict(state, steps)
 			end
 		until false
 
+		-- POOLING FALLBACK. Nothing is castable and pooling ran out of runway (3 GCDs of
+		-- regen is ~37 energy, short of a 45-cost builder from empty). Rather than
+		-- return an empty sequence -- which is what used to hand the whole bar to
+		-- Blizzard's pick, and would now just blank it -- answer the question the player
+		-- actually has: what am I waiting for? Re-run the list with affordability
+		-- suspended so cooldown and resource gates still apply but energy does not.
+		if not spellID and step == 1 then
+			ignoreEnergy = true
+			local ok = pcall(function()
+				for _, rule in ipairs(priorityList) do
+					local matched = rule.when(S, state)
+					if matched then
+						local id = ruleSpellID(rule, spells)
+						if id then spellID, reason = id, rule.name break end
+					end
+				end
+			end)
+			-- Reset unconditionally: a throw inside the loop must not leave affordability
+			-- permanently disabled for every later evaluation in the session.
+			ignoreEnergy = false
+			if ok and spellID then pooledStepOne = true end
+		end
+
 		if not spellID then break end
 
 		local confidence = "high"
 		if step >= 4 then confidence = "low" end
+		-- Pooling outranks every other confidence label: "you cannot press this yet" is
+		-- more important for the player to see than how sure we are about the choice.
+		if pooledStepOne and step == 1 then confidence = "pooling" end
 		-- Buff-dependent decisions are guesses while aura data is hidden; so is any
 		-- energy-gated decision while energy is only an estimate.
 		if (degraded or state.energyKnown == false or state.energySource == "estimated")

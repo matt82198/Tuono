@@ -46,14 +46,31 @@ function Tuono.Engine.Evaluate()
   local S = Tuono.State
   local A = Tuono.Assist
 
-  -- COORDINATOR EVIDENCE (live client, 52 samples): Blizzard's GetNextCastSpell is STATIC
-  -- in combat — it returns exactly ONE value and never changes, even when combo points max.
-  -- ARCHITECTURE: Our Rotation.Predict is THE PRIMARY SOURCE. Blizzard is a fallback.
+  -- ONE ROTATION ON THE BAR. THE BAR IS OURS.
   --
-  -- Step 0: Get our rotation predictions (primary source, independent of Assist)
+  -- This used to fall back to Blizzard's GetNextCastSpell pick whenever our own
+  -- prediction came back empty. Two reasons that is gone:
+  --
+  -- 1. It was firing constantly, but only because of a bug. Secret energy was being
+  --    read as a confident 0, so every affordability gate failed and Predict returned
+  --    an empty sequence on every tick -- and the "fallback" became the entire bar.
+  --    (The old note here claimed GetNextCastSpell is STATIC in combat, "52 samples".
+  --    It is not. Blizzard's own AssistedCombatManager polls it every 0.1s and acts on
+  --    the change. What those samples measured was AssistReader crashing on a secret
+  --    boolean from IsAvailable() before it ever reassigned nextSpellID.)
+  --
+  -- 2. Even working correctly it is the WRONG THING TO RENDER. Blizzard's assist is a
+  --    different rotation, not a degraded copy of ours -- it ignores Roll the Bones and
+  --    combo-point overflow. Silently swapping one list for the other mid-fight, with
+  --    only an alpha difference to signal it, is incoherent for the player reading it.
+  --
+  -- We still READ the assist pick every tick (see AssistReader): it is the only thing
+  -- in this addon with access to true combat state, which makes it useful as a SENSOR
+  -- for drift in our own estimates. It just never becomes an icon.
+  --
+  -- Step 0: Get our rotation predictions -- the only source for the queue.
   local predictions = Tuono.safe(Tuono.Rotation.Predict, S, 4)
   local queueIndex = 1
-  local hasAssistStatic = false
 
   if predictions and type(predictions) == "table" then
     for _, pred in ipairs(predictions) do
@@ -80,39 +97,20 @@ function Tuono.Engine.Evaluate()
     end
   end
 
-  -- Step 0b: If our predictions are empty AND Assist is available, use Blizzard's pick
-  -- as a fallback (marked as unreliable/"static-fallback")
-  if #resultQueue == 0 and A.available and A.nextSpellID then
-    table.insert(resultQueue, {
-      spellID = A.nextSpellID,
-      source = "blizzard_static_fallback",
-      kind = "rotation",
-      confidence = "static-fallback"
-    })
-    tempDedup[A.nextSpellID] = true
-    queueSet[A.nextSpellID] = queueIndex
-    queueIndex = queueIndex + 1
-    hasAssistStatic = true
-  end
-
-  -- Step 0c: If Assist is unavailable, return our predictions as-is (possibly empty)
-  -- Empty queue is valid when out of resources; UI shows degraded/empty bar.
-  if not A.available and #resultQueue > 0 then
-    resultAdvisories[1] = {
-      kind = "rtb",
-      icon = nil,
-      itemSlot = nil,
-      text = "Blizzard rotation assist unavailable; using simulator",
-      active = true
-    }
-  end
-
-  -- Diagnostic: store whether Blizzard agrees with our prediction
-  -- With static Assist, disagreement is EXPECTED and does NOT indicate our prediction is wrong.
+  -- Step 0b: DRIFT SENSOR (diagnostic only -- never enters the queue).
+  -- Blizzard's engine can see the resources Midnight hides from us, so sustained
+  -- disagreement between its pick and ours is the best available evidence that our
+  -- shadow energy estimate has drifted. A single tick of disagreement means nothing
+  -- (the two lists have genuinely different priorities), so only a run of them counts.
   Tuono.Engine = Tuono.Engine or {}
-  Tuono.Engine.assistStatic = hasAssistStatic
-  if predictions and #predictions > 0 and A.nextSpellID then
-    Tuono.Engine.blizzAgrees = (predictions[1].spellID == A.nextSpellID)
+  local ours = predictions and predictions[1] and predictions[1].spellID or nil
+  if ours and A.nextSpellID then
+    local agrees = (ours == A.nextSpellID)
+    Tuono.Engine.blizzAgrees = agrees
+    Tuono.Engine.disagreeStreak = agrees and 0 or ((Tuono.Engine.disagreeStreak or 0) + 1)
+  else
+    Tuono.Engine.blizzAgrees = nil
+    Tuono.Engine.disagreeStreak = 0
   end
 
   -- Step 2: Apply rules in array order
@@ -263,10 +261,10 @@ function Tuono.Engine.Evaluate()
   for i, entry in ipairs(resultQueue) do
     local skip = false
 
-    -- Position 1 from Blizzard is authoritative, never filter
-    if i == 1 and entry.source == "blizzard" then
-      skip = false
-    else
+    -- The "position 1 from Blizzard is authoritative, never filter" exemption that used
+    -- to sit here is gone with the fallback itself. It never matched anyway: the entry
+    -- it was written for carried source "blizzard_static_fallback", not "blizzard".
+    do
       -- Check if spell is known (when API available)
       if entry.spellID and not S.knownUnavailable then
         if S.knownSpells[entry.spellID] == false then
@@ -281,7 +279,9 @@ function Tuono.Engine.Evaluate()
       -- ALL position-1 entries, not just simulated ones. PIN entries from the legacy
       -- rules were skipping this check, so a Between the Eyes on a 38s cooldown could be
       -- pinned to position 1 while the actually-ready finisher sat at position 2.
-      if not skip and i == 1 and entry.spellID and entry.source ~= "blizzard" then
+      -- A pooling entry is ALREADY flagged as not-yet-castable; filtering it here would
+      -- delete the very thing we are trying to tell the player to wait for.
+      if not skip and i == 1 and entry.spellID and entry.confidence ~= "pooling" then
         -- Only meaningful for abilities that HAVE a cooldown. A zero-cooldown ability
         -- (Ambush, Sinister Strike, Dispatch) can never be "not ready", so a stale
         -- not-ready entry for one must not suppress a correct recommendation.

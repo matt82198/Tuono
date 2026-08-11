@@ -384,6 +384,58 @@ check("UserRules: reset restores the profile default",
   restored and restored[1] and restored[1].spellID ~= Tuono.SpellIDs.dispatch,
   "got " .. tostring(restored and restored[1] and restored[1].spellID))
 
+-- ===========================================================================
+-- ONE ROTATION ON THE BAR: Blizzard's pick is a sensor, never an icon
+-- ===========================================================================
+Tuono.db.aoeMode = "off"
+Tuono.State.enemyCount = 1
+scenario.energySecret = false
+scenario.cooldownSecret = false
+scenario.comboPoints = 0
+scenario.cdActive = {}
+scenario.assistSecretAvail = false
+scenario.assistNext = 999999          -- a spellID that is in NO profile list
+scenario.energy = 100
+tick(0.1)
+
+local r = Tuono.Engine.Evaluate()
+local sawAssist = false
+for _, e in ipairs(r.queue or {}) do
+  if e.spellID == 999999 or e.source == "blizzard_static_fallback" then sawAssist = true end
+end
+check("Blizzard's pick never appears in the rendered queue",
+  not sawAssist, "assist spellID leaked into the queue")
+
+-- Starve everything: no energy, every cooldown down. Pre-change this produced an EMPTY
+-- sequence, which is precisely what handed the bar to Blizzard's fallback.
+scenario.energy = 0
+scenario.energySecret = false
+for _, id in pairs(Tuono.SpellIDs) do scenario.cdActive[id] = true end
+Tuono.Energy.confidence = "unknown"
+Tuono.Energy.lastSyncAt = 0
+tick(0.1)
+Tuono.Energy.TrySync()
+tick(0.1)
+
+local starved = Tuono.Rotation.Predict(Tuono.State, 4)
+check("energy starvation yields a POOLING entry, not an empty bar",
+  starved and #starved >= 1 and starved[1].confidence == "pooling",
+  "len=" .. tostring(starved and #starved)
+    .. " conf=" .. tostring(starved and starved[1] and starved[1].confidence))
+
+local rs = Tuono.Engine.Evaluate()
+check("pooling entry survives the castability filter",
+  rs and rs.queue and #rs.queue >= 1,
+  "queue length " .. tostring(rs and rs.queue and #rs.queue))
+
+-- The sensor still runs, it just does not render.
+scenario.energy = 100
+tick(0.1)
+Tuono.Engine.Evaluate()
+check("drift sensor records agreement state without queueing it",
+  Tuono.Engine.disagreeStreak ~= nil,
+  "disagreeStreak=" .. tostring(Tuono.Engine.disagreeStreak))
+
 print("")
 print(string.format("SECRETS REGRESSION: %d passed, %d failed", results.passed, results.failed))
 os.exit(results.failed == 0 and 0 or 1)
