@@ -1,4 +1,4 @@
-local ADDON_NAME, OA = ...
+local ADDON_NAME, Tuono = ...
 
 local function apitest()
   local passed = 0
@@ -9,16 +9,16 @@ local function apitest()
     local v, b, d, t = GetBuildInfo()
     return "Client: " .. tostring(v) .. " build " .. tostring(b) .. " interface " .. tostring(t)
   end)
-  OA.print(okHeader and headerMsg or "Client: unavailable (values restricted)")
+  Tuono.print(okHeader and headerMsg or "Client: unavailable (values restricted)")
 
   local function test(name, fn)
     total = total + 1
     local ok, result = pcall(fn)
     if ok then
-      OA.print("PASS: " .. name .. " (" .. type(result) .. ")")
+      Tuono.print("PASS: " .. name .. " (" .. type(result) .. ")")
       passed = passed + 1
     else
-      OA.print("FAIL: " .. name .. " - " .. tostring(result))
+      Tuono.print("FAIL: " .. name .. " - " .. tostring(result))
     end
   end
 
@@ -130,10 +130,10 @@ local function apitest()
   test("UnitHealth (party1)", function()
     if UnitExists("party1") then
       local health = UnitHealth("party1")
-      OA.print("  -> party1 exists, health = " .. tostring(health))
+      Tuono.print("  -> party1 exists, health = " .. tostring(health))
       return health
     else
-      OA.print("  -> SKIP: no party member at party1")
+      Tuono.print("  -> SKIP: no party member at party1")
       return "SKIP"
     end
   end)
@@ -145,9 +145,9 @@ local function apitest()
     local spells = C_AssistedCombat.GetRotationSpells()
     if not spells then error("GetRotationSpells returned nil") end
 
-    local bladeFlurrySpellID = OA.SpellIDs and OA.SpellIDs.bladeFlurry
+    local bladeFlurrySpellID = Tuono.SpellIDs and Tuono.SpellIDs.bladeFlurry
     if not bladeFlurrySpellID then
-      error("OA.SpellIDs.bladeFlurry not defined")
+      error("Tuono.SpellIDs.bladeFlurry not defined")
     end
 
     local found = false
@@ -217,23 +217,23 @@ local function apitest()
       local id = type(entry) == "number" and entry or (type(entry) == "table" and entry.spellID)
       if id then table.insert(ids, tostring(id)) end
     end
-    OA.print("  -> LIVENESS: run /oa apitest on single dummy, then mid multi-target pull - compare lists (esp. Blade Flurry 13877)")
+    Tuono.print("  -> LIVENESS: run /tuono apitest on single dummy, then mid multi-target pull - compare lists (esp. Blade Flurry 13877)")
     return table.concat(ids, ",")
   end)
 
-  OA.print(passed .. "/" .. total .. " PASS - paste this output into a GitHub issue if anything FAILs (SKIPs are OK)")
+  Tuono.print(passed .. "/" .. total .. " PASS - paste this output into a GitHub issue if anything FAILs (SKIPs are OK)")
 end
 
 local function debug()
-  local db = OA.db or {}
-  OA.print("=== Debug Dump ===")
-  if OA.State then
-    OA.print("Energy: " .. (OA.State.energy or 0) .. "/" .. (OA.State.energyMax or 0))
-    OA.print("ComboPoints: " .. (OA.State.comboPoints or 0) .. "/" .. (OA.State.comboPointsMax or 0))
-    if OA.State.buffs and OA.State.buffs.rtb then
-      OA.print("RtB Stage: " .. (OA.State.buffs.rtb.stage or 0))
+  local db = Tuono.db or {}
+  Tuono.print("=== Debug Dump ===")
+  if Tuono.State then
+    Tuono.print("Energy: " .. (Tuono.State.energy or 0) .. "/" .. (Tuono.State.energyMax or 0))
+    Tuono.print("ComboPoints: " .. (Tuono.State.comboPoints or 0) .. "/" .. (Tuono.State.comboPointsMax or 0))
+    if Tuono.State.buffs and Tuono.State.buffs.rtb then
+      Tuono.print("RtB Stage: " .. (Tuono.State.buffs.rtb.stage or 0))
     end
-    if OA.State.cooldowns then
+    if Tuono.State.cooldowns then
       local function cdState(name, cd)
         local state = "unknown"
         if cd.known then
@@ -241,45 +241,45 @@ local function debug()
         end
         return name .. ": " .. state
       end
-      OA.print(cdState("AR", OA.State.cooldowns.adrenalineRush))
-      OA.print(cdState("BladeRush", OA.State.cooldowns.bladeRush))
-      OA.print(cdState("Prep", OA.State.cooldowns.preparation))
+      Tuono.print(cdState("AR", Tuono.State.cooldowns.adrenalineRush))
+      Tuono.print(cdState("BladeRush", Tuono.State.cooldowns.bladeRush))
+      Tuono.print(cdState("Prep", Tuono.State.cooldowns.preparation))
     end
-    if OA.State.trinkets then
-      OA.print("Trinket 13: " .. tostring(OA.State.trinkets[13] and OA.State.trinkets[13].ready and "ready" or ("CD: " .. string.format("%.1f", OA.State.trinkets[13].remaining) .. "s")))
-      OA.print("Trinket 14: " .. tostring(OA.State.trinkets[14] and OA.State.trinkets[14].ready and "ready" or ("CD: " .. string.format("%.1f", OA.State.trinkets[14].remaining) .. "s")))
+    if Tuono.State.trinkets then
+      Tuono.print("Trinket 13: " .. tostring(Tuono.State.trinkets[13] and Tuono.State.trinkets[13].ready and "ready" or ("CD: " .. string.format("%.1f", Tuono.State.trinkets[13].remaining) .. "s")))
+      Tuono.print("Trinket 14: " .. tostring(Tuono.State.trinkets[14] and Tuono.State.trinkets[14].ready and "ready" or ("CD: " .. string.format("%.1f", Tuono.State.trinkets[14].remaining) .. "s")))
     end
   end
-  if OA.Assist then
-    OA.print("Assist NextSpellID: " .. (OA.Assist.nextSpellID or "none"))
-    OA.print("Assist Queue Length: " .. (OA.Assist.queue and #OA.Assist.queue or 0))
+  if Tuono.Assist then
+    Tuono.print("Assist NextSpellID: " .. (Tuono.Assist.nextSpellID or "none"))
+    Tuono.print("Assist Queue Length: " .. (Tuono.Assist.queue and #Tuono.Assist.queue or 0))
   end
 
   -- KEYBIND & TALENT DIAGNOSTICS
-  OA.print("=== Keybind & Talent Diagnostics ===")
-  if OA.State and OA.State.knownSpells then
-    OA.print("Known Spells API: " .. (OA.State.knownUnavailable and "unavailable (fail-open)" or "available"))
+  Tuono.print("=== Keybind & Talent Diagnostics ===")
+  if Tuono.State and Tuono.State.knownSpells then
+    Tuono.print("Known Spells API: " .. (Tuono.State.knownUnavailable and "unavailable (fail-open)" or "available"))
   end
 
-  if OA.Engine then
-    local result = OA.safe(function() return OA.Engine.Evaluate() end)
+  if Tuono.Engine then
+    local result = Tuono.safe(function() return Tuono.Engine.Evaluate() end)
     if result and result.queue then
       for i, entry in ipairs(result.queue) do
         if entry.spellID then
           -- Check if spell is known
           local knownStatus = "unknown"
-          if OA.State and OA.State.knownUnavailable then
+          if Tuono.State and Tuono.State.knownUnavailable then
             knownStatus = "unavailable"
-          elseif OA.State and OA.State.knownSpells then
-            knownStatus = OA.State.knownSpells[entry.spellID] and "known" or "unknown"
+          elseif Tuono.State and Tuono.State.knownSpells then
+            knownStatus = Tuono.State.knownSpells[entry.spellID] and "known" or "unknown"
           end
 
           -- Check cooldown status
           local cdStatus = "none"
           if entry.kind == "cooldown" and entry.spellID then
-            local cd = OA.State.cooldowns[entry.spellID == OA.SpellIDs.adrenalineRush and "adrenalineRush" or
-                                        entry.spellID == OA.SpellIDs.bladeRush and "bladeRush" or
-                                        entry.spellID == OA.SpellIDs.preparation and "preparation" or nil]
+            local cd = Tuono.State.cooldowns[entry.spellID == Tuono.SpellIDs.adrenalineRush and "adrenalineRush" or
+                                        entry.spellID == Tuono.SpellIDs.bladeRush and "bladeRush" or
+                                        entry.spellID == Tuono.SpellIDs.preparation and "preparation" or nil]
             if cd then
               if not cd.known then
                 cdStatus = "unknown"
@@ -312,22 +312,22 @@ local function debug()
               if bindingName and GetBindingKey then
                 keytext = GetBindingKey(bindingName)
               end
-              OA.print("  [" .. i .. "] spellID=" .. entry.spellID .. " known=" .. knownStatus .. " cd=" .. cdStatus .. " key=" .. (keytext or "unbound"))
+              Tuono.print("  [" .. i .. "] spellID=" .. entry.spellID .. " known=" .. knownStatus .. " cd=" .. cdStatus .. " key=" .. (keytext or "unbound"))
             else
-              OA.print("  [" .. i .. "] spellID=" .. entry.spellID .. " known=" .. knownStatus .. " cd=" .. cdStatus .. " (keybind resolution failed)")
+              Tuono.print("  [" .. i .. "] spellID=" .. entry.spellID .. " known=" .. knownStatus .. " cd=" .. cdStatus .. " (keybind resolution failed)")
             end
           else
-            OA.print("  [" .. i .. "] spellID=" .. entry.spellID .. " known=" .. knownStatus .. " cd=" .. cdStatus)
+            Tuono.print("  [" .. i .. "] spellID=" .. entry.spellID .. " known=" .. knownStatus .. " cd=" .. cdStatus)
           end
         elseif entry.itemSlot then
-          OA.print("  [" .. i .. "] trinket slot=" .. entry.itemSlot)
+          Tuono.print("  [" .. i .. "] trinket slot=" .. entry.itemSlot)
         end
       end
     end
   end
 
-  if OA.errorCount and OA.errorCount > 0 then
-    OA.print("Errors since load: " .. OA.errorCount)
+  if Tuono.errorCount and Tuono.errorCount > 0 then
+    Tuono.print("Errors since load: " .. Tuono.errorCount)
   end
 end
 
@@ -335,7 +335,7 @@ local watchState = nil
 
 local function watch()
   if watchState and watchState.active then
-    OA.print("Watch already running - wait for current run to finish or restart WoW")
+    Tuono.print("Watch already running - wait for current run to finish or restart WoW")
     return
   end
 
@@ -350,8 +350,8 @@ local function watch()
   }
 
   -- Wrap Assist.Update to collect samples
-  local originalUpdate = OA.Assist.Update
-  function OA.Assist.Update()
+  local originalUpdate = Tuono.Assist.Update
+  function Tuono.Assist.Update()
     originalUpdate()
 
     local now = GetTime()
@@ -363,10 +363,10 @@ local function watch()
       watchState.sampleCount = watchState.sampleCount + 1
 
       -- Record nextSpellID
-      table.insert(watchState.samples, OA.Assist.nextSpellID or 0)
+      table.insert(watchState.samples, Tuono.Assist.nextSpellID or 0)
 
       -- Record rotation list snapshot
-      local rotationSpells = OA.safe(function()
+      local rotationSpells = Tuono.safe(function()
         return C_AssistedCombat and C_AssistedCombat.GetRotationSpells() or {}
       end) or {}
       local snapshot = {}
@@ -388,7 +388,7 @@ local function watch()
       watchState.active = false
 
       -- Restore original Update
-      OA.Assist.Update = originalUpdate
+      Tuono.Assist.Update = originalUpdate
 
       -- Analyze results
       local samples = watchState.samples
@@ -430,20 +430,20 @@ local function watch()
         end
       end
 
-      OA.print("=== /oa watch results (15 second sample) ===")
-      OA.print("Distinct nextSpellID values: " .. distinctCount)
-      OA.print("Position 1 changes: " .. changeCount)
-      OA.print("Rotation list changed: " .. (rotationChanged and "YES (list is live)" or "NO (list is static)"))
-      OA.print("Samples collected: " .. watchState.sampleCount)
-      OA.print("Last change timestamp: " .. string.format("%.2f", OA.Assist.lastChangeAt or 0))
-      OA.print("Paste this output if queue appears frozen in combat")
+      Tuono.print("=== /tuono watch results (15 second sample) ===")
+      Tuono.print("Distinct nextSpellID values: " .. distinctCount)
+      Tuono.print("Position 1 changes: " .. changeCount)
+      Tuono.print("Rotation list changed: " .. (rotationChanged and "YES (list is live)" or "NO (list is static)"))
+      Tuono.print("Samples collected: " .. watchState.sampleCount)
+      Tuono.print("Last change timestamp: " .. string.format("%.2f", Tuono.Assist.lastChangeAt or 0))
+      Tuono.print("Paste this output if queue appears frozen in combat")
 
       watchState = nil
     end
   end
 
-  OA.print("Watch started - sampling queue liveness for 15 seconds")
-  OA.print("Run this during combat or while casting off-rotation for best results")
+  Tuono.print("Watch started - sampling queue liveness for 15 seconds")
+  Tuono.print("Run this during combat or while casting off-rotation for best results")
 end
 
 -- === Proc Observability Probe ===
@@ -451,7 +451,7 @@ local procProbeState = nil
 
 local function procProbe()
   if procProbeState and procProbeState.active then
-    OA.print("Proc probe already running - wait for current run to finish or restart WoW")
+    Tuono.print("Proc probe already running - wait for current run to finish or restart WoW")
     return
   end
 
@@ -533,9 +533,9 @@ local function procProbe()
     end
   end
 
-  if not OA.eventHandlers then OA.eventHandlers = {} end
-  if not OA.eventHandlers["UNIT_AURA"] then OA.eventHandlers["UNIT_AURA"] = {} end
-  table.insert(OA.eventHandlers["UNIT_AURA"], probeUnitAuraHandler)
+  if not Tuono.eventHandlers then Tuono.eventHandlers = {} end
+  if not Tuono.eventHandlers["UNIT_AURA"] then Tuono.eventHandlers["UNIT_AURA"] = {} end
+  table.insert(Tuono.eventHandlers["UNIT_AURA"], probeUnitAuraHandler)
 
   -- Track ASSISTED events
   local assistedEventHandler = function(event, ...)
@@ -543,10 +543,10 @@ local function procProbe()
       procProbeState.assistedEvents = procProbeState.assistedEvents + 1
     end
   end
-  if not OA.eventHandlers["ASSISTED_COMBAT_ACTION_CHANGED"] then
-    OA.eventHandlers["ASSISTED_COMBAT_ACTION_CHANGED"] = {}
+  if not Tuono.eventHandlers["ASSISTED_COMBAT_ACTION_CHANGED"] then
+    Tuono.eventHandlers["ASSISTED_COMBAT_ACTION_CHANGED"] = {}
   end
-  table.insert(OA.eventHandlers["ASSISTED_COMBAT_ACTION_CHANGED"], assistedEventHandler)
+  table.insert(Tuono.eventHandlers["ASSISTED_COMBAT_ACTION_CHANGED"], assistedEventHandler)
 
   -- Enumerate available API functions
   local assistedFuncs = {}
@@ -565,8 +565,8 @@ local function procProbe()
   end
 
   -- Wrap Assist.Update to collect samples
-  local originalUpdate = OA.Assist.Update
-  function OA.Assist.Update()
+  local originalUpdate = Tuono.Assist.Update
+  function Tuono.Assist.Update()
     originalUpdate()
 
     local now = GetTime()
@@ -678,25 +678,25 @@ local function procProbe()
       procProbeState.active = false
 
       -- Restore original Update and handlers
-      OA.Assist.Update = originalUpdate
-      if OA.eventHandlers and OA.eventHandlers["UNIT_AURA"] then
-        for i = #OA.eventHandlers["UNIT_AURA"], 1, -1 do
-          if OA.eventHandlers["UNIT_AURA"][i] == probeUnitAuraHandler then
-            table.remove(OA.eventHandlers["UNIT_AURA"], i)
+      Tuono.Assist.Update = originalUpdate
+      if Tuono.eventHandlers and Tuono.eventHandlers["UNIT_AURA"] then
+        for i = #Tuono.eventHandlers["UNIT_AURA"], 1, -1 do
+          if Tuono.eventHandlers["UNIT_AURA"][i] == probeUnitAuraHandler then
+            table.remove(Tuono.eventHandlers["UNIT_AURA"], i)
           end
         end
       end
-      if OA.eventHandlers and OA.eventHandlers["ASSISTED_COMBAT_ACTION_CHANGED"] then
-        for i = #OA.eventHandlers["ASSISTED_COMBAT_ACTION_CHANGED"], 1, -1 do
-          if OA.eventHandlers["ASSISTED_COMBAT_ACTION_CHANGED"][i] == assistedEventHandler then
-            table.remove(OA.eventHandlers["ASSISTED_COMBAT_ACTION_CHANGED"], i)
+      if Tuono.eventHandlers and Tuono.eventHandlers["ASSISTED_COMBAT_ACTION_CHANGED"] then
+        for i = #Tuono.eventHandlers["ASSISTED_COMBAT_ACTION_CHANGED"], 1, -1 do
+          if Tuono.eventHandlers["ASSISTED_COMBAT_ACTION_CHANGED"][i] == assistedEventHandler then
+            table.remove(Tuono.eventHandlers["ASSISTED_COMBAT_ACTION_CHANGED"], i)
           end
         end
       end
 
       -- Report results
-      OA.print("=== /oa watch proc-observability probe (15 second sample) ===")
-      OA.print("")
+      Tuono.print("=== /tuono watch proc-observability probe (15 second sample) ===")
+      Tuono.print("")
 
       -- Aura observability section
       local verdict = "NONE"
@@ -716,7 +716,7 @@ local function procProbe()
           fields = "mixed"
         end
 
-        OA.print(string.format("%s: observable=%s, fields=%s, delta_added=%d(readable=%d,secret=%d)",
+        Tuono.print(string.format("%s: observable=%s, fields=%s, delta_added=%d(readable=%d,secret=%d)",
           aura.name, observable, fields,
           auraState.deltaAddedCount, auraState.deltaAddedReadable, auraState.deltaAddedSecret))
 
@@ -725,8 +725,8 @@ local function procProbe()
         end
       end
 
-      OA.print("")
-      OA.print(string.format("Delta events: total=%d, fullUpdate=%d", procProbeState.deltaEvents, procProbeState.deltaFullUpdate))
+      Tuono.print("")
+      Tuono.print(string.format("Delta events: total=%d, fullUpdate=%d", procProbeState.deltaEvents, procProbeState.deltaFullUpdate))
 
       if directWorks then
         verdict = "DIRECT"
@@ -734,39 +734,39 @@ local function procProbe()
         verdict = "DELTA-ONLY"
       end
 
-      OA.print("PROC OBSERVABILITY: " .. verdict)
+      Tuono.print("PROC OBSERVABILITY: " .. verdict)
 
       -- Accessor liveness section
-      OA.print("")
-      OA.print("=== Accessor Liveness ===")
+      Tuono.print("")
+      Tuono.print("=== Accessor Liveness ===")
 
       local distinctFalse = 0
       for _ in pairs(procProbeState.accessors.getNextSpellFalse.values) do
         distinctFalse = distinctFalse + 1
       end
-      OA.print(string.format("GetNextCastSpell(false): distinct=%d, changes=%d", distinctFalse, procProbeState.accessors.getNextSpellFalse.changes))
+      Tuono.print(string.format("GetNextCastSpell(false): distinct=%d, changes=%d", distinctFalse, procProbeState.accessors.getNextSpellFalse.changes))
 
       local distinctTrue = 0
       for _ in pairs(procProbeState.accessors.getNextSpellTrue.values) do
         distinctTrue = distinctTrue + 1
       end
-      OA.print(string.format("GetNextCastSpell(true): distinct=%d, changes=%d", distinctTrue, procProbeState.accessors.getNextSpellTrue.changes))
+      Tuono.print(string.format("GetNextCastSpell(true): distinct=%d, changes=%d", distinctTrue, procProbeState.accessors.getNextSpellTrue.changes))
 
       local distinctActions = 0
       for _ in pairs(procProbeState.accessors.getActionSpells.values) do
         distinctActions = distinctActions + 1
       end
-      OA.print(string.format("GetActionSpell(...): distinct=%d, changes=%d", distinctActions, procProbeState.accessors.getActionSpells.changes))
+      Tuono.print(string.format("GetActionSpell(...): distinct=%d, changes=%d", distinctActions, procProbeState.accessors.getActionSpells.changes))
 
       -- API inventory
-      OA.print("")
-      OA.print("C_AssistedCombat functions: " .. table.concat(assistedFuncs, ", "))
+      Tuono.print("")
+      Tuono.print("C_AssistedCombat functions: " .. table.concat(assistedFuncs, ", "))
       if #actionBarFuncs > 0 then
-        OA.print("C_ActionBar Assisted-related functions: " .. table.concat(actionBarFuncs, ", "))
+        Tuono.print("C_ActionBar Assisted-related functions: " .. table.concat(actionBarFuncs, ", "))
       else
-        OA.print("C_ActionBar Assisted-related functions: (none found)")
+        Tuono.print("C_ActionBar Assisted-related functions: (none found)")
       end
-      OA.print("ASSISTED-prefixed events: " .. procProbeState.assistedEvents)
+      Tuono.print("ASSISTED-prefixed events: " .. procProbeState.assistedEvents)
 
       -- Determine best accessor
       local liveAccessor = "NONE"
@@ -779,19 +779,19 @@ local function procProbe()
         liveAccessor = "GetActionSpell(...)"
       end
 
-      OA.print("")
-      OA.print("LIVE ACCESSOR: " .. liveAccessor)
-      OA.print("Paste this output to Claude")
+      Tuono.print("")
+      Tuono.print("LIVE ACCESSOR: " .. liveAccessor)
+      Tuono.print("Paste this output to Claude")
 
       procProbeState = nil
     end
   end
 
-  OA.print("Proc probe started - sampling aura observability and accessor liveness for 15 seconds")
-  OA.print("Run this during active combat with proc-triggering actions for best results")
+  Tuono.print("Proc probe started - sampling aura observability and accessor liveness for 15 seconds")
+  Tuono.print("Run this during active combat with proc-triggering actions for best results")
 end
 
-OA.RegisterSlash("apitest", apitest, "Run API compatibility probe")
-OA.RegisterSlash("debug", debug, "Print one-shot state dump")
-OA.RegisterSlash("watch", watch, "Sample queue liveness for 15s; run during combat when queue frozen")
-OA.RegisterSlash("probe", procProbe, "Sample proc observability for 15s; run during combat")
+Tuono.RegisterSlash("apitest", apitest, "Run API compatibility probe")
+Tuono.RegisterSlash("debug", debug, "Print one-shot state dump")
+Tuono.RegisterSlash("watch", watch, "Sample queue liveness for 15s; run during combat when queue frozen")
+Tuono.RegisterSlash("probe", procProbe, "Sample proc observability for 15s; run during combat")

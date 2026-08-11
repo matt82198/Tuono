@@ -143,38 +143,38 @@ _G.STANDARD_TEXT_FONT = "font"
 -- ---------------------------------------------------------------------------
 -- Load the addon in real TOC order.
 -- ---------------------------------------------------------------------------
-local OA = {}
+local Tuono = {}
 local TOC = {
-  "OutlawAssist/Core.lua",
-  "OutlawAssist/Profiles.lua",
-  "OutlawAssist/UserRules.lua",
-  "OutlawAssist/profiles/OutlawRogue.lua",
-  "OutlawAssist/data/rules.lua",
-  "OutlawAssist/StateTracker.lua",
-  "OutlawAssist/AssistReader.lua",
-  "OutlawAssist/Rotation.lua",
-  "OutlawAssist/EnergyModel.lua",
-  "OutlawAssist/IntelligenceLayer.lua",
-  "OutlawAssist/Config.lua",   -- owns OA.defaults; without it OA.db is nil
+  "Tuono/Core.lua",
+  "Tuono/Profiles.lua",
+  "Tuono/UserRules.lua",
+  "Tuono/profiles/OutlawRogue.lua",
+  "Tuono/data/rules.lua",
+  "Tuono/StateTracker.lua",
+  "Tuono/AssistReader.lua",
+  "Tuono/Rotation.lua",
+  "Tuono/EnergyModel.lua",
+  "Tuono/IntelligenceLayer.lua",
+  "Tuono/Config.lua",   -- owns Tuono.defaults; without it Tuono.db is nil
 }
 for _, file in ipairs(TOC) do
   local fn, err = loadfile(file)
   if not fn then print("FATAL: cannot load " .. file .. ": " .. tostring(err)) os.exit(1) end
-  local ok, lerr = pcall(fn, "OutlawAssist", OA)
+  local ok, lerr = pcall(fn, "Tuono", Tuono)
   if not ok then print("FATAL: error in " .. file .. ": " .. tostring(lerr)) os.exit(1) end
 end
 
-OA.db = OA.defaults or {}
-OA.State.inCombat = true
+Tuono.db = Tuono.defaults or {}
+Tuono.State.inCombat = true
 
--- Core.lua drives each stage through OA.safe (a pcall), so a throw inside one stage is
+-- Core.lua drives each stage through Tuono.safe (a pcall), so a throw inside one stage is
 -- swallowed and merely leaves that stage's state stale. Mirror that exactly: a test
 -- that let the error propagate would report a crash where production reports a FREEZE,
 -- and the freeze is the behaviour under test.
 local function tick(dt)
   clock = clock + (dt or 0.1)
-  pcall(OA.State.RefreshFast)
-  pcall(OA.Assist.Update)
+  pcall(Tuono.State.RefreshFast)
+  pcall(Tuono.Assist.Update)
 end
 
 -- ===========================================================================
@@ -186,9 +186,9 @@ end
 -- broken -- which is exactly how the first draft of this assertion fooled itself.
 local function starveCooldowns()
   scenario.cdActive = {}
-  for _, id in pairs(OA.SpellIDs) do scenario.cdActive[id] = true end
-  scenario.cdActive[OA.SpellIDs.sinisterStrike] = false
-  scenario.cdActive[OA.SpellIDs.dispatch] = false
+  for _, id in pairs(Tuono.SpellIDs) do scenario.cdActive[id] = true end
+  scenario.cdActive[Tuono.SpellIDs.sinisterStrike] = false
+  scenario.cdActive[Tuono.SpellIDs.dispatch] = false
 end
 
 scenario.energySecret = false
@@ -202,16 +202,16 @@ tick(0.1)
 -- Pre-fix this was a confident 0 ("you have no energy"). The shadow model must instead
 -- carry a real positive estimate seeded from the last measurement.
 check("R2: secret energy yields a positive ESTIMATE, not a confident zero",
-  OA.State.energy > 0 and OA.State.energyKnown == true,
-  "energy=" .. tostring(OA.State.energy)
-    .. " known=" .. tostring(OA.State.energyKnown)
-    .. " source=" .. tostring(OA.State.energySource))
+  Tuono.State.energy > 0 and Tuono.State.energyKnown == true,
+  "energy=" .. tostring(Tuono.State.energy)
+    .. " known=" .. tostring(Tuono.State.energyKnown)
+    .. " source=" .. tostring(Tuono.State.energySource))
 
 check("R2: energy is labelled as an estimate, not as a measurement",
-  OA.State.energySource == "estimated" or OA.State.energySource == "stale",
-  "energySource=" .. tostring(OA.State.energySource))
+  Tuono.State.energySource == "estimated" or Tuono.State.energySource == "stale",
+  "energySource=" .. tostring(Tuono.State.energySource))
 
-local preds = OA.Rotation.Predict(OA.State, 4)
+local preds = Tuono.Rotation.Predict(Tuono.State, 4)
 check("R2: secret energy still yields a 4-step sequence",
   preds and #preds >= 4,
   "got " .. tostring(preds and #preds or "nil") .. " steps")
@@ -221,13 +221,13 @@ check("R2: secret energy still yields a 4-step sequence",
 -- ===========================================================================
 scenario.comboPoints = 0
 scenario.cdActive = {}
-for _, id in pairs(OA.SpellIDs) do scenario.cdActive[id] = true end
-scenario.cdActive[OA.SpellIDs.sinisterStrike] = false
+for _, id in pairs(Tuono.SpellIDs) do scenario.cdActive[id] = true end
+scenario.cdActive[Tuono.SpellIDs.sinisterStrike] = false
 tick(0.1)
-local seq = OA.Rotation.Predict(OA.State, 4)
+local seq = Tuono.Rotation.Predict(Tuono.State, 4)
 local ssCount = 0
 for _, p in ipairs(seq or {}) do
-  if p.spellID == OA.SpellIDs.sinisterStrike then ssCount = ssCount + 1 end
+  if p.spellID == Tuono.SpellIDs.sinisterStrike then ssCount = ssCount + 1 end
 end
 check("R2b: repeated builder appears once per step (wheel shows repeats)",
   ssCount >= 2,
@@ -238,25 +238,25 @@ check("R2b: repeated builder appears once per step (wheel shows repeats)",
 -- ===========================================================================
 scenario.cooldownSecret = true
 scenario.cdActive = {}
-scenario.cdActive[OA.SpellIDs.adrenalineRush] = false   -- AR is READY
-scenario.cdActive[OA.SpellIDs.bladeRush] = true         -- Blade Rush is ON COOLDOWN
+scenario.cdActive[Tuono.SpellIDs.adrenalineRush] = false   -- AR is READY
+scenario.cdActive[Tuono.SpellIDs.bladeRush] = true         -- Blade Rush is ON COOLDOWN
 tick(0.1)
 
 check("R3: ready cooldown is known-and-ready despite secret timer",
-  OA.State.cooldowns.adrenalineRush.known == true
-    and OA.State.cooldowns.adrenalineRush.ready == true,
-  "known=" .. tostring(OA.State.cooldowns.adrenalineRush.known)
-    .. " ready=" .. tostring(OA.State.cooldowns.adrenalineRush.ready))
+  Tuono.State.cooldowns.adrenalineRush.known == true
+    and Tuono.State.cooldowns.adrenalineRush.ready == true,
+  "known=" .. tostring(Tuono.State.cooldowns.adrenalineRush.known)
+    .. " ready=" .. tostring(Tuono.State.cooldowns.adrenalineRush.ready))
 
 check("R3: running cooldown is known-and-not-ready despite secret timer",
-  OA.State.cooldowns.bladeRush.known == true
-    and OA.State.cooldowns.bladeRush.ready == false,
-  "known=" .. tostring(OA.State.cooldowns.bladeRush.known)
-    .. " ready=" .. tostring(OA.State.cooldowns.bladeRush.ready))
+  Tuono.State.cooldowns.bladeRush.known == true
+    and Tuono.State.cooldowns.bladeRush.ready == false,
+  "known=" .. tostring(Tuono.State.cooldowns.bladeRush.known)
+    .. " ready=" .. tostring(Tuono.State.cooldowns.bladeRush.ready))
 
 check("R3: remaining is flagged unreadable so the UI will not draw a fake number",
-  OA.State.cooldowns.adrenalineRush.remainingKnown == false,
-  "remainingKnown=" .. tostring(OA.State.cooldowns.adrenalineRush.remainingKnown))
+  Tuono.State.cooldowns.adrenalineRush.remainingKnown == false,
+  "remainingKnown=" .. tostring(Tuono.State.cooldowns.adrenalineRush.remainingKnown))
 
 -- ===========================================================================
 -- R1: secret IsAvailable() must not freeze Blizzard's pick
@@ -265,19 +265,19 @@ scenario.cooldownSecret = false
 scenario.assistSecretAvail = true
 scenario.assistNext = 111
 tick(0.1)
-local first = OA.Assist.nextSpellID
+local first = Tuono.Assist.nextSpellID
 scenario.assistNext = 222
 tick(0.1)
-local second = OA.Assist.nextSpellID
+local second = Tuono.Assist.nextSpellID
 
 check("R1: assist pick still updates when IsAvailable() is secret",
   first == 111 and second == 222,
   "first=" .. tostring(first) .. " second=" .. tostring(second))
 
 check("R1: secret availability is recorded as unknown, not as 'off'",
-  OA.Assist.available == true and OA.Assist.availabilityKnown == false,
-  "available=" .. tostring(OA.Assist.available)
-    .. " known=" .. tostring(OA.Assist.availabilityKnown))
+  Tuono.Assist.available == true and Tuono.Assist.availabilityKnown == false,
+  "available=" .. tostring(Tuono.Assist.available)
+    .. " known=" .. tostring(Tuono.Assist.availabilityKnown))
 
 -- ===========================================================================
 -- Engine end-to-end: the queue the display actually renders
@@ -287,7 +287,7 @@ scenario.cooldownSecret = true
 scenario.comboPoints = 0
 scenario.cdActive = {}
 tick(0.1)
-local result = OA.Engine.Evaluate()
+local result = Tuono.Engine.Evaluate()
 check("E2E: engine emits a multi-entry queue under full secrecy",
   result and result.queue and #result.queue >= 2,
   "queue length " .. tostring(result and result.queue and #result.queue))
@@ -299,49 +299,49 @@ scenario.energySecret = false
 scenario.cooldownSecret = false
 scenario.cdActive = {}
 scenario.comboPoints = 0
-OA.db.aoeMode = "auto"
-OA.db.aoeThreshold = 2
+Tuono.db.aoeMode = "auto"
+Tuono.db.aoeThreshold = 2
 
-OA.State.enemyCount = 1
+Tuono.State.enemyCount = 1
 tick(0.1)
 check("AoE: single target below threshold",
-  OA.Rotation.ResolveMode(OA.State) == "single",
-  "mode=" .. tostring(OA.Rotation.mode) .. " reason=" .. tostring(OA.Rotation.modeReason))
+  Tuono.Rotation.ResolveMode(Tuono.State) == "single",
+  "mode=" .. tostring(Tuono.Rotation.mode) .. " reason=" .. tostring(Tuono.Rotation.modeReason))
 
-OA.State.enemyCount = 3
+Tuono.State.enemyCount = 3
 check("AoE: switches to AoE immediately at threshold",
-  OA.Rotation.ResolveMode(OA.State) == "aoe",
-  "mode=" .. tostring(OA.Rotation.mode))
+  Tuono.Rotation.ResolveMode(Tuono.State) == "aoe",
+  "mode=" .. tostring(Tuono.Rotation.mode))
 
 -- Drop below threshold: must HOLD AoE through the dwell window, not strobe back.
-OA.State.enemyCount = 1
+Tuono.State.enemyCount = 1
 clock = clock + 0.5
 check("AoE: holds AoE during dwell window (no strobing)",
-  OA.Rotation.ResolveMode(OA.State) == "aoe",
-  "mode=" .. tostring(OA.Rotation.mode) .. " reason=" .. tostring(OA.Rotation.modeReason))
+  Tuono.Rotation.ResolveMode(Tuono.State) == "aoe",
+  "mode=" .. tostring(Tuono.Rotation.mode) .. " reason=" .. tostring(Tuono.Rotation.modeReason))
 
 clock = clock + 3.0
 check("AoE: falls back to single target after dwell expires",
-  OA.Rotation.ResolveMode(OA.State) == "single",
-  "mode=" .. tostring(OA.Rotation.mode))
+  Tuono.Rotation.ResolveMode(Tuono.State) == "single",
+  "mode=" .. tostring(Tuono.Rotation.mode))
 
 -- Unreadable count must HOLD, never snap to single mid-pack.
-OA.State.enemyCount = 4
-OA.Rotation.ResolveMode(OA.State)
-OA.State.enemyCount = nil
+Tuono.State.enemyCount = 4
+Tuono.Rotation.ResolveMode(Tuono.State)
+Tuono.State.enemyCount = nil
 check("AoE: unreadable enemy count holds the current rotation",
-  OA.Rotation.ResolveMode(OA.State) == "aoe",
-  "mode=" .. tostring(OA.Rotation.mode) .. " reason=" .. tostring(OA.Rotation.modeReason))
+  Tuono.Rotation.ResolveMode(Tuono.State) == "aoe",
+  "mode=" .. tostring(Tuono.Rotation.mode) .. " reason=" .. tostring(Tuono.Rotation.modeReason))
 
 -- The two lists must actually differ, or the switch is cosmetic.
-OA.db.aoeMode = "off"
-OA.State.enemyCount = 5
+Tuono.db.aoeMode = "off"
+Tuono.State.enemyCount = 5
 scenario.comboPoints = 0
 tick(0.1)
-local stSeq = OA.Rotation.Predict(OA.State, 4)
-OA.db.aoeMode = "on"
+local stSeq = Tuono.Rotation.Predict(Tuono.State, 4)
+Tuono.db.aoeMode = "on"
 tick(0.1)
-local aoeSeq = OA.Rotation.Predict(OA.State, 4)
+local aoeSeq = Tuono.Rotation.Predict(Tuono.State, 4)
 local function firstOf(seq) return seq and seq[1] and seq[1].spellID end
 check("AoE: AoE list produces a different opener than single target",
   firstOf(stSeq) ~= nil and firstOf(aoeSeq) ~= nil and firstOf(stSeq) ~= firstOf(aoeSeq),
@@ -350,13 +350,13 @@ check("AoE: AoE list produces a different opener than single target",
 -- ===========================================================================
 -- User-editable rules compile and take effect
 -- ===========================================================================
-OA.db.aoeMode = "auto"
-local prof = OA.Profiles.Active()
+Tuono.db.aoeMode = "auto"
+local prof = Tuono.Profiles.Active()
 check("Profiles: Outlaw registered and active",
   prof ~= nil and prof.id == "outlaw-rogue",
   "active=" .. tostring(prof and prof.id))
 
-local rows = OA.UserRules.GetRows(prof, "single")
+local rows = Tuono.UserRules.GetRows(prof, "single")
 check("UserRules: built-in list seeds editable rows",
   rows and #rows > 0,
   "rows=" .. tostring(rows and #rows))
@@ -366,22 +366,22 @@ check("UserRules: built-in list seeds editable rows",
 -- The previous block left the engine in AoE mode with an unreadable count, so pin
 -- single-target explicitly: editing the "single" list proves nothing while the engine
 -- is reading the "aoe" one.
-OA.db.aoeMode = "off"
-OA.State.enemyCount = 1
+Tuono.db.aoeMode = "off"
+Tuono.State.enemyCount = 1
 table.insert(rows, 1, { spellKey = "dispatch", enabled = true, conditions = { { type = "always" } } })
 scenario.cdActive = {}
 scenario.comboPoints = 0
 tick(0.1)
-local custom = OA.Rotation.Predict(OA.State, 4)
+local custom = Tuono.Rotation.Predict(Tuono.State, 4)
 check("UserRules: user-ordered rule wins position 1",
-  custom and custom[1] and custom[1].spellID == OA.SpellIDs.dispatch,
+  custom and custom[1] and custom[1].spellID == Tuono.SpellIDs.dispatch,
   "got " .. tostring(custom and custom[1] and custom[1].spellID))
 
-OA.UserRules.ResetToDefault(prof.id, "single")
+Tuono.UserRules.ResetToDefault(prof.id, "single")
 tick(0.1)
-local restored = OA.Rotation.Predict(OA.State, 4)
+local restored = Tuono.Rotation.Predict(Tuono.State, 4)
 check("UserRules: reset restores the profile default",
-  restored and restored[1] and restored[1].spellID ~= OA.SpellIDs.dispatch,
+  restored and restored[1] and restored[1].spellID ~= Tuono.SpellIDs.dispatch,
   "got " .. tostring(restored and restored[1] and restored[1].spellID))
 
 print("")

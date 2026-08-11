@@ -1,4 +1,4 @@
-local ADDON_NAME, OA = ...
+local ADDON_NAME, Tuono = ...
 
 -- ============================================================================
 -- USER-EDITABLE PRIORITY RULES
@@ -14,8 +14,8 @@ local ADDON_NAME, OA = ...
 -- Conditions are COMPILED to a predicate at load; the editor never stores Lua.
 -- ============================================================================
 
-OA.UserRules = OA.UserRules or {}
-local U = OA.UserRules
+Tuono.UserRules = Tuono.UserRules or {}
+local U = Tuono.UserRules
 
 -- Condition vocabulary. `readable` documents whether the underlying value survives
 -- Midnight's secret-value system, so the editor can warn instead of letting someone
@@ -53,7 +53,7 @@ end
 -- Compile one condition into a predicate. Unknown-resource handling mirrors the engine:
 -- an unprovable "at least" fails, an unprovable "at most" passes. See Rotation.lua.
 local function compileCondition(cond, profile, ownSpellKey)
-	local H = function() return OA.RuleHelpers end
+	local H = function() return Tuono.RuleHelpers end
 	local ctype = cond.type
 
 	if ctype == "always" then
@@ -139,7 +139,7 @@ function U.Compile(row, profile)
 		when = function(S, A)
 			-- Affordability is enforced for every user rule, so the editor cannot produce
 			-- a row that recommends something the player provably cannot cast.
-			if not OA.RuleHelpers.canAfford(S, spellID) then return false end
+			if not Tuono.RuleHelpers.canAfford(S, spellID) then return false end
 			for _, p in ipairs(preds) do
 				local ok, res = pcall(p, S, A)
 				if not ok or not res then return false end
@@ -149,12 +149,12 @@ function U.Compile(row, profile)
 	}
 end
 
--- Storage: OA.db.profiles[profileId] = { priority = { row, ... } }
+-- Storage: Tuono.db.profiles[profileId] = { priority = { row, ... } }
 local function store(profileId)
-	OA.db = OA.db or {}
-	OA.db.profiles = OA.db.profiles or {}
-	OA.db.profiles[profileId] = OA.db.profiles[profileId] or {}
-	return OA.db.profiles[profileId]
+	Tuono.db = Tuono.db or {}
+	Tuono.db.profiles = Tuono.db.profiles or {}
+	Tuono.db.profiles[profileId] = Tuono.db.profiles[profileId] or {}
+	return Tuono.db.profiles[profileId]
 end
 U.Store = store
 
@@ -198,7 +198,7 @@ local function storeKey(kind)
 end
 
 function U.IsCustomised(profileId, kind)
-	local s = OA.db and OA.db.profiles and OA.db.profiles[profileId]
+	local s = Tuono.db and Tuono.db.profiles and Tuono.db.profiles[profileId]
 	return s ~= nil and s[storeKey(kind)] ~= nil
 end
 

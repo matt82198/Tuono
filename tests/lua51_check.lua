@@ -108,7 +108,7 @@ local function runLua51Check()
   end
 
   -- Read TOC to get file list (reuse toc_check logic)
-  local tocPath = "OutlawAssist/OutlawAssist.toc"
+  local tocPath = "Tuono/Tuono.toc"
   local tocContent = readFile(tocPath)
 
   test("toc file exists for scanning", function()
@@ -142,7 +142,7 @@ local function runLua51Check()
   -- Scan each TOC file for banned constructs
   test("all toc-listed files pass lua51 syntax check", function()
     for _, file in ipairs(tocFiles) do
-      local fullPath = "OutlawAssist/" .. file
+      local fullPath = "Tuono/" .. file
       local content = readFile(fullPath)
 
       if not content then

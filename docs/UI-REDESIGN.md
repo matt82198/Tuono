@@ -1,6 +1,6 @@
-# OutlawAssist UI Redesign Spec — The One Bar
+# Tuono UI Redesign Spec — The One Bar
 
-Status: DRAFT for implementation. Read-only inputs used: `OutlawAssist/Display.lua` (current
+Status: DRAFT for implementation. Read-only inputs used: `Tuono/Display.lua` (current
 impl), `README.md`, `docs/CONTRACT.md` (module contract), `docs/research/hekilight-analysis.md`
 (competitor), and the v1 UX audit (ship-blocker findings, cited throughout as **[AUDIT §n]**).
 
@@ -38,7 +38,7 @@ every subsequent gap is 4 px (`Display.lua:176,211-217` — `x = 48 + (i-2)*44` 
 icon 1). That inconsistency reads as a layout bug on close inspection. This spec uses one uniform
 6 px gap everywhere.
 
-**Fix over current impl:** the anchor/background is sized from `OA.db.display.iconCount`
+**Fix over current impl:** the anchor/background is sized from `Tuono.db.display.iconCount`
 (a *setting*) at `Init()` time, not from how many entries actually render each tick
 (`Display.lua:176-177`, sized once). If the user configures `iconCount=4` but the engine only
 ever fills 1 slot, they get one icon adrift in a dark box sized for four. **New behavior:** the
@@ -215,15 +215,15 @@ roughly the same implementation cost (one texture, tinted, instead of a full squ
 
 ### 3.4 Degraded / unknown state — per-icon overlay, never silent
 
-Per [AUDIT §4], this is the single worst failure mode identified: `OA.State.buffs.degraded` is
+Per [AUDIT §4], this is the single worst failure mode identified: `Tuono.State.buffs.degraded` is
 tracked but **never read by `Display.lua`** today, so a stale RtB/proc value keeps rendering with
 full visual confidence after Midnight's secret-value system has already made it unreliable — "a
 gold RtB border showing Stage 4 that is actually stale, with zero indicator." This spec makes
 degraded state impossible to render silently:
 
 - **Contract addition required** (flag for the Lua implementer, not just a Display-only change):
-  `OA.Engine.Evaluate()`'s queue entries need a `degraded` boolean, set true when the entry's
-  `kind` depends on aura tracking that `OA.State.buffs.degraded` currently taints (`rtb`,
+  `Tuono.Engine.Evaluate()`'s queue entries need a `degraded` boolean, set true when the entry's
+  `kind` depends on aura tracking that `Tuono.State.buffs.degraded` currently taints (`rtb`,
   `opener`, and any `cooldown`/`trinket` entry gated on a buff-derived condition like
   `adrenalineRush.up`). This is a small addition to the existing queue-entry shape documented in
   `docs/CONTRACT.md`'s "v0.3 Unified Queue Engine" addendum.
@@ -316,18 +316,18 @@ Per-icon hazard overlay + `?` badge on affected entries (§3.4), plus the strip-
 text "~ degraded data" (§3.6). Everything else renders normally — degraded is a data-trust signal
 layered onto specific entries, not a whole-bar state.
 
-### 4.4 Assist-API unavailable (`OA.Assist.available == false`)
+### 4.4 Assist-API unavailable (`Tuono.Assist.available == false`)
 
 Position 1 does **not** disappear or show a stale/frozen spell — it becomes a distinct
 placeholder tile: dashed grey outline (not the silver authority ring — there is no authority to
 show), a lock or "?" glyph in place of spell art, no keybind text (nothing to bind to). Positions
 2–8 **keep working** — per `docs/CONTRACT.md`, our derived entries (cooldown/trinket/rtb/opener)
-read `OA.State`/`StateTracker`, not `C_AssistedCombat`, so they don't actually depend on assist
+read `Tuono.State`/`StateTracker`, not `C_AssistedCombat`, so they don't actually depend on assist
 availability and should keep showing what they can. The strip-level chip (§3.6) states
 "Blizzard rotation assist unavailable" (already the exact advisory text `docs/CONTRACT.md`
 specifies IntelligenceLayer should emit — `{kind="rtb", text="Blizzard rotation assist
 unavailable", active=true}` — this spec just makes sure Display actually renders it, which per
-[AUDIT §1] it currently does not: `OA.Assist.available` is tracked but never read by
+[AUDIT §1] it currently does not: `Tuono.Assist.available` is tracked but never read by
 `Display.lua`).
 
 ### 4.5 Non-Outlaw spec (wrong class or wrong spec)
@@ -362,7 +362,7 @@ only so it isn't lost, not designed.
 **Must NOT animate:**
 
 - **Reordering among slots 2–8.** No slide/reflow when entries change position in the array
-  between ticks. Per [AUDIT §4]'s own note, `OA.Assist.deviated` reordering was flagged as a
+  between ticks. Per [AUDIT §4]'s own note, `Tuono.Assist.deviated` reordering was flagged as a
   "missed opportunity... to reduce perceived flicker" — this spec resolves that by making
   reordering *silent* (snap, no tween) rather than adding motion to it; only content changes (new
   entry present/absent) animate, not position changes among entries that were already visible.
@@ -389,14 +389,14 @@ only so it isn't lost, not designed.
   "colorblind mode" toggle, since the encoding is redundant by construction, not color-alone with
   a fallback.
 - **Optional accessibility toggle (flag for backlog, not required for v1 of this redesign):**
-  `/oa toggle labels` — replaces shape badges with 3-letter text tags (`CD`, `TRI`, `RTB`, `OPN`)
+  `/tuono toggle labels` — replaces shape badges with 3-letter text tags (`CD`, `TRI`, `RTB`, `OPN`)
   for users who want maximum unambiguous clarity at the cost of a slightly busier icon corner.
-- **Scaling:** respect existing `/oa scale <0.5-2>` uniformly — icon, ring, badge, and keybind
+- **Scaling:** respect existing `/tuono scale <0.5-2>` uniformly — icon, ring, badge, and keybind
   font all live under the single scaled `anchor` frame (already true today,
   `anchor:SetScale(scale)`, `Display.lua:179`), so nothing in this spec needs independent
   per-element scale handling. Practical note for the implementer: below ~0.6 scale the keybind
   text (§3.7, ~11–13 px baseline) becomes hard to read — not worth hard-blocking, but worth a
-  one-line mention in `/oa scale`'s help text.
+  one-line mention in `/tuono scale`'s help text.
 - **No screen-reader path exists for WoW addon frames** — not solvable at the UI layer. The
   closest available accessibility win in-scope for a future pass is populating `OnEnter`/`OnLeave`
   tooltips with the human-readable reason text (see Build Order §8 item 8, and [AUDIT §3]'s
@@ -468,8 +468,8 @@ Engine-side contract addition noted in §7; item 8 is the largest lift and comes
    no logic change, directly satisfies "Blizzard's pick vs. ours" requirement and anchors the
    information hierarchy in §2.
 4. **Wire degraded/unavailable state into `Display.lua` (§3.4, §4.3, §4.4).** Closes the [AUDIT §4]
-   P0 "silent wrongness" ship-blocker — the data already exists (`OA.State.buffs.degraded`,
-   `OA.Assist.available`), this item is almost entirely about finally rendering it. Needs the
+   P0 "silent wrongness" ship-blocker — the data already exists (`Tuono.State.buffs.degraded`,
+   `Tuono.Assist.available`), this item is almost entirely about finally rendering it. Needs the
    `entry.degraded` contract addition (§7) as a small prerequisite.
 5. **Replace full-square kind-color wash with thin ring + shape badge (§3.3).** Fixes the
    orange/gold hue-confusion and low-contrast-default findings from [AUDIT §3] categorically
@@ -478,7 +478,7 @@ Engine-side contract addition noted in §7; item 8 is the largest lift and comes
 6. **Content-driven dynamic strip resize (§1.1).** Fixes the "oversized empty background around
    one icon" glitch; small, self-contained, purely `Render()`-side.
 7. **Change-pulse (position 1) and pop-in (new 2–8 entries) motion (§5).** Adds the "I can feel it
-   recalculating" cue the audit implicitly asked for (its note on `OA.Assist.deviated` as "a
+   recalculating" cue the audit implicitly asked for (its note on `Tuono.Assist.deviated` as "a
    missed opportunity... to reduce perceived flicker"); depends on items 1–3 being in place so
    there's a stable visual target to animate.
 8. **`OnEnter`/`OnLeave` tooltip surfacing the rule's reason text (§6, referenced from [AUDIT §3]

@@ -1,4 +1,4 @@
-local ADDON_NAME, OA = ...
+local ADDON_NAME, Tuono = ...
 
 -- ============================================================================
 -- ROTATION ENGINE (spec-agnostic)
@@ -12,16 +12,16 @@ local ADDON_NAME, OA = ...
 -- at 0 combo points is "Sinister Strike four times", the wheel must show four icons.
 -- ============================================================================
 
-OA.Rotation = OA.Rotation or {}
+Tuono.Rotation = Tuono.Rotation or {}
 
 -- Derived from the active profile on every activation. Published because
 -- IntelligenceLayer, Display and EnergyModel all need to map a spellID to its cost or
 -- its cooldown key.
-OA.Rotation.ABILITIES = {}
-OA.Rotation.SPELL_TO_CDKEY = {}
+Tuono.Rotation.ABILITIES = {}
+Tuono.Rotation.SPELL_TO_CDKEY = {}
 
-local ABILITIES = OA.Rotation.ABILITIES
-local SPELL_TO_CDKEY = OA.Rotation.SPELL_TO_CDKEY
+local ABILITIES = Tuono.Rotation.ABILITIES
+local SPELL_TO_CDKEY = Tuono.Rotation.SPELL_TO_CDKEY
 
 local function rebuildFromProfile(profile)
 	for k in pairs(ABILITIES) do ABILITIES[k] = nil end
@@ -38,15 +38,15 @@ local function rebuildFromProfile(profile)
 	end
 end
 
-OA.Profiles.OnActivate(rebuildFromProfile)
+Tuono.Profiles.OnActivate(rebuildFromProfile)
 -- A profile may already be active (registration activates the first one, and profiles
 -- load before this file), so build once immediately rather than waiting for the next
 -- activation that may never come.
-rebuildFromProfile(OA.Profiles.Active())
+rebuildFromProfile(Tuono.Profiles.Active())
 
 -- ---------------------------------------------------------------------------
 -- Rule helpers, published for profiles to use. Profiles load BEFORE this file, so they
--- must reference these lazily (OA.RuleHelpers.x inside a closure), never capture them.
+-- must reference these lazily (Tuono.RuleHelpers.x inside a closure), never capture them.
 -- ---------------------------------------------------------------------------
 
 -- Read-only fallback for a cooldown key the profile does not track. NEVER hand this out
@@ -57,7 +57,7 @@ local function cdOf(S, key)
 	if not (S and S.cooldowns and key) then return UNTRACKED_CD_RO end
 	local t = S.cooldowns[key]
 	if t == nil then
-		-- Create in the VIRTUAL state (deepCopyState isolates it from OA.State) so
+		-- Create in the VIRTUAL state (deepCopyState isolates it from Tuono.State) so
 		-- simulated writes land somewhere real instead of on the shared sentinel.
 		t = { known = false, ready = true, remaining = 0 }
 		S.cooldowns[key] = t
@@ -130,7 +130,7 @@ local function canAfford(S, spellID)
 	return S.energy >= ability.cost
 end
 
-OA.RuleHelpers = {
+Tuono.RuleHelpers = {
 	cdOf = cdOf,
 	finisherThreshold = finisherThreshold,
 	cpCap = cpCap,
@@ -217,12 +217,12 @@ end
 -- below it continuously for a dwell period.
 local AOE_DWELL_SECONDS = 2.0
 
-OA.Rotation.mode = "single"
-OA.Rotation.modeReason = "init"
+Tuono.Rotation.mode = "single"
+Tuono.Rotation.modeReason = "init"
 local belowThresholdSince = nil
 
-function OA.Rotation.ResolveMode(S)
-	local db = OA.db or {}
+function Tuono.Rotation.ResolveMode(S)
+	local db = Tuono.db or {}
 	local threshold = db.aoeThreshold or 2
 
 	-- aoeMode is a tri-state: "auto" | "on" | "off". A manual pin wins outright and is
@@ -232,12 +232,12 @@ function OA.Rotation.ResolveMode(S)
 	if pin == true then pin = "on" elseif pin == false then pin = "auto" end
 	if pin == "on" then
 		belowThresholdSince = nil
-		OA.Rotation.mode, OA.Rotation.modeReason = "aoe", "pinned AoE"
+		Tuono.Rotation.mode, Tuono.Rotation.modeReason = "aoe", "pinned AoE"
 		return "aoe"
 	end
 	if pin == "off" then
 		belowThresholdSince = nil
-		OA.Rotation.mode, OA.Rotation.modeReason = "single", "pinned single"
+		Tuono.Rotation.mode, Tuono.Rotation.modeReason = "single", "pinned single"
 		return "single"
 	end
 
@@ -245,37 +245,37 @@ function OA.Rotation.ResolveMode(S)
 	if count == nil then
 		-- Count unreadable: HOLD the current mode rather than snapping to single-target.
 		-- Treating "cannot tell" as "one enemy" would drop AoE mid-pack.
-		OA.Rotation.modeReason = "count unreadable (holding)"
-		return OA.Rotation.mode
+		Tuono.Rotation.modeReason = "count unreadable (holding)"
+		return Tuono.Rotation.mode
 	end
 
 	local now = GetTime()
 	if count >= threshold then
 		belowThresholdSince = nil
-		OA.Rotation.mode, OA.Rotation.modeReason = "aoe", count .. " enemies"
+		Tuono.Rotation.mode, Tuono.Rotation.modeReason = "aoe", count .. " enemies"
 		return "aoe"
 	end
 
-	if OA.Rotation.mode == "aoe" then
+	if Tuono.Rotation.mode == "aoe" then
 		belowThresholdSince = belowThresholdSince or now
 		if (now - belowThresholdSince) < AOE_DWELL_SECONDS then
-			OA.Rotation.modeReason = "dwell (" .. count .. " enemies)"
+			Tuono.Rotation.modeReason = "dwell (" .. count .. " enemies)"
 			return "aoe"
 		end
 	end
 
 	belowThresholdSince = nil
-	OA.Rotation.mode, OA.Rotation.modeReason = "single", count .. " enemies"
+	Tuono.Rotation.mode, Tuono.Rotation.modeReason = "single", count .. " enemies"
 	return "single"
 end
 
 -- ---------------------------------------------------------------------------
 -- Predict: returns an array of { spellID, confidence, reason }, possibly empty.
 -- ---------------------------------------------------------------------------
-function OA.Rotation.Predict(state, steps)
+function Tuono.Rotation.Predict(state, steps)
 	if not state then return nil end
 
-	local profile = OA.Profiles.Active()
+	local profile = Tuono.Profiles.Active()
 	if not profile then return {} end
 	local spells = profile.spells or {}
 
@@ -293,21 +293,21 @@ function OA.Rotation.Predict(state, steps)
 	local S = deepCopyState(state)
 
 	-- Pick which of the profile's two rotations feeds the bar this tick.
-	local mode = OA.Rotation.ResolveMode(state)
+	local mode = Tuono.Rotation.ResolveMode(state)
 	local sourceList
 	if mode == "aoe" then
 		-- A profile without a dedicated AoE list falls back to single-target rather than
 		-- rendering nothing; not every spec needs two.
-		sourceList = OA.UserRules.EffectivePriority(profile, "aoe")
+		sourceList = Tuono.UserRules.EffectivePriority(profile, "aoe")
 		if not sourceList or #sourceList == 0 then
-			sourceList = OA.UserRules.EffectivePriority(profile, "single")
+			sourceList = Tuono.UserRules.EffectivePriority(profile, "single")
 		end
 	else
-		sourceList = OA.UserRules.EffectivePriority(profile, "single")
+		sourceList = Tuono.UserRules.EffectivePriority(profile, "single")
 	end
 
 	local priorityList = buildActivePriorityList(sourceList or {}, state.knownSpells or {}, spells)
-	OA.Rotation.activeRuleCount = #priorityList
+	Tuono.Rotation.activeRuleCount = #priorityList
 
 	local result = {}
 	local maxEnergy = 100

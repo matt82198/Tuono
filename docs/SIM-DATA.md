@@ -8,7 +8,7 @@
 
 ## Overview
 
-The `OutlawAssist/data/rules.lua` file contains the decision logic that powers rotation recommendations. These rules are distilled from SimulationCraft APL (Action Priority List) profiles, which encode the optimal rotation strategy for each patch.
+The `Tuono/data/rules.lua` file contains the decision logic that powers rotation recommendations. These rules are distilled from SimulationCraft APL (Action Priority List) profiles, which encode the optimal rotation strategy for each patch.
 
 This document describes how to refresh the rules when patches update SimulationCraft profiles.
 
@@ -69,7 +69,7 @@ Example output:
 - Orphaned rules (section 2) = rules for removed or renamed actions; consider deprecating them
 - Coverage % = how well your rules match the current APL
 
-### Step 3: Hand-Update `OutlawAssist/data/rules.lua`
+### Step 3: Hand-Update `Tuono/data/rules.lua`
 
 **DO NOT auto-edit** — all changes must be human-reviewed and cited.
 
@@ -110,7 +110,7 @@ For each **new action** from the report:
 
 ### Step 4: Update Version Comment
 
-At the top of `OutlawAssist/data/rules.lua`, update the rules version and refresh date:
+At the top of `Tuono/data/rules.lua`, update the rules version and refresh date:
 
 ```lua
 -- Rules version: 1.0.2

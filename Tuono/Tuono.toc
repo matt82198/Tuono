@@ -1,10 +1,12 @@
 ## Interface: 120005, 120007, 120100
 ## IconTexture: Interface\Icons\ability_rogue_rollthebones
-## Title: Outlaw Assist
-## Notes: Smart rotation assistance for Outlaw Rogues
+## Title: Tuono
+## Notes: Configurable rotation-helper framework for Midnight. Legal by construction.
 ## Author: Matt Culliton
-## Version: 1.8.2
-## SavedVariables: OutlawAssistDB
+## Version: 2.0.0
+## X-License: MIT
+## X-Website: https://github.com/matt82198/Tuono
+## SavedVariables: TuonoDB
 
 Core.lua
 Profiles.lua
@@ -19,5 +21,6 @@ IntelligenceLayer.lua
 Display.lua
 Highlight.lua
 Config.lua
+Options.lua
 Secrets.lua
 ApiTest.lua

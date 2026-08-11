@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="OutlawAssist logo">
+  <title>OutlawAssist</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b2030"/>
+      <stop offset="1" stop-color="#0b0d14"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffd76a"/>
+      <stop offset="1" stop-color="#e0a02a"/>
+    </linearGradient>
+    <linearGradient id="live" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#4ce0b3"/>
+      <stop offset="1" stop-color="#2aa7e0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="104" fill="url(#bg)"/>
+  <rect x="8" y="8" width="496" height="496" rx="98" fill="none" stroke="#2b3350" stroke-width="4"/>
+
+  <!-- The wheel: four upcoming presses, the leading one bright and the rest fading.
+       This is the addon's whole idea in one shape. -->
+  <g transform="translate(256 268)">
+    <circle r="150" fill="none" stroke="#222a40" stroke-width="26"/>
+    <!-- leading arc = the next button -->
+    <path d="M 0 -150 A 150 150 0 0 1 130 -75" fill="none" stroke="url(#live)"
+          stroke-width="26" stroke-linecap="round"/>
+
+    <!-- queue slots, decreasing confidence clockwise -->
+    <g>
+      <circle cx="0"   cy="-150" r="42" fill="url(#gold)"/>
+      <circle cx="130" cy="-75"  r="34" fill="#e0a02a" opacity="0.72"/>
+      <circle cx="130" cy="75"   r="30" fill="#e0a02a" opacity="0.44"/>
+      <circle cx="0"   cy="150"  r="26" fill="#e0a02a" opacity="0.24"/>
+    </g>
+
+    <!-- dagger mark in the leading slot -->
+    <g transform="translate(0 -150)" fill="#1b2030">
+      <path d="M -5 -22 L 5 -22 L 7 6 L 0 16 L -7 6 Z"/>
+      <rect x="-14" y="6" width="28" height="6" rx="3"/>
+      <rect x="-3" y="12" width="6" height="12" rx="3"/>
+    </g>
+  </g>
+
+  <text x="256" y="452" text-anchor="middle"
+        font-family="Segoe UI, Helvetica, Arial, sans-serif"
+        font-size="54" font-weight="700" fill="#e8ecf6" letter-spacing="2">ASSIST</text>
+</svg>

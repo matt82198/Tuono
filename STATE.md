@@ -1,11 +1,11 @@
-# STATE.md — OutlawAssist Project State
+# STATE.md — Tuono Project State
 
-**M0 API VERIFICATION: PASSED IN-GAME 2026-08-01** — /oa apitest on the live client reports all
+**M0 API VERIFICATION: PASSED IN-GAME 2026-08-01** — /tuono apitest on the live client reports all
 probes PASS except the deliberately-SKIPped legacy UnitBuff fallback. Spell IDs independently
 verified by an Outlaw specialist. Remaining live unknown: whether GetRotationSpells is static or
-live (run /oa watch on a dummy; decides whether a true multi-step sequence is possible at all).
+live (run /tuono watch on a dummy; decides whether a true multi-step sequence is possible at all).
 
-**VERIFIED IN LIVE COMBAT 2026-08-01 (/oa watch, 52 samples):** C_AssistedCombat.GetNextCastSpell
+**VERIFIED IN LIVE COMBAT 2026-08-01 (/tuono watch, 52 samples):** C_AssistedCombat.GetNextCastSpell
 is STATIC — 1 distinct value, 0 changes across the window; GetRotationSpells never changed. It does
 not react to procs and does not switch to a finisher at max combo points. CONSEQUENCE: wrapping
 Blizzard's recommendation cannot produce a live sequence. The forward-simulating rotation engine
@@ -25,7 +25,7 @@ whether any accessor IS proc-aware — Blizzard's own UI highlight reportedly re
 **Shipping Status:**
 - v0.1.0 — M0+M1+M2+M3 complete: API verified, display UI, state tracking, cooldown+trinket advisor shipped
 - v0.1.3 — Incident fix: TOC parse-check, deterministic lint gate added
-- v0.2.0 — M4 partial: Secret-value hardening (OA.num/OA.bool guards on all API calls) + assist-driven AoE detection (Blade Flurry in queue signals 2+ targets) + TOC lint (fail-closed if comma in Interface line)
+- v0.2.0 — M4 partial: Secret-value hardening (Tuono.num/Tuono.bool guards on all API calls) + assist-driven AoE detection (Blade Flurry in queue signals 2+ targets) + TOC lint (fail-closed if comma in Interface line)
 - v0.2.2/v0.2.3 — Converge pass: 2 P0s confirmed+fixed, rules refreshed, tests 20→33 de-tautologized, one false-green caught by orchestrator re-run, suite 33/33 deterministic
 
 **What Works:**
@@ -40,11 +40,11 @@ whether any accessor IS proc-aware — Blizzard's own UI highlight reportedly re
 
 ## NEXT STEPS (Ordered)
 
-1. **AoE Detection Verification (v0.3.0 prerequisite):** User runs `/oa apitest` to validate threat-table detection (`C_NamePlate.GetNamePlates()` + `UnitThreatSituation()` legality + behavior in live combat). Confirm: does threat-count accurately detect 2+ enemies? Are APIs available on Midnight 12.0.7+?
+1. **AoE Detection Verification (v0.3.0 prerequisite):** User runs `/tuono apitest` to validate threat-table detection (`C_NamePlate.GetNamePlates()` + `UnitThreatSituation()` legality + behavior in live combat). Confirm: does threat-count accurately detect 2+ enemies? Are APIs available on Midnight 12.0.7+?
 
 2. **Aug 11 Interface bump:** When 12.1 launches, bump Interface pin to 120100 in TOC; verify no API surface changes impact threat-detection or existing rules.
 
-3. **v0.3.0 Finalization:** Lock threat-table AoE detection (M4 feature complete); ship with `/oa apitest` results documented; call for user feedback on detection accuracy.
+3. **v0.3.0 Finalization:** Lock threat-table AoE detection (M4 feature complete); ship with `/tuono apitest` results documented; call for user feedback on detection accuracy.
 
 4. **M5 (CurseForge packaging):** `.pkgmeta` file, full options panel polish, enhanced README (setup, features, limitations, AoE detection method), CHANGELOG (all milestones, per-patch notes), user-gated CurseForge upload via GitHub release.
 
@@ -53,7 +53,7 @@ whether any accessor IS proc-aware — Blizzard's own UI highlight reportedly re
 ## Known Constraints
 
 - Cannot read enemy buffs/cooldowns/health (secret values system)
-- No enemy count legal surface (assisted by Blade Flurry queue presence; manual `/oa aoe` toggle for declarative override)
+- No enemy count legal surface (assisted by Blade Flurry queue presence; manual `/tuono aoe` toggle for declarative override)
 - Outlaw Rogue only (v1 scope; other specs possible in v2+)
 - No input automation (recommendation-only; player always chooses)
 - Lua 5.1 target (WoW runtime constraint)

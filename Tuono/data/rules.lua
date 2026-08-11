@@ -1,6 +1,6 @@
-local ADDON_NAME, OA = ...
+local ADDON_NAME, Tuono = ...
 
-OA.Rules = {
+Tuono.Rules = {
   -- Mandatory Rule 1: Adrenaline Rush PIN when combo points low and CD ready
   {
     name = "adrenaline_rush_low_cp",
@@ -94,13 +94,13 @@ OA.Rules = {
     spellID = 13877,
     itemSlot = nil,
     when = function(S, A)
-      local db = OA.db or {}
+      local db = Tuono.db or {}
       local aoeMode = db.aoeMode
       local aoeDetected = (A and A.aoeDetected) or false
       local enemyCountSignal = (S.enemyCount ~= nil and S.enemyCount >= 2) or false
       return aoeMode or aoeDetected or enemyCountSignal
     end,
-    source = "CONTRACT.md (Mandatory rules: 'Blade Flurry PREFER when OA.db.aoeMode (manual AoE toggle — enemy counting is not legally readable)'); threat-table detector v0.3 (composite: manual aoeMode OR A.aoeDetected OR (S.enemyCount ~= nil and S.enemyCount >= 2), threshold 2); outlaw-rotation.md §1 (Blade Flurry & AoE Rotation: 'Maintain on 2+ targets')"
+    source = "CONTRACT.md (Mandatory rules: 'Blade Flurry PREFER when Tuono.db.aoeMode (manual AoE toggle — enemy counting is not legally readable)'); threat-table detector v0.3 (composite: manual aoeMode OR A.aoeDetected OR (S.enemyCount ~= nil and S.enemyCount >= 2), threshold 2); outlaw-rotation.md §1 (Blade Flurry & AoE Rotation: 'Maintain on 2+ targets')"
   },
 
   -- Additional Rule 8: Blade Rush on cooldown
@@ -130,8 +130,8 @@ OA.Rules = {
       -- (priority 10) correctly puts Dispatch first; this PREFER should not override it.
       -- Cost comes from the ability table, never a hardcoded threshold: this said 40
       -- while Sinister Strike actually costs 45, so it recommended an unaffordable cast.
-      local ab = OA.Rotation and OA.Rotation.ABILITIES
-        and OA.Rotation.ABILITIES[OA.SpellIDs.sinisterStrike]
+      local ab = Tuono.Rotation and Tuono.Rotation.ABILITIES
+        and Tuono.Rotation.ABILITIES[Tuono.SpellIDs.sinisterStrike]
       local cost = (ab and ab.cost) or 45
       return S.comboPoints <= 4 and S.energy >= cost
     end,
@@ -276,7 +276,7 @@ OA.Rules = {
       return S.energy < 40 and S.buffs.opportunity.up
     end,
     resolveSpellID = function()
-      return OA.SpellIDs and OA.SpellIDs.pistolShot or nil
+      return Tuono.SpellIDs and Tuono.SpellIDs.pistolShot or nil
     end,
     source = "outlaw-rotation.md §1 (Opportunity & Audacity Procs: 'enables free Pistol Shot without Energy cost') and (Priority Order: 'Pistol Shot – Secondary generator with lower priority than Sinister Strike')"
   },
@@ -287,7 +287,7 @@ OA.Rules = {
     desc = "Stealth before opening",
     action = "PIN",
     kind = "opener",
-    spellID = OA.SpellIDs and OA.SpellIDs.stealth or 1784,
+    spellID = Tuono.SpellIDs and Tuono.SpellIDs.stealth or 1784,
     itemSlot = nil,
     when = function(S, A)
       return not S.inCombat and not S.stealthed
@@ -301,7 +301,7 @@ OA.Rules = {
     desc = "Ambush from stealth - primary damage opener",
     action = "PIN",
     kind = "opener",
-    spellID = OA.SpellIDs and OA.SpellIDs.ambush or 8676,
+    spellID = Tuono.SpellIDs and Tuono.SpellIDs.ambush or 8676,
     itemSlot = nil,
     when = function(S, A)
       return S.stealthed

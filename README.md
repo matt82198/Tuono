@@ -1,130 +1,184 @@
-# OutlawAssist
+<p align="center">
+  <img src="assets/logo.svg" width="140" alt="Tuono">
+</p>
 
-A World of Warcraft Midnight (12.0+) addon that provides Hekili-grade rotation guidance for Outlaw Rogue DPS using Blizzard's `C_AssistedCombat` API as a legal substrate.
+<h1 align="center">Tuono</h1>
 
-**What it does:** Midnight blocks third-party combat state introspection (the "secret values" system), so traditional rotation simulators like Hekili cannot exist. Instead, OutlawAssist reads Blizzard's built-in rotation recommendations via `C_AssistedCombat.GetNextCastSpell()` and layers Outlaw-specific intelligence on top: Roll the Bones stage tracking, cooldown coordination, trinket usage timing, and proc management. The addon displays a unified rolling bar with kind-colored borders (cooldown orange, trinket purple, RtB gold, opener teal), per-icon keybind labels, reactive polling (fast in combat, event-forced on miscast/target-swap), and threat-table AoE detection (2+ enemies, composite signal with manual `/oa aoe` override). Aura tracking is hardened for Midnight secret values. Player always chooses—addon recommends.
+<p align="center">
+  <strong>A configurable rotation-helper framework for World of Warcraft: Midnight (12.0+)</strong><br>
+  Legal by construction. Reads no hidden state. Never presses a button for you.
+</p>
 
-**Status:** Core APIs verified in-game. Feature-complete for M4 (AoE detection shipped beyond spec; threat-count primary). See [Releases](https://github.com/matt82198/outlaw-assist/releases) for current version and changelog.
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#what-midnight-broke">What Midnight broke</a> ·
+  <a href="#how-this-stays-legal">How this stays legal</a> ·
+  <a href="docs/PROFILES.md">Write a profile</a>
+</p>
 
-## Installation
+---
 
-1. Download the latest release from [Releases](https://github.com/matt82198/outlaw-assist/releases)
-2. Extract the ZIP file to `World of Warcraft\_retail_\Interface\AddOns\`
-3. **IMPORTANT TRAP #1: Windows Extract-All creates a nested folder.** After extraction, verify your directory structure is:
-   ```
-   Interface\AddOns\OutlawAssist\OutlawAssist.toc
-   Interface\AddOns\OutlawAssist\Core.lua
-   Interface\AddOns\OutlawAssist\StateTracker.lua
-   ...
-   ```
-   NOT `Interface\AddOns\OutlawAssist\OutlawAssist\OutlawAssist.toc`. If you see nested folders, move the inner `OutlawAssist` folder one level up to the correct path.
+## What this is
 
-4. Launch WoW and log in to an Outlaw Rogue character
-5. **IMPORTANT TRAP #2: Addon may be flagged "out of date."** Before logging in, open the Addons pane and tick **"Load out of date AddOns"**
-6. Type `/oa apitest` to verify all APIs are available (see TROUBLESHOOTING below if anything fails)
-7. Type `/oa` to list available commands
+Midnight's **secret values** system hid the combat state that rotation addons were built
+on. Hekili is unmaintained. The usual answer is "use Blizzard's Single-Button Assistant
+or nothing" — and the assistant is a flat priority that ignores your buffs and costs
+some specs 25–30% of their damage.
 
-## Troubleshooting
+This is the third option: **a framework for building rotation helpers out of the data
+that is still legally readable**, with your own priority logic layered on top.
 
-### Addon not appearing in WoW
-- **Check path nesting:** Verify `Interface\AddOns\OutlawAssist\OutlawAssist.toc` exists (NOT nested double-OutlawAssist)
-- **Enable "Load out of date AddOns":** In the Addons pane, tick the checkbox before logging into the world
-- **Reload UI:** Type `/reload` to reload the UI if you're already in-game
+- **A rolling wheel of your next four presses**, including repeats. If the honest answer
+  is "builder four times", you see four icons.
+- **Two rotations, one bar.** Single-target and AoE lists switch automatically on live
+  enemy count, with hysteresis so the bar cannot strobe.
+- **An in-game rule editor.** Ordered priority rows, first match wins, no Lua required.
+- **Profiles.** Outlaw Rogue ships as the worked example. Any spec can be added as data.
+- **Honesty about uncertainty.** Values Midnight hides are shown as estimates, never as
+  measurements.
 
-### Addon shows but display is empty or no suggestions appear
-- **Run API test:** Type `/oa apitest` and check for any FAIL lines. Copy the output and report to GitHub if you see failures.
-- **Check you're in combat:** The addon only displays during combat by default. Type `/oa toggle ooc` to show out-of-combat display, or test on a training dummy.
-- **Verify character is Outlaw Rogue:** The addon only functions on Outlaw Rogue characters. Check your talent tree.
-- **View debug output:** Type `/oa debug` to print a live state dump (energy, combo points, cooldowns, trinket status)
+> **Status:** the engine and its degradation behaviour are covered by an automated suite
+> that emulates secret values (20/20 passing). It has **not yet been validated against a
+> live 12.x client** — see [Help wanted](#help-wanted).
 
-### Login errors or missing modules
-- **Check for errors:** Type `/console scriptErrors 1` then `/reload` to enable detailed Lua error messages in the game console (Escape → System → Lua Errors)
-- **Check canary message:** v0.1.3+ prints a login message showing which modules loaded. Check chat or type `/oa status`
-- **Report errors:** Paste any red Lua errors into a [GitHub Issue](https://github.com/matt82198/outlaw-assist/issues)
+---
 
-## Slash Commands
+## Quick start
 
-**Display & Layout:**
-- `/oa` — List all available commands and settings
-- `/oa lock` — Lock the display in place (disable dragging)
-- `/oa unlock` — Unlock the display for repositioning
-- `/oa scale <0.5-2>` — Adjust display scale (default: 1)
-- `/oa icons <1-8>` — Set icon count in unified rolling bar (default: 4)
-- `/oa toggle <queue|cds|trinkets|rtb|procs|ooc>` — Toggle a display row on/off
-  - `queue` — Rotation queue (Blizzard's suggestions + our priority hints)
-  - `cds` — Cooldown layer (Adrenaline Rush, Blade Rush, Preparation)
-  - `trinkets` — Equipped trinket cooldowns (slots 13, 14)
-  - `rtb` — Roll the Bones stage and reroll advisory
-  - `procs` — Opportunity proc timer overlay
-  - `ooc` — Show display out-of-combat (default: hidden OOC)
+1. Download the latest release and extract to `World of Warcraft\_retail_\Interface\AddOns\`
+2. **Trap #1 — Windows Extract-All nests a folder.** You need
+   `Interface\AddOns\Tuono\Tuono.toc`, *not*
+   `Interface\AddOns\Tuono\Tuono\Tuono.toc`. Move the inner folder up if so.
+3. **Trap #2 — it may show as "out of date."** Tick **Load out of date AddOns** in the
+   Addons pane before entering the world.
+4. In game: `/tuono config` to open the editor, `/tuono secrets` to audit what your client is
+   actually exposing.
 
-**Features:**
-- `/oa aoe` — Toggle AoE mode (manual override for Blade Flurry; threat-table detection is primary, composite 2+ enemies)
-- `/oa reset` — Reset all settings to defaults and reposition display
+---
 
-**Diagnostics:**
-- `/oa apitest` — Probe API compatibility. Run this first after installation. Report FAIL lines as GitHub issues.
-- `/oa debug` — Print a one-shot state dump (energy, combo points, cooldowns, trinket state, etc.)
-- `/oa status` — Print current display toggles and feature settings
+## What Midnight broke
+
+Blizzard did not hide *everything*, and the difference matters enormously. Measured
+against the live client and Blizzard's generated API documentation:
+
+| Value | Readable in combat / M+? |
+|---|---|
+| **Combo points** and other secondary resources | ✅ yes |
+| **Cooldown readiness** (`isEnabled` / `isActive`) | ✅ yes — flagged never-secret |
+| **Trinket cooldowns** | ✅ yes |
+| **Enemy count** (nameplates + threat) | ✅ yes |
+| `IsStealthed`, `GetTime` | ✅ yes |
+| `C_AssistedCombat.GetNextCastSpell` | ✅ yes — plain spellID |
+| **Energy** and other primary resources | ❌ **secret unconditionally** |
+| Cooldown *remaining* (`startTime` / `duration`) | ❌ secret in combat, encounters, keystones, PvP |
+| Aura payloads (`UNIT_AURA`, aura-by-index) | ❌ secret; the index path **raises** |
+| Enemy health, buffs, casts | ❌ secret |
+
+Run `/tuono secrets` in a city, on a dummy, and mid-pull in a keystone. Blizzard flips these
+between builds — documentation is a hypothesis, that command is the measurement.
+
+### Cooldown readiness survives
+
+The single most useful thing here: `SpellCooldownInfo.isEnabled` and `.isActive` are
+flagged never-secret even when the *timer* is hidden. You can know **whether** an ability
+is ready in a keystone; you just cannot know for how much longer. Most rotation logic only
+needs the boolean.
+
+### Energy is shadowed, not read
+
+Energy has no legal read path. So the addon stops trying and **models** it instead —
+integrating forward from your own casts (`UNIT_SPELLCAST_SUCCEEDED` carries a readable
+spellID), elapsed time and haste, resyncing whenever a real read lands.
+
+It reports `measured` / `estimated` / `stale` and the UI dims accordingly. It touches no
+secret and automates no input: it is a client-side model of your own actions, which is
+what a human does in their head anyway.
+
+---
+
+## How this stays legal
+
+- **Reads no hidden state.** Every API return passes a readability check before use. There
+  is no declassification trick here; where a value is hidden, the addon says so.
+- **No input automation.** It displays suggestions. You press the button. There is no
+  code path that casts anything.
+- **Fails toward honesty.** Unreadable never silently becomes zero. That distinction is
+  the whole design: the predecessor bug in this very addon was `Tuono.num(UnitPower(...), 0)`
+  turning "I cannot read your energy" into a confident "you have no energy", which
+  emptied the rotation and froze the bar.
+
+Blizzard's stated position is that rotation helpers are not inherently harmful; what is
+disallowed is reading the hidden state. This does not.
+
+---
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `/tuono config` | Open the rotation editor — profile selector, priority rows, AoE mode |
+| `/tuono secrets` | Audit which values are readable right now, plus active restriction contexts |
+| `/tuono aoe` | Cycle AoE handling: `auto` / `on` / `off` |
+| `/tuono icons <1-8>` | How many upcoming presses to show |
+| `/tuono unlock` / `/tuono lock` | Move the bar |
+| `/tuono scale <0.5-2>` | Resize |
+| `/tuono glow` | Toggle the action-bar highlight |
+| `/tuono debug` | One-shot state dump |
+| `/tuono apitest` | Probe API compatibility |
+
+---
 
 ## Architecture
 
-OutlawAssist is modular: Core provides event dispatcher and frame management; StateTracker polls readable combat state (own buffs, energy, combo points, cooldowns, trinket IDs) every frame via events; AssistReader queries Blizzard's `C_AssistedCombat` rotation queue each frame; IntelligenceLayer applies Outlaw-specific decision rules (distilled from SimulationCraft and community guides) to PIN/PREFER spells in Blizzard's queue or emit advisories; Display renders the result as distinct visual channels (rotation row, cooldown row, trinket row, RtB state panel, proc overlay) so you always know each suggestion's source. Config manages saved settings and slash routing. For full technical design, diagrams, and open questions, see [PLAN.md](PLAN.md). For module interfaces and build contract, see [docs/CONTRACT.md](docs/CONTRACT.md).
+```
+Core            event dispatch, secret-value primitives (readNum/readBool)
+Profiles        registry; owns Tuono.SpellIDs
+profiles/*      per-spec data: spells, costs, priority lists   <-- add yours here
+UserRules       editable priority rows -> compiled predicates
+StateTracker    readable state only, with knownness flags
+EnergyModel     shadow energy from your own casts
+AssistReader    C_AssistedCombat, secret-safe
+Rotation        spec-agnostic forward simulation, AoE/ST selection
+IntelligenceLayer  queue assembly, castability filtering
+Display         the wheel      Highlight  action-bar glow
+Options         in-game editor  Secrets   readability audit
+```
+
+**Adding a spec is a data change, not a code change.** See
+**[docs/PROFILES.md](docs/PROFILES.md)** — it covers the rule schema, the helper API, and
+the one genuinely subtle part: choosing which way each rule should fail when a value is
+unreadable.
+
+---
+
+## Help wanted
+
+This is the part where the project needs other people, honestly:
+
+- **Live-client validation.** Run `/tuono secrets` in a keystone and open an issue with the
+  output. The readability table above is built from Blizzard's generated docs plus a
+  simulated harness; real measurements from real content beat both.
+- **Profiles for other specs.** Outlaw is the example, not the point. If you main
+  something else and can write its priority list, that is the highest-value contribution.
+- **Anyone who has read the secret-values rules closely.** If something here is legally
+  wrong, say so loudly and I will fix it.
+
+Issues and PRs: <https://github.com/matt82198/Tuono/issues>
+
+---
 
 ## Development
 
-### Run Tests
 ```bash
-lua tests/run_tests.lua
+lua tests/secrets_regression.lua    # 20 assertions, emulated secret values
 ```
-Tests use a Lua 5.4 harness that stubs the WoW API surface and exercises rule evaluation, state caching, and display rendering logic.
 
-### Verify a Code Change
-```bash
-# In-game
-/oa apitest      # Verify APIs are available
-/oa debug        # Check state updates
-```
-Then test in combat on a training dummy and watch the display for correct suggestions.
+The suite is **mutation-checked**: 8 of its assertions fail against the pre-fix code. A
+test that only passes proves nothing — if you add one, break the thing it covers and
+confirm it goes red first.
 
-### Refresh Sim Data (Post-Patch)
-When WoW patches, SimulationCraft's Midnight profiles may update. To refresh the rule set:
-1. Clone SimulationCraft: `git clone --branch midnight https://github.com/simulationcraft/simc.git`
-2. Locate Outlaw profiles: `simc/profiles/MID1/MID1_Rogue_Outlaw.simc`
-3. Extract priority APL rules and cross-reference against [docs/research/outlaw-rotation.md](docs/research/outlaw-rotation.md)
-4. Update [OutlawAssist/data/rules.lua](OutlawAssist/data/rules.lua) with new conditions, citing SimulationCraft section numbers
-5. Run `lua tests/run_tests.lua` to verify rule syntax
-6. Test in-game on a training dummy
-
-## What This Can and Cannot Do
-
-### Can Do
-- **Display Blizzard's rotation queue:** Shows up to 8 suggested spells (default 4) from `C_AssistedCombat.GetNextCastSpell()` each frame
-- **Layer Outlaw-specific context:** Tracks Roll the Bones stage, Opportunity procs, cooldown readiness (Adrenaline Rush, Blade Rush, Preparation), and equipped trinket cooldowns
-- **Suggest priority overrides:** Recommends which queued spell to cast first based on Outlaw decision rules (e.g., "cast Between the Eyes at 6+ CP", "reroll bad RtB", "use trinket during AR window")
-- **Detect 2+ enemies:** Composite signal via threat-table and manual toggle; suggests Blade Flurry when AoE is active
-- **Display keybinds:** Shows hotkey overlays for each spell icon so you know which button to press
-- **Survive Midnight secret values:** All aura tracking guarded against API data loss; graceful degradation when values become unreadable
-
-### Cannot Do
-- **True multi-step lookahead:** Blizzard's `GetRotationSpells()` returns a STATIC list of the spec's rotational spells, not a live predicted queue. We display Blizzard's position-1 recommendation + your own priority hints, but cannot predict what position 2 will be 2 seconds from now. What you see is what Blizzard's real-time recommendation engine produces that frame.
-- **Read enemy buffs/debuffs/cooldowns:** Midnight's secret values system blocks all enemy aura and cooldown introspection. No interrupt planning, no targeted defensives, no fight-mechanic awareness.
-- **Count enemies directly:** Must rely on threat-table nameplates (imperfect in dungeons) or manual `/oa aoe` toggle. No target scanning or health-bar parsing.
-- **Automate input:** Addon displays suggestions only. You press the button—it never does (ToS-compliant by design).
-- **Provide combat-log analysis:** Combat log events removed from addon API in Midnight. Buff-tracking falls back to event-driven buff checks and stale caches.
-
-### Known Limitations
-- **Midnight secret values:** Cannot read enemy buffs, debuffs, or cooldowns. No interrupt planning, no targeted defensives, no fight-mechanic awareness.
-- **Enemy counting:** Threat-table detection is primary; Blade Flurry advisory requires manual AoE toggle (`/oa aoe`) as fallback.
-- **Multi-spec:** Outlaw Rogue only for v1. Assassination and Subtlety not supported.
-- **No input automation:** Addon displays suggestions only. You press the button—it never does (ToS-compliant by design).
+---
 
 ## License
 
-MIT. See LICENSE file.
-
-## Contributing
-
-Bug reports and feature requests: [GitHub Issues](https://github.com/matt82198/outlaw-assist/issues)
-
-Community maintainers wanted. See PLAN.md §7 for bus-factor mitigation and the documented sim-data refresh process for rotating maintainer handoff.
+MIT. Take it, fork it, ship your own.

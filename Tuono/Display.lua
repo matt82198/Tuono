@@ -1,6 +1,6 @@
-local ADDON_NAME, OA = ...
+local ADDON_NAME, Tuono = ...
 
-OA.Display = OA.Display or {}
+Tuono.Display = Tuono.Display or {}
 
 local function GetSpellTexture(spellID)
 	if C_Spell and C_Spell.GetSpellTexture then
@@ -129,9 +129,9 @@ local function GetKeybindText(spellID)
 	-- TIER 1: C_ActionBar.FindSpellActionButtons (modern, preferred). Expects a BASE
 	-- spell ID and resolves overrides internally (VERIFIED, warcraft.wiki.gg: "Expects
 	-- a base spell, so if a spell is overridden the base ID should be provided") --
-	-- exactly what OA.SpellIDs / the queue's spellID always is.
-	-- BUGFIX: OA.safe returns a SINGLE value (`return result`, see Core.lua), not an
-	-- (ok, result) pair. `local ok, buttons = OA.safe(...)` put the buttons array in
+	-- exactly what Tuono.SpellIDs / the queue's spellID always is.
+	-- BUGFIX: Tuono.safe returns a SINGLE value (`return result`, see Core.lua), not an
+	-- (ok, result) pair. `local ok, buttons = Tuono.safe(...)` put the buttons array in
 	-- `ok` and left `buttons` always nil, so `if ok and buttons` never passed and this
 	-- whole modern path was permanently dead -- every lookup fell through to the
 	-- 120-slot scan below. pcall directly instead.
@@ -159,7 +159,7 @@ local function GetKeybindText(spellID)
 			local slot = CurrentMainBarSlot(i)
 			local actionType, actionID = GetActionInfo(slot)
 			local matches = (actionType == "spell" or actionType == "talent" or actionType == "action")
-				and ((OA.SpellMatchesAction and OA.SpellMatchesAction(spellID, actionID)) or actionID == spellID)
+				and ((Tuono.SpellMatchesAction and Tuono.SpellMatchesAction(spellID, actionID)) or actionID == spellID)
 			if matches then
 				local bindingName = bindingNameForSlot(slot)
 				if bindingName and GetBindingKey then
@@ -180,7 +180,7 @@ local function GetKeybindText(spellID)
 		for slot = 1, 120 do
 			local actionType, actionID, _ = GetActionInfo(slot)
 			local matches = (actionType == "spell" or actionType == "talent" or actionType == "action")
-				and ((OA.SpellMatchesAction and OA.SpellMatchesAction(spellID, actionID)) or actionID == spellID)
+				and ((Tuono.SpellMatchesAction and Tuono.SpellMatchesAction(spellID, actionID)) or actionID == spellID)
 			if matches then
 			local bindingName = bindingNameForSlot(slot)
 
@@ -283,35 +283,35 @@ local function CreateIcon(parent, name, size, x, y, isPosition1)
 	return btn
 end
 
-function OA.Display.Init()
-	if OA.Display.anchor then
+function Tuono.Display.Init()
+	if Tuono.Display.anchor then
 		return
 	end
 
-	local scale = OA.db.display.scale or 1
-	local iconCount = OA.db.display.iconCount or 4
+	local scale = Tuono.db.display.scale or 1
+	local iconCount = Tuono.db.display.iconCount or 4
 
 	local anchor = CreateFrame("Frame", nil, UIParent)
 	-- Size based on iconCount: first icon is 48px, rest are 40px, with 4px spacing
 	local stripWidth = 48 + math.max(0, (iconCount - 1)) * 44
 	anchor:SetSize(stripWidth + 10, 60)
-	anchor:SetPoint(OA.db.display.point or "CENTER", OA.db.display.x or 0, OA.db.display.y or -180)
+	anchor:SetPoint(Tuono.db.display.point or "CENTER", Tuono.db.display.x or 0, Tuono.db.display.y or -180)
 	anchor:SetScale(scale)
-	anchor:SetMovable(not OA.db.display.locked)
+	anchor:SetMovable(not Tuono.db.display.locked)
 	anchor:EnableMouse(true)
 
 	anchor:RegisterForDrag("LeftButton")
 	anchor:SetScript("OnDragStart", function(self)
-		if not OA.db.display.locked then
+		if not Tuono.db.display.locked then
 			self:StartMoving()
 		end
 	end)
 	anchor:SetScript("OnDragStop", function(self)
 		self:StopMovingOrSizing()
 		local point, relTo, relPoint, x, y = self:GetPoint()
-		OA.db.display.point = point or "CENTER"
-		OA.db.display.x = x or 0
-		OA.db.display.y = y or -180
+		Tuono.db.display.point = point or "CENTER"
+		Tuono.db.display.x = x or 0
+		Tuono.db.display.y = y or -180
 	end)
 
 	-- Background texture for the strip
@@ -349,11 +349,11 @@ function OA.Display.Init()
 	statusText:Hide()
 	anchor.statusText = statusText
 
-	-- Register for UPDATE_BINDINGS and ACTIONBAR_SLOT_CHANGED events via OA dispatcher
-	OA.RegisterEvent("UPDATE_BINDINGS", function()
+	-- Register for UPDATE_BINDINGS and ACTIONBAR_SLOT_CHANGED events via Tuono dispatcher
+	Tuono.RegisterEvent("UPDATE_BINDINGS", function()
 		InvalidateKeybindCache()
 	end)
-	OA.RegisterEvent("ACTIONBAR_SLOT_CHANGED", function()
+	Tuono.RegisterEvent("ACTIONBAR_SLOT_CHANGED", function()
 		InvalidateKeybindCache()
 	end)
 
@@ -363,38 +363,38 @@ function OA.Display.Init()
 	-- UPDATE_BONUS_ACTIONBAR all fire with no payload. SPELLS_CHANGED covers overrides
 	-- granted/revoked by talents. PLAYER_REGEN_DISABLED/ENABLED are included per the
 	-- same "invalidate on any plausible transition" policy the reported bug needs.
-	OA.RegisterEvent("UPDATE_STEALTH", function()
+	Tuono.RegisterEvent("UPDATE_STEALTH", function()
 		InvalidateKeybindCache()
 	end)
-	OA.RegisterEvent("ACTIONBAR_PAGE_CHANGED", function()
+	Tuono.RegisterEvent("ACTIONBAR_PAGE_CHANGED", function()
 		InvalidateKeybindCache()
 	end)
-	OA.RegisterEvent("UPDATE_BONUS_ACTIONBAR", function()
+	Tuono.RegisterEvent("UPDATE_BONUS_ACTIONBAR", function()
 		InvalidateKeybindCache()
 	end)
-	OA.RegisterEvent("SPELLS_CHANGED", function()
+	Tuono.RegisterEvent("SPELLS_CHANGED", function()
 		InvalidateKeybindCache()
 	end)
-	OA.RegisterEvent("PLAYER_REGEN_DISABLED", function()
+	Tuono.RegisterEvent("PLAYER_REGEN_DISABLED", function()
 		InvalidateKeybindCache()
 	end)
-	OA.RegisterEvent("PLAYER_REGEN_ENABLED", function()
+	Tuono.RegisterEvent("PLAYER_REGEN_ENABLED", function()
 		InvalidateKeybindCache()
 	end)
 
-	OA.Display.anchor = anchor
+	Tuono.Display.anchor = anchor
 end
 
-function OA.Display.Render(result)
+function Tuono.Display.Render(result)
 	-- Allocation-light per-tick rendering: all frames created at Init, reused here
-	if not OA.Display.anchor then
+	if not Tuono.Display.anchor then
 		return
 	end
 
-	local anchor = OA.Display.anchor
-	local show = OA.db.show or {}
-	local inCombat = OA.State and OA.State.inCombat
-	local iconCount = OA.db.display.iconCount or 4
+	local anchor = Tuono.Display.anchor
+	local show = Tuono.db.show or {}
+	local inCombat = Tuono.State and Tuono.State.inCombat
+	local iconCount = Tuono.db.display.iconCount or 4
 
 	-- PERSISTENT: Always show the bar (user controls with show.queue toggle, not combat status)
 	local classToken = select(2, UnitClass("player"))
@@ -407,8 +407,8 @@ function OA.Display.Render(result)
 	anchor:Show()
 
 	-- Track degraded state for visual indication
-	local isDegraded = OA.State and OA.State.buffs and OA.State.buffs.degraded or false
-	local assistAvailable = OA.Assist and OA.Assist.available ~= false or true
+	local isDegraded = Tuono.State and Tuono.State.buffs and Tuono.State.buffs.degraded or false
+	local assistAvailable = Tuono.Assist and Tuono.Assist.available ~= false or true
 
 	-- Calculate visible entry count for dynamic strip resize
 	local visibleCount = 0
@@ -522,16 +522,16 @@ function OA.Display.Render(result)
 							-- Resolve via the shared spellID->key map rather than a hand-written
 							-- chain: the old inline version knew only AR/Blade Rush/Preparation,
 							-- so every other cooldown silently rendered no sweep at all.
-							local cdKey = OA.Rotation and OA.Rotation.SPELL_TO_CDKEY
-								and OA.Rotation.SPELL_TO_CDKEY[entry.spellID]
-							local cd = cdKey and OA.State.cooldowns[cdKey]
+							local cdKey = Tuono.Rotation and Tuono.Rotation.SPELL_TO_CDKEY
+								and Tuono.Rotation.SPELL_TO_CDKEY[entry.spellID]
+							local cd = cdKey and Tuono.State.cooldowns[cdKey]
 							if cd then
 								remaining = cd.remaining or 0
 								remainingIsKnown = cd.remainingKnown ~= false
 							end
 						elseif entry.kind == "trinket" and entry.itemSlot then
-							if OA.State.trinkets[entry.itemSlot] then
-								remaining = OA.State.trinkets[entry.itemSlot].remaining
+							if Tuono.State.trinkets[entry.itemSlot] then
+								remaining = Tuono.State.trinkets[entry.itemSlot].remaining
 							end
 						end
 

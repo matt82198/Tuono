@@ -1,4 +1,4 @@
-local ADDON_NAME, OA = ...
+local ADDON_NAME, Tuono = ...
 
 -- ============================================================================
 -- PROFILE: Outlaw Rogue
@@ -10,9 +10,9 @@ local ADDON_NAME, OA = ...
 -- rule whose `when` returns true supplies the next button. That is the same shape
 -- rotation guides are written in, and the same shape the in-game editor edits.
 --
--- Rule helpers are resolved LAZILY inside each closure (OA.RuleHelpers.x, not a local
+-- Rule helpers are resolved LAZILY inside each closure (Tuono.RuleHelpers.x, not a local
 -- captured at load) because this file loads BEFORE Rotation.lua publishes them. Writing
--- `local H = OA.RuleHelpers` at the top of this file would capture nil forever.
+-- `local H = Tuono.RuleHelpers` at the top of this file would capture nil forever.
 -- ============================================================================
 
 local SPELLS = {
@@ -61,7 +61,7 @@ local PRIORITY = {
 		requiresSpell = "ambush",
 		conditions = { { type = "stealthed" } },
 		when = function(S, A)
-			local H = OA.RuleHelpers
+			local H = Tuono.RuleHelpers
 			return S.stealthed and H.canAfford(S, SPELLS.ambush)
 		end
 	},
@@ -71,7 +71,7 @@ local PRIORITY = {
 		requiresSpell = "rollTheBones",
 		conditions = { { type = "rtbStage", op = "<", value = 2 }, { type = "cdReady", spell = "rollTheBones" } },
 		when = function(S, A)
-			local H = OA.RuleHelpers
+			local H = Tuono.RuleHelpers
 			return S.buffs.rtb.stage < 2 and H.cdOf(S, "rollTheBones").ready
 				and H.canAfford(S, SPELLS.rollTheBones)
 		end
@@ -82,7 +82,7 @@ local PRIORITY = {
 		requiresSpell = "keepItRolling",
 		conditions = { { type = "rtbStage", op = ">=", value = 2 }, { type = "cdReady", spell = "keepItRolling" } },
 		when = function(S, A)
-			local H = OA.RuleHelpers
+			local H = Tuono.RuleHelpers
 			return S.buffs.rtb.stage >= 2 and H.cdOf(S, "keepItRolling").ready
 				and H.canAfford(S, SPELLS.keepItRolling)
 		end
@@ -93,7 +93,7 @@ local PRIORITY = {
 		requiresSpell = "adrenalineRush",
 		conditions = { { type = "cp", op = "<=", value = LOW_CP }, { type = "cdReady", spell = "adrenalineRush" } },
 		when = function(S, A)
-			local H = OA.RuleHelpers
+			local H = Tuono.RuleHelpers
 			return H.cpAtMost(S, LOW_CP) and H.cdOf(S, "adrenalineRush").ready
 				and H.canAfford(S, SPELLS.adrenalineRush)
 		end
@@ -104,7 +104,7 @@ local PRIORITY = {
 		requiresSpell = "bladeRush",
 		conditions = { { type = "cdReady", spell = "bladeRush" } },
 		when = function(S, A)
-			local H = OA.RuleHelpers
+			local H = Tuono.RuleHelpers
 			return H.cdOf(S, "bladeRush").ready and H.canAfford(S, SPELLS.bladeRush)
 		end
 	},
@@ -114,7 +114,7 @@ local PRIORITY = {
 		requiresSpell = "betweenTheEyes",
 		conditions = { { type = "cp", op = ">=", value = 6 }, { type = "cdReady", spell = "betweenTheEyes" } },
 		when = function(S, A)
-			local H = OA.RuleHelpers
+			local H = Tuono.RuleHelpers
 			return H.cpAtLeast(S, H.finisherThreshold(S)) and H.cdOf(S, "betweenTheEyes").ready
 				and H.canAfford(S, SPELLS.betweenTheEyes)
 		end
@@ -125,7 +125,7 @@ local PRIORITY = {
 		requiresSpell = "preparation",
 		conditions = { { type = "cdReady", spell = "preparation" } },
 		when = function(S, A)
-			local H = OA.RuleHelpers
+			local H = Tuono.RuleHelpers
 			local arDown = not H.cdOf(S, "adrenalineRush").ready
 			local bteDown = not H.cdOf(S, "betweenTheEyes").ready
 			local brDown = not H.cdOf(S, "bladeRush").ready
@@ -139,7 +139,7 @@ local PRIORITY = {
 		requiresSpell = "killingSpree",
 		conditions = { { type = "cp", op = ">=", value = 6 }, { type = "cdReady", spell = "killingSpree" } },
 		when = function(S, A)
-			local H = OA.RuleHelpers
+			local H = Tuono.RuleHelpers
 			return H.cpAtLeast(S, H.finisherThreshold(S)) and H.cdOf(S, "killingSpree").ready
 				and H.canAfford(S, SPELLS.killingSpree)
 		end
@@ -150,7 +150,7 @@ local PRIORITY = {
 		requiresSpell = "dispatch",
 		conditions = { { type = "cp", op = ">=", value = 6 } },
 		when = function(S, A)
-			local H = OA.RuleHelpers
+			local H = Tuono.RuleHelpers
 			if not H.cpAtLeast(S, H.finisherThreshold(S)) then return false end
 			if not H.canAfford(S, SPELLS.dispatch) then return false end
 			local bteUsable = H.isUsableAlternative(S, SPELLS.betweenTheEyes, "betweenTheEyes")
@@ -164,7 +164,7 @@ local PRIORITY = {
 		requiresSpell = "pistolShot",
 		conditions = { { type = "buffUp", spell = "opportunity" } },
 		when = function(S, A)
-			local H = OA.RuleHelpers
+			local H = Tuono.RuleHelpers
 			if not S.buffs.opportunity.up or not H.canAfford(S, SPELLS.pistolShot) then
 				return false
 			end
@@ -182,7 +182,7 @@ local PRIORITY = {
 		requiresSpell = nil,
 		conditions = { { type = "cp", op = "<", value = 6 } },
 		when = function(S, A)
-			local H = OA.RuleHelpers
+			local H = Tuono.RuleHelpers
 			return H.canAfford(S, SPELLS.sinisterStrike) and H.cpBelowCap(S)
 		end
 	},
@@ -194,7 +194,7 @@ local PRIORITY = {
 		requiresSpell = nil,
 		conditions = { { type = "always" } },
 		when = function(S, A)
-			return OA.RuleHelpers.canAfford(S, SPELLS.sinisterStrike)
+			return Tuono.RuleHelpers.canAfford(S, SPELLS.sinisterStrike)
 		end
 	},
 }
@@ -216,7 +216,7 @@ local PRIORITY_AOE = {
 		requiresSpell = "ambush",
 		conditions = { { type = "stealthed" } },
 		when = function(S, A)
-			return S.stealthed and OA.RuleHelpers.canAfford(S, SPELLS.ambush)
+			return S.stealthed and Tuono.RuleHelpers.canAfford(S, SPELLS.ambush)
 		end
 	},
 	{
@@ -225,7 +225,7 @@ local PRIORITY_AOE = {
 		requiresSpell = "bladeFlurry",
 		conditions = { { type = "cdReady" }, { type = "cp", op = "<=", value = LOW_CP } },
 		when = function(S, A)
-			local H = OA.RuleHelpers
+			local H = Tuono.RuleHelpers
 			return H.cdOf(S, "bladeFlurry").ready and H.cpAtMost(S, LOW_CP)
 				and H.canAfford(S, SPELLS.bladeFlurry)
 		end
@@ -236,7 +236,7 @@ local PRIORITY_AOE = {
 		requiresSpell = "rollTheBones",
 		conditions = { { type = "rtbStage", op = "<", value = 2 }, { type = "cdReady" } },
 		when = function(S, A)
-			local H = OA.RuleHelpers
+			local H = Tuono.RuleHelpers
 			return S.buffs.rtb.stage < 2 and H.cdOf(S, "rollTheBones").ready
 				and H.canAfford(S, SPELLS.rollTheBones)
 		end
@@ -247,7 +247,7 @@ local PRIORITY_AOE = {
 		requiresSpell = "adrenalineRush",
 		conditions = { { type = "cp", op = "<=", value = LOW_CP }, { type = "cdReady" } },
 		when = function(S, A)
-			local H = OA.RuleHelpers
+			local H = Tuono.RuleHelpers
 			return H.cpAtMost(S, LOW_CP) and H.cdOf(S, "adrenalineRush").ready
 				and H.canAfford(S, SPELLS.adrenalineRush)
 		end
@@ -258,7 +258,7 @@ local PRIORITY_AOE = {
 		requiresSpell = "killingSpree",
 		conditions = { { type = "cp", op = ">=", value = 6 }, { type = "cdReady" } },
 		when = function(S, A)
-			local H = OA.RuleHelpers
+			local H = Tuono.RuleHelpers
 			return H.cpAtLeast(S, H.finisherThreshold(S)) and H.cdOf(S, "killingSpree").ready
 				and H.canAfford(S, SPELLS.killingSpree)
 		end
@@ -269,7 +269,7 @@ local PRIORITY_AOE = {
 		requiresSpell = "bladeRush",
 		conditions = { { type = "cdReady" } },
 		when = function(S, A)
-			local H = OA.RuleHelpers
+			local H = Tuono.RuleHelpers
 			return H.cdOf(S, "bladeRush").ready and H.canAfford(S, SPELLS.bladeRush)
 		end
 	},
@@ -279,7 +279,7 @@ local PRIORITY_AOE = {
 		requiresSpell = "betweenTheEyes",
 		conditions = { { type = "cp", op = ">=", value = 6 }, { type = "cdReady" } },
 		when = function(S, A)
-			local H = OA.RuleHelpers
+			local H = Tuono.RuleHelpers
 			return H.cpAtLeast(S, H.finisherThreshold(S)) and H.cdOf(S, "betweenTheEyes").ready
 				and H.canAfford(S, SPELLS.betweenTheEyes)
 		end
@@ -290,7 +290,7 @@ local PRIORITY_AOE = {
 		requiresSpell = "dispatch",
 		conditions = { { type = "cp", op = ">=", value = 6 } },
 		when = function(S, A)
-			local H = OA.RuleHelpers
+			local H = Tuono.RuleHelpers
 			return H.cpAtLeast(S, H.finisherThreshold(S)) and H.canAfford(S, SPELLS.dispatch)
 		end
 	},
@@ -300,7 +300,7 @@ local PRIORITY_AOE = {
 		requiresSpell = "pistolShot",
 		conditions = { { type = "buffUp", spell = "opportunity" } },
 		when = function(S, A)
-			local H = OA.RuleHelpers
+			local H = Tuono.RuleHelpers
 			return S.buffs.opportunity.up and H.canAfford(S, SPELLS.pistolShot)
 		end
 	},
@@ -310,7 +310,7 @@ local PRIORITY_AOE = {
 		requiresSpell = nil,
 		conditions = { { type = "cp", op = "<", value = 6 } },
 		when = function(S, A)
-			local H = OA.RuleHelpers
+			local H = Tuono.RuleHelpers
 			return H.canAfford(S, SPELLS.sinisterStrike) and H.cpBelowCap(S)
 		end
 	},
@@ -320,12 +320,12 @@ local PRIORITY_AOE = {
 		requiresSpell = nil,
 		conditions = { { type = "always" } },
 		when = function(S, A)
-			return OA.RuleHelpers.canAfford(S, SPELLS.sinisterStrike)
+			return Tuono.RuleHelpers.canAfford(S, SPELLS.sinisterStrike)
 		end
 	},
 }
 
-OA.Profiles.Register({
+Tuono.Profiles.Register({
 	id = "outlaw-rogue",
 	name = "Outlaw Rogue",
 	class = "ROGUE",

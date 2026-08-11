@@ -1,6 +1,6 @@
-local ADDON_NAME, OA = ...
+local ADDON_NAME, Tuono = ...
 
-OA.Highlight = OA.Highlight or {}
+Tuono.Highlight = Tuono.Highlight or {}
 
 -- Glow mechanisms probed at runtime
 local glowMechanism = nil  -- will be set to "blizzard", "api", or "self-drawn"
@@ -128,8 +128,8 @@ local function GetActionSlotForSpell(spellID)
 
 	-- TIER 1: C_ActionBar.FindSpellActionButtons (modern). Expects a BASE spell ID and
 	-- resolves overrides internally (VERIFIED, warcraft.wiki.gg).
-	-- BUGFIX: OA.safe returns a SINGLE value (see Core.lua: `return result`), not an
-	-- (ok, result) pair. `local ok, buttons = OA.safe(...)` put the buttons array in
+	-- BUGFIX: Tuono.safe returns a SINGLE value (see Core.lua: `return result`), not an
+	-- (ok, result) pair. `local ok, buttons = Tuono.safe(...)` put the buttons array in
 	-- `ok` and left `buttons` always nil, so `if ok and buttons` never passed and this
 	-- modern path was permanently dead -- every lookup fell through to the uncached
 	-- 120-slot scan below, on the 0.1s combat tick. pcall directly instead.
@@ -148,7 +148,7 @@ local function GetActionSlotForSpell(spellID)
 			local slot = CurrentMainBarSlot(i)
 			local actionType, actionID = _G.GetActionInfo(slot)
 			local matches = (actionType == "spell" or actionType == "talent" or actionType == "action")
-				and ((OA.SpellMatchesAction and OA.SpellMatchesAction(spellID, actionID)) or actionID == spellID)
+				and ((Tuono.SpellMatchesAction and Tuono.SpellMatchesAction(spellID, actionID)) or actionID == spellID)
 			if matches then
 				return slot
 			end
@@ -161,7 +161,7 @@ local function GetActionSlotForSpell(spellID)
 		for slot = 1, 120 do
 			local actionType, actionID = _G.GetActionInfo(slot)
 			local matches = (actionType == "spell" or actionType == "talent" or actionType == "action")
-				and ((OA.SpellMatchesAction and OA.SpellMatchesAction(spellID, actionID)) or actionID == spellID)
+				and ((Tuono.SpellMatchesAction and Tuono.SpellMatchesAction(spellID, actionID)) or actionID == spellID)
 			if matches then
 				return slot
 			end
@@ -205,13 +205,13 @@ local function ShowGlow(buttonFrame)
 
 	-- Try Blizzard mechanism
 	if glowMechanism == "blizzard" and glowFunctions.show then
-		OA.safe(glowFunctions.show, buttonFrame)
+		Tuono.safe(glowFunctions.show, buttonFrame)
 		return true
 	end
 
 	-- Try discovered API
 	if glowMechanism == "discovered API" and glowFunctions.show then
-		OA.safe(glowFunctions.show, buttonFrame)
+		Tuono.safe(glowFunctions.show, buttonFrame)
 		return true
 	end
 
@@ -233,13 +233,13 @@ local function HideGlow(buttonFrame)
 
 	-- Try Blizzard mechanism
 	if glowMechanism == "blizzard" and glowFunctions.hide then
-		OA.safe(glowFunctions.hide, buttonFrame)
+		Tuono.safe(glowFunctions.hide, buttonFrame)
 		return true
 	end
 
 	-- Try discovered API
 	if glowMechanism == "discovered API" and glowFunctions.hide then
-		OA.safe(glowFunctions.hide, buttonFrame)
+		Tuono.safe(glowFunctions.hide, buttonFrame)
 		return true
 	end
 
@@ -256,8 +256,8 @@ local function HideGlow(buttonFrame)
 end
 
 -- Main highlight update: called after Display.Render
-function OA.Highlight.Update(result)
-	if not OA.db or not OA.db.highlight or not OA.db.highlight.enabled then
+function Tuono.Highlight.Update(result)
+	if not Tuono.db or not Tuono.db.highlight or not Tuono.db.highlight.enabled then
 		-- Ensure no glow is active
 		if lastHighlightedButton then
 			HideGlow(lastHighlightedButton)
@@ -307,7 +307,7 @@ end
 
 -- Clear glow on combat exit if combatOnly is true
 local function ClearGlowOutOfCombat()
-	if OA.db and OA.db.highlight and OA.db.highlight.combatOnly then
+	if Tuono.db and Tuono.db.highlight and Tuono.db.highlight.combatOnly then
 		if lastHighlightedButton then
 			HideGlow(lastHighlightedButton)
 			lastHighlightedButton = nil
@@ -319,29 +319,29 @@ end
 -- Slash command handlers
 local function HandleGlow(arg)
 	if not arg or arg == "" then
-		OA.db.highlight.enabled = not OA.db.highlight.enabled
-		local state = OA.db.highlight.enabled and "ON" or "OFF"
-		OA.print("Action bar highlight " .. state)
+		Tuono.db.highlight.enabled = not Tuono.db.highlight.enabled
+		local state = Tuono.db.highlight.enabled and "ON" or "OFF"
+		Tuono.print("Action bar highlight " .. state)
 		return
 	end
 
 	local cmd = string.lower(arg)
 	if cmd == "combat" then
-		OA.db.highlight.combatOnly = not OA.db.highlight.combatOnly
-		local state = OA.db.highlight.combatOnly and "ON" or "OFF"
-		OA.print("Highlight in combat only: " .. state)
+		Tuono.db.highlight.combatOnly = not Tuono.db.highlight.combatOnly
+		local state = Tuono.db.highlight.combatOnly and "ON" or "OFF"
+		Tuono.print("Highlight in combat only: " .. state)
 	else
-		OA.print("Unknown glow option: " .. arg)
+		Tuono.print("Unknown glow option: " .. arg)
 	end
 end
 
 -- Register events for lifecycle management
 local function RegisterHighlightEvents()
 	-- Clear glow on combat exit
-	OA.RegisterEvent("PLAYER_REGEN_ENABLED", ClearGlowOutOfCombat)
+	Tuono.RegisterEvent("PLAYER_REGEN_ENABLED", ClearGlowOutOfCombat)
 
 	-- Clear on logout/reload
-	OA.RegisterEvent("PLAYER_LOGOUT", function()
+	Tuono.RegisterEvent("PLAYER_LOGOUT", function()
 		if lastHighlightedButton then
 			HideGlow(lastHighlightedButton)
 			lastHighlightedButton = nil
@@ -355,41 +355,41 @@ local function RegisterHighlightEvents()
 	-- ACTIONBAR_PAGE_CHANGED, UPDATE_BONUS_ACTIONBAR fire with no payload.
 	-- ACTIONBAR_SLOT_CHANGED/UPDATE_BINDINGS/SPELLS_CHANGED/PLAYER_REGEN_DISABLED are
 	-- pre-existing, verified WoW events used elsewhere in this addon.
-	OA.RegisterEvent("UPDATE_STEALTH", MarkBarDirty)
-	OA.RegisterEvent("ACTIONBAR_PAGE_CHANGED", MarkBarDirty)
-	OA.RegisterEvent("UPDATE_BONUS_ACTIONBAR", MarkBarDirty)
-	OA.RegisterEvent("ACTIONBAR_SLOT_CHANGED", MarkBarDirty)
-	OA.RegisterEvent("SPELLS_CHANGED", MarkBarDirty)
-	OA.RegisterEvent("UPDATE_BINDINGS", MarkBarDirty)
-	OA.RegisterEvent("PLAYER_REGEN_DISABLED", MarkBarDirty)
-	OA.RegisterEvent("PLAYER_REGEN_ENABLED", MarkBarDirty)
+	Tuono.RegisterEvent("UPDATE_STEALTH", MarkBarDirty)
+	Tuono.RegisterEvent("ACTIONBAR_PAGE_CHANGED", MarkBarDirty)
+	Tuono.RegisterEvent("UPDATE_BONUS_ACTIONBAR", MarkBarDirty)
+	Tuono.RegisterEvent("ACTIONBAR_SLOT_CHANGED", MarkBarDirty)
+	Tuono.RegisterEvent("SPELLS_CHANGED", MarkBarDirty)
+	Tuono.RegisterEvent("UPDATE_BINDINGS", MarkBarDirty)
+	Tuono.RegisterEvent("PLAYER_REGEN_DISABLED", MarkBarDirty)
+	Tuono.RegisterEvent("PLAYER_REGEN_ENABLED", MarkBarDirty)
 end
 
 -- Initialization: probe glow mechanisms and register events
-function OA.Highlight.Init()
+function Tuono.Highlight.Init()
 	ProbeGlowMechanisms()
 	RegisterHighlightEvents()
-	OA.RegisterSlash("glow", HandleGlow, "Toggle action bar glow highlighting (or 'combat' for combat-only mode).")
+	Tuono.RegisterSlash("glow", HandleGlow, "Toggle action bar glow highlighting (or 'combat' for combat-only mode).")
 end
 
 -- Extend debug output
 local originalUpdateDebugOutput = nil
 
-function OA.Highlight.AppendDebugOutput()
-	if not OA.Display or not OA.Display.anchor then
+function Tuono.Highlight.AppendDebugOutput()
+	if not Tuono.Display or not Tuono.Display.anchor then
 		return
 	end
 
 	-- Append highlight-specific debug info
 	local debugInfo = {}
 	table.insert(debugInfo, "=== Highlight Debug ===")
-	table.insert(debugInfo, "Enabled: " .. (OA.db and OA.db.highlight and OA.db.highlight.enabled and "ON" or "OFF"))
-	table.insert(debugInfo, "Combat-only: " .. (OA.db and OA.db.highlight and OA.db.highlight.combatOnly and "ON" or "OFF"))
+	table.insert(debugInfo, "Enabled: " .. (Tuono.db and Tuono.db.highlight and Tuono.db.highlight.enabled and "ON" or "OFF"))
+	table.insert(debugInfo, "Combat-only: " .. (Tuono.db and Tuono.db.highlight and Tuono.db.highlight.combatOnly and "ON" or "OFF"))
 	table.insert(debugInfo, "Glow mechanism: " .. (glowMechanism or "none"))
 	table.insert(debugInfo, "Last spell ID: " .. (lastHighlightedSpellID or "none"))
 	table.insert(debugInfo, "Button frame: " .. (lastHighlightedButton and lastHighlightedButton:GetName() or "none"))
 
 	for _, line in ipairs(debugInfo) do
-		OA.print(line)
+		Tuono.print(line)
 	end
 end

@@ -2,7 +2,7 @@
 **WoW Midnight 12.x Rotation Recommendation Engine**
 
 Research compiled: 2026-08-01  
-**Subject:** Optimal polling interval, event-driven triggers, and desync recovery for OutlawAssist addon  
+**Subject:** Optimal polling interval, event-driven triggers, and desync recovery for Tuono addon  
 **Scope:** GetNextCastSpell() API call patterns, performance characteristics, and edge-case handling
 
 ---
@@ -179,11 +179,11 @@ When these events fire, **force an immediate call to GetNextCastSpell()** (bypas
 
 **HekiLight:** No documented desync recovery beyond GetNextCastSpell's own re-computation.
 
-**Gap:** No addon fully implements explicit "detect player cast B when A was recommended" logic with immediate fallback. OutlawAssist can improve on this.
+**Gap:** No addon fully implements explicit "detect player cast B when A was recommended" logic with immediate fallback. Tuono can improve on this.
 
 ---
 
-## 5. OutlawAssist Rule Engine: Recalculation Triggers
+## 5. Tuono Rule Engine: Recalculation Triggers
 
 ### Immediate Triggers (Force Evaluate + Render, bypass throttle)
 These should **always** force a fresh GetNextCastSpell() call and rule evaluation:
@@ -242,7 +242,7 @@ When player casts spell B and recommendation was spell A:
 
 ## Conclusion
 
-**Optimal strategy for OutlawAssist:**
+**Optimal strategy for Tuono:**
 - Use **event-driven immediate re-poll** (UNIT_SPELLCAST_SUCCEEDED, INTERRUPTED, TARGET_CHANGED, COOLDOWN, POWER)
 - Maintain **100ms (10Hz) throttle timer** as fallback / drift correction
 - Implement **tiered rates** (100ms combat, 500ms idle, 0ms hidden)

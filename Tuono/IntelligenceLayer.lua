@@ -1,6 +1,6 @@
-local ADDON_NAME, OA = ...
+local ADDON_NAME, Tuono = ...
 
-OA.Engine = OA.Engine or {}
+Tuono.Engine = Tuono.Engine or {}
 
 -- Reusable result tables (allocation-light per contract)
 local resultQueue = {}
@@ -36,22 +36,22 @@ local function rebuildQueueSet()
   end
 end
 
-function OA.Engine.Evaluate()
+function Tuono.Engine.Evaluate()
   wipeTable(resultQueue)
   wipeTable(resultAdvisories)
   wipeSet(tempDedup)
   wipeSet(queueSet)
   wipeTable(dedupQueue)
 
-  local S = OA.State
-  local A = OA.Assist
+  local S = Tuono.State
+  local A = Tuono.Assist
 
   -- COORDINATOR EVIDENCE (live client, 52 samples): Blizzard's GetNextCastSpell is STATIC
   -- in combat — it returns exactly ONE value and never changes, even when combo points max.
   -- ARCHITECTURE: Our Rotation.Predict is THE PRIMARY SOURCE. Blizzard is a fallback.
   --
   -- Step 0: Get our rotation predictions (primary source, independent of Assist)
-  local predictions = OA.safe(OA.Rotation.Predict, S, 4)
+  local predictions = Tuono.safe(Tuono.Rotation.Predict, S, 4)
   local queueIndex = 1
   local hasAssistStatic = false
 
@@ -109,25 +109,25 @@ function OA.Engine.Evaluate()
 
   -- Diagnostic: store whether Blizzard agrees with our prediction
   -- With static Assist, disagreement is EXPECTED and does NOT indicate our prediction is wrong.
-  OA.Engine = OA.Engine or {}
-  OA.Engine.assistStatic = hasAssistStatic
+  Tuono.Engine = Tuono.Engine or {}
+  Tuono.Engine.assistStatic = hasAssistStatic
   if predictions and #predictions > 0 and A.nextSpellID then
-    OA.Engine.blizzAgrees = (predictions[1].spellID == A.nextSpellID)
+    Tuono.Engine.blizzAgrees = (predictions[1].spellID == A.nextSpellID)
   end
 
   -- Step 2: Apply rules in array order
   local pinApplied = false
   local advisoryIndex = #resultAdvisories + 1
 
-  for _, rule in ipairs(OA.Rules or {}) do
+  for _, rule in ipairs(Tuono.Rules or {}) do
     -- Evaluate rule condition safely (skip if no when clause or condition not met)
     if rule.when then
-      local condMet = OA.safe(rule.when, S, A)
+      local condMet = Tuono.safe(rule.when, S, A)
       if condMet then
         -- Resolve spell ID lazily if needed
         local ruleSpellID = rule.spellID
         if rule.resolveSpellID and not ruleSpellID then
-          ruleSpellID = OA.safe(rule.resolveSpellID)
+          ruleSpellID = Tuono.safe(rule.resolveSpellID)
         end
 
         -- Handle rule action
@@ -195,12 +195,12 @@ function OA.Engine.Evaluate()
             -- RtB entry
             if S.buffs.rtb.stage == 0 then
               local rtbEntry = {
-                spellID = OA.SpellIDs.rollTheBones,
+                spellID = Tuono.SpellIDs.rollTheBones,
                 source = rule.name,
                 kind = "rtb",
                 itemSlot = nil
               }
-              if not queueSet[OA.SpellIDs.rollTheBones] then
+              if not queueSet[Tuono.SpellIDs.rollTheBones] then
                 table.insert(resultQueue, rtbEntry)
                 rebuildQueueSet()
               end
@@ -285,10 +285,10 @@ function OA.Engine.Evaluate()
         -- Only meaningful for abilities that HAVE a cooldown. A zero-cooldown ability
         -- (Ambush, Sinister Strike, Dispatch) can never be "not ready", so a stale
         -- not-ready entry for one must not suppress a correct recommendation.
-        local ab = OA.Rotation and OA.Rotation.ABILITIES and OA.Rotation.ABILITIES[entry.spellID]
+        local ab = Tuono.Rotation and Tuono.Rotation.ABILITIES and Tuono.Rotation.ABILITIES[entry.spellID]
         local hasCooldown = ab and (ab.cd or 0) > 0
         if hasCooldown then
-          local key = OA.Rotation.SPELL_TO_CDKEY and OA.Rotation.SPELL_TO_CDKEY[entry.spellID]
+          local key = Tuono.Rotation.SPELL_TO_CDKEY and Tuono.Rotation.SPELL_TO_CDKEY[entry.spellID]
           local cd = key and S.cooldowns[key]
           if cd and cd.known and not cd.ready then
             skip = true
@@ -298,9 +298,9 @@ function OA.Engine.Evaluate()
 
       -- For cooldown/trinket entries: verify the cooldown is known and ready
       if not skip and entry.kind == "cooldown" and entry.spellID then
-        local cd = S.cooldowns[entry.spellID == OA.SpellIDs.adrenalineRush and "adrenalineRush" or
-                              entry.spellID == OA.SpellIDs.bladeRush and "bladeRush" or
-                              entry.spellID == OA.SpellIDs.preparation and "preparation" or nil]
+        local cd = S.cooldowns[entry.spellID == Tuono.SpellIDs.adrenalineRush and "adrenalineRush" or
+                              entry.spellID == Tuono.SpellIDs.bladeRush and "bladeRush" or
+                              entry.spellID == Tuono.SpellIDs.preparation and "preparation" or nil]
         if cd and (not cd.known or not cd.ready) then
           skip = true
         end

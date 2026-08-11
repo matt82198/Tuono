@@ -1,12 +1,12 @@
-local ADDON_NAME, OA = ...
+local ADDON_NAME, Tuono = ...
 
--- OA.SpellIDs is OWNED BY THE ACTIVE PROFILE (see Profiles.lua) and is already
+-- Tuono.SpellIDs is OWNED BY THE ACTIVE PROFILE (see Profiles.lua) and is already
 -- populated by the time this file loads. It used to be defined here, which hardcoded
 -- Outlaw into the state tracker; redefining it here now would silently overwrite the
 -- active profile's spell table. The tracker is spec-agnostic and follows whatever keys
 -- the profile declares.
 
-OA.RTB_BUFF_NAMES = {
+Tuono.RTB_BUFF_NAMES = {
 	"Roll the Bones", -- TODO(M0): verify names
 	"Broadside", -- TODO(M0): verify names
 	"True Bearing", -- TODO(M0): verify names
@@ -16,13 +16,13 @@ OA.RTB_BUFF_NAMES = {
 	"Skull and Crossbones" -- TODO(M0): verify names
 }
 
-OA.State = {
+Tuono.State = {
 	energy = 0,
 	energyMax = 0,
 	comboPoints = 0,
 	comboPointsMax = 0,
 	-- Readability flags. `energy == 0` and "energy is unreadable" are DIFFERENT states
-	-- and must never be conflated -- see OA.readNum in Core.lua. Start false (unknown)
+	-- and must never be conflated -- see Tuono.readNum in Core.lua. Start false (unknown)
 	-- so nothing trusts a resource before the first successful read.
 	energyKnown = false,
 	energyMaxKnown = false,
@@ -97,8 +97,8 @@ local castCorrelationWindow = 0.8
 local function NormalizeCooldown(startTime, duration, isEnabled, isActive)
 	local now = GetTime()
 
-	local st, stKnown = OA.readNum(startTime)
-	local dur, durKnown = OA.readNum(duration)
+	local st, stKnown = Tuono.readNum(startTime)
+	local dur, durKnown = Tuono.readNum(duration)
 
 	-- Exact path: the timer is readable, so derive everything from it.
 	if stKnown and durKnown then
@@ -117,8 +117,8 @@ local function NormalizeCooldown(startTime, duration, isEnabled, isActive)
 	-- Degraded path: timer hidden, but the never-secret booleans still answer "ready?".
 	-- isActive is authoritative when present (a cooldown is running). isEnabled==false
 	-- means the spell is currently unusable/locked out.
-	local active, activeKnown = OA.readBool(isActive)
-	local enabled, enabledKnown = OA.readBool(isEnabled)
+	local active, activeKnown = Tuono.readBool(isActive)
+	local enabled, enabledKnown = Tuono.readBool(isEnabled)
 
 	if activeKnown then
 		return { known = true, ready = not active, remaining = 0, remainingKnown = false }
@@ -140,7 +140,7 @@ local cooldownKeyCache = nil
 local function cooldownKeys()
 	if cooldownKeyCache then return cooldownKeyCache end
 	cooldownKeyCache = {}
-	local profile = OA.Profiles and OA.Profiles.Active()
+	local profile = Tuono.Profiles and Tuono.Profiles.Active()
 	if not profile then return cooldownKeyCache end
 	for key, spellID in pairs(profile.spells or {}) do
 		local ability = (profile.abilities or {})[spellID]
@@ -152,20 +152,20 @@ local function cooldownKeys()
 	return cooldownKeyCache
 end
 
-if OA.Profiles then
-	OA.Profiles.OnActivate(function() cooldownKeyCache = nil end)
+if Tuono.Profiles then
+	Tuono.Profiles.OnActivate(function() cooldownKeyCache = nil end)
 end
 
 local function RefreshCooldowns()
 	for _, key in ipairs(cooldownKeys()) do
-		local spellID = OA.SpellIDs[key]
+		local spellID = Tuono.SpellIDs[key]
 		if spellID then
 			local handled = false
 			-- Try modern API first
 			if C_Spell and C_Spell.GetSpellCooldown then
 				local ok, cd = pcall(C_Spell.GetSpellCooldown, spellID)
 				if ok and type(cd) == "table" then
-					OA.State.cooldowns[key] =
+					Tuono.State.cooldowns[key] =
 						NormalizeCooldown(cd.startTime, cd.duration, cd.isEnabled, cd.isActive)
 					handled = true
 				end
@@ -174,12 +174,12 @@ local function RefreshCooldowns()
 			if not handled and GetSpellCooldown then
 				local ok, start, duration, enabled = pcall(GetSpellCooldown, spellID)
 				if ok then
-					OA.State.cooldowns[key] = NormalizeCooldown(start, duration, enabled, nil)
+					Tuono.State.cooldowns[key] = NormalizeCooldown(start, duration, enabled, nil)
 					handled = true
 				end
 			end
 			if not handled then
-				OA.State.cooldowns[key] =
+				Tuono.State.cooldowns[key] =
 					{ known = false, ready = false, remaining = 0, remainingKnown = false }
 			end
 		end
@@ -190,7 +190,7 @@ end
 local function BootstrapBuffState()
 	local now = GetTime()
 	wipe(instanceMap)
-	OA.State.buffs.degraded = false
+	Tuono.State.buffs.degraded = false
 
 	-- Query-by-ID bootstrap. The live client exposes GetPlayerAuraBySpellID; some
 	-- builds/docs also carry GetAuraDataBySpellID. Prefer the former, accept either --
@@ -199,10 +199,10 @@ local function BootstrapBuffState()
 		(C_UnitAuras.GetPlayerAuraBySpellID or C_UnitAuras.GetAuraDataBySpellID)
 	if queryByID then
 		local trackedSpells = {
-			{ spellID = OA.SpellIDs.adrenalineRush, key = "adrenalineRush" },
-			{ spellID = OA.SpellIDs.rollTheBones, key = "rtb" },
+			{ spellID = Tuono.SpellIDs.adrenalineRush, key = "adrenalineRush" },
+			{ spellID = Tuono.SpellIDs.rollTheBones, key = "rtb" },
 			{ spellID = 195627, key = "opportunity" },
-			{ spellID = OA.SpellIDs.stealth, key = "stealthed" }
+			{ spellID = Tuono.SpellIDs.stealth, key = "stealthed" }
 		}
 
 		local foundAny = false
@@ -210,32 +210,32 @@ local function BootstrapBuffState()
 			local aura = queryByID("player", item.spellID)
 			if aura then
 				foundAny = true
-				local instanceID = OA.num(aura.auraInstanceID, 0)
+				local instanceID = Tuono.num(aura.auraInstanceID, 0)
 				if instanceID > 0 then
 					instanceMap[instanceID] = item.key
 				end
 				-- Update state from this aura
 				if item.key == "adrenalineRush" then
-					OA.State.buffs.adrenalineRush.up = true
-					OA.State.buffs.adrenalineRush.expires = OA.num(aura.expirationTime, now)
+					Tuono.State.buffs.adrenalineRush.up = true
+					Tuono.State.buffs.adrenalineRush.expires = Tuono.num(aura.expirationTime, now)
 				elseif item.key == "rtb" then
-					OA.State.buffs.rtb.stage = OA.num(aura.applications, 1)
-					OA.State.buffs.rtb.expires = OA.num(aura.expirationTime, now)
+					Tuono.State.buffs.rtb.stage = Tuono.num(aura.applications, 1)
+					Tuono.State.buffs.rtb.expires = Tuono.num(aura.expirationTime, now)
 				elseif item.key == "opportunity" then
-					OA.State.buffs.opportunity.up = true
-					OA.State.buffs.opportunity.stacks = OA.num(aura.applications, 0)
-					OA.State.buffs.opportunity.expires = OA.num(aura.expirationTime, now)
+					Tuono.State.buffs.opportunity.up = true
+					Tuono.State.buffs.opportunity.stacks = Tuono.num(aura.applications, 0)
+					Tuono.State.buffs.opportunity.expires = Tuono.num(aura.expirationTime, now)
 				elseif item.key == "stealthed" then
-					OA.State.stealthed = true
+					Tuono.State.stealthed = true
 				end
 			end
 		end
 
 		if not foundAny then
-			OA.State.buffs.degraded = true
+			Tuono.State.buffs.degraded = true
 		end
 	else
-		OA.State.buffs.degraded = true
+		Tuono.State.buffs.degraded = true
 	end
 end
 
@@ -256,18 +256,18 @@ local function ProcessAuraDelta(updateInfo)
 		for _, instanceID in ipairs(updateInfo.removedAuraInstanceIDs) do
 			local key = instanceMap[instanceID]
 			if key == "adrenalineRush" then
-				OA.State.buffs.adrenalineRush.up = false
-				OA.State.buffs.adrenalineRush.expires = 0
+				Tuono.State.buffs.adrenalineRush.up = false
+				Tuono.State.buffs.adrenalineRush.expires = 0
 			elseif key == "rtb" then
-				OA.State.buffs.rtb.stage = 0
-				OA.State.buffs.rtb.expires = 0
-				wipe(OA.State.buffs.rtb.names)
+				Tuono.State.buffs.rtb.stage = 0
+				Tuono.State.buffs.rtb.expires = 0
+				wipe(Tuono.State.buffs.rtb.names)
 			elseif key == "opportunity" then
-				OA.State.buffs.opportunity.up = false
-				OA.State.buffs.opportunity.stacks = 0
-				OA.State.buffs.opportunity.expires = 0
+				Tuono.State.buffs.opportunity.up = false
+				Tuono.State.buffs.opportunity.stacks = 0
+				Tuono.State.buffs.opportunity.expires = 0
 			elseif key == "stealthed" then
-				OA.State.stealthed = false
+				Tuono.State.stealthed = false
 			end
 			instanceMap[instanceID] = nil
 		end
@@ -276,58 +276,58 @@ local function ProcessAuraDelta(updateInfo)
 	-- addedAuras: match by spellId (readable-first check) or correlation
 	if updateInfo.addedAuras then
 		for _, auraData in ipairs(updateInfo.addedAuras) do
-			local instanceID = OA.num(auraData.auraInstanceID, 0)
+			local instanceID = Tuono.num(auraData.auraInstanceID, 0)
 			if instanceID > 0 then
 				-- Try to read spellId (not secret)
 				local spellID = nil
 				if not isSecret(auraData.spellId) then
-					spellID = OA.num(auraData.spellId, 0)
+					spellID = Tuono.num(auraData.spellId, 0)
 				end
 
 				-- Match by readable spellId
-				if spellID == OA.SpellIDs.adrenalineRush then
+				if spellID == Tuono.SpellIDs.adrenalineRush then
 					instanceMap[instanceID] = "adrenalineRush"
-					OA.State.buffs.adrenalineRush.up = true
-					OA.State.buffs.adrenalineRush.expires = OA.num(auraData.expirationTime, now)
-					OA.State.buffs.degraded = false
-				elseif spellID == OA.SpellIDs.rollTheBones then
+					Tuono.State.buffs.adrenalineRush.up = true
+					Tuono.State.buffs.adrenalineRush.expires = Tuono.num(auraData.expirationTime, now)
+					Tuono.State.buffs.degraded = false
+				elseif spellID == Tuono.SpellIDs.rollTheBones then
 					instanceMap[instanceID] = "rtb"
-					OA.State.buffs.rtb.stage = OA.num(auraData.applications, 1)
-					OA.State.buffs.rtb.expires = OA.num(auraData.expirationTime, now)
-					OA.State.buffs.degraded = false
+					Tuono.State.buffs.rtb.stage = Tuono.num(auraData.applications, 1)
+					Tuono.State.buffs.rtb.expires = Tuono.num(auraData.expirationTime, now)
+					Tuono.State.buffs.degraded = false
 				elseif spellID == 195627 then
 					instanceMap[instanceID] = "opportunity"
-					OA.State.buffs.opportunity.up = true
-					OA.State.buffs.opportunity.stacks = OA.num(auraData.applications, 0)
-					OA.State.buffs.opportunity.expires = OA.num(auraData.expirationTime, now)
-					OA.State.buffs.degraded = false
-				elseif spellID == OA.SpellIDs.stealth then
+					Tuono.State.buffs.opportunity.up = true
+					Tuono.State.buffs.opportunity.stacks = Tuono.num(auraData.applications, 0)
+					Tuono.State.buffs.opportunity.expires = Tuono.num(auraData.expirationTime, now)
+					Tuono.State.buffs.degraded = false
+				elseif spellID == Tuono.SpellIDs.stealth then
 					instanceMap[instanceID] = "stealthed"
-					OA.State.stealthed = true
-					OA.State.buffs.degraded = false
+					Tuono.State.stealthed = true
+					Tuono.State.buffs.degraded = false
 				elseif spellID == 0 or spellID == nil then
 					-- Secret spellId: try CAST-CORRELATION
 					if lastCast.spellID and (now - lastCast.t) <= castCorrelationWindow then
-						if lastCast.spellID == OA.SpellIDs.adrenalineRush then
+						if lastCast.spellID == Tuono.SpellIDs.adrenalineRush then
 							instanceMap[instanceID] = "adrenalineRush"
-							OA.State.buffs.adrenalineRush.up = true
-							OA.State.buffs.adrenalineRush.expires = OA.num(auraData.expirationTime, now)
-							OA.State.buffs.degraded = false
-						elseif lastCast.spellID == OA.SpellIDs.rollTheBones then
+							Tuono.State.buffs.adrenalineRush.up = true
+							Tuono.State.buffs.adrenalineRush.expires = Tuono.num(auraData.expirationTime, now)
+							Tuono.State.buffs.degraded = false
+						elseif lastCast.spellID == Tuono.SpellIDs.rollTheBones then
 							instanceMap[instanceID] = "rtb"
-							OA.State.buffs.rtb.stage = OA.num(auraData.applications, 1)
-							OA.State.buffs.rtb.expires = OA.num(auraData.expirationTime, now)
-							OA.State.buffs.degraded = false
+							Tuono.State.buffs.rtb.stage = Tuono.num(auraData.applications, 1)
+							Tuono.State.buffs.rtb.expires = Tuono.num(auraData.expirationTime, now)
+							Tuono.State.buffs.degraded = false
 						elseif lastCast.spellID == 195627 then
 							instanceMap[instanceID] = "opportunity"
-							OA.State.buffs.opportunity.up = true
-							OA.State.buffs.opportunity.stacks = OA.num(auraData.applications, 0)
-							OA.State.buffs.opportunity.expires = OA.num(auraData.expirationTime, now)
-							OA.State.buffs.degraded = false
+							Tuono.State.buffs.opportunity.up = true
+							Tuono.State.buffs.opportunity.stacks = Tuono.num(auraData.applications, 0)
+							Tuono.State.buffs.opportunity.expires = Tuono.num(auraData.expirationTime, now)
+							Tuono.State.buffs.degraded = false
 						end
 					else
 						-- No correlation possible: mark degraded
-						OA.State.buffs.degraded = true
+						Tuono.State.buffs.degraded = true
 					end
 				end
 			end
@@ -341,7 +341,7 @@ local function ProcessAuraDelta(updateInfo)
 				if instanceMap[instanceID] then
 					local aura = C_UnitAuras.GetAuraDataByAuraInstanceID("player", instanceID)
 					if aura then
-						OA.State.buffs[instanceMap[instanceID]].expires = OA.num(aura.expirationTime, now)
+						Tuono.State.buffs[instanceMap[instanceID]].expires = Tuono.num(aura.expirationTime, now)
 					end
 				end
 			end
@@ -357,7 +357,7 @@ local function RefreshBuffsFallback()
 	local now = GetTime()
 	-- NOTE: Do NOT wipe state unconditionally. Only use this as fallback when delta tracking found nothing.
 	-- Only refresh RtB legacy names if stage is still 0 (modern aura not found by delta tracking).
-	local rtbStageFromModern = OA.State.buffs.rtb.stage
+	local rtbStageFromModern = Tuono.State.buffs.rtb.stage
 
 	if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
 		local i = 1
@@ -368,37 +368,37 @@ local function RefreshBuffsFallback()
 			-- Guard against secret values in aura.spellId
 			local auraSpellId = 0
 			if aura.spellId and not isSecret(aura.spellId) then
-				auraSpellId = OA.num(aura.spellId, 0)
+				auraSpellId = Tuono.num(aura.spellId, 0)
 			end
 
 			-- Modern path: spell IDs take precedence; only update if delta didn't already set it
-			if auraSpellId == OA.SpellIDs.rollTheBones and rtbStageFromModern == 0 then
-				OA.State.buffs.rtb.stage = OA.num(aura.applications, 1)
-				OA.State.buffs.rtb.expires = OA.num(aura.expirationTime, now)
+			if auraSpellId == Tuono.SpellIDs.rollTheBones and rtbStageFromModern == 0 then
+				Tuono.State.buffs.rtb.stage = Tuono.num(aura.applications, 1)
+				Tuono.State.buffs.rtb.expires = Tuono.num(aura.expirationTime, now)
 			end
 
 			-- Non-RtB tracked auras: fill only what the modern tiers did NOT already set.
-			if auraSpellId == OA.SpellIDs.adrenalineRush and not OA.State.buffs.adrenalineRush.up then
-				OA.State.buffs.adrenalineRush.up = true
-				OA.State.buffs.adrenalineRush.expires = OA.num(aura.expirationTime, now)
+			if auraSpellId == Tuono.SpellIDs.adrenalineRush and not Tuono.State.buffs.adrenalineRush.up then
+				Tuono.State.buffs.adrenalineRush.up = true
+				Tuono.State.buffs.adrenalineRush.expires = Tuono.num(aura.expirationTime, now)
 			end
-			if auraSpellId == OA.SpellIDs.opportunity and not OA.State.buffs.opportunity.up then
-				OA.State.buffs.opportunity.up = true
-				OA.State.buffs.opportunity.stacks = OA.num(aura.applications, 0)
-				OA.State.buffs.opportunity.expires = OA.num(aura.expirationTime, now)
+			if auraSpellId == Tuono.SpellIDs.opportunity and not Tuono.State.buffs.opportunity.up then
+				Tuono.State.buffs.opportunity.up = true
+				Tuono.State.buffs.opportunity.stacks = Tuono.num(aura.applications, 0)
+				Tuono.State.buffs.opportunity.expires = Tuono.num(aura.expirationTime, now)
 			end
-			if auraSpellId == OA.SpellIDs.stealth then
-				OA.State.stealthed = true
+			if auraSpellId == Tuono.SpellIDs.stealth then
+				Tuono.State.stealthed = true
 			end
 
 			-- Legacy name scan: ONLY if stage is still 0 (modern spellID path didn't find it)
 			local auraName = safeStr(aura.name)
 			if rtbStageFromModern == 0 then
-				for _, buffName in ipairs(OA.RTB_BUFF_NAMES) do
-					if auraName == buffName and auraSpellId ~= OA.SpellIDs.rollTheBones then
-						table.insert(OA.State.buffs.rtb.names, buffName)
-						OA.State.buffs.rtb.stage = 1
-						OA.State.buffs.degraded = true  -- Mark degraded when using legacy fallback
+				for _, buffName in ipairs(Tuono.RTB_BUFF_NAMES) do
+					if auraName == buffName and auraSpellId ~= Tuono.SpellIDs.rollTheBones then
+						table.insert(Tuono.State.buffs.rtb.names, buffName)
+						Tuono.State.buffs.rtb.stage = 1
+						Tuono.State.buffs.degraded = true  -- Mark degraded when using legacy fallback
 					end
 				end
 			end
@@ -417,38 +417,38 @@ local function RefreshBuffsFallback()
 
 			if name == "Roll the Bones" and rtbStageFromModern == 0 then
 				local _, _, count, _, duration, expTime = UnitBuff("player", i)
-				OA.State.buffs.rtb.stage = OA.num(count, 1)
-				OA.State.buffs.rtb.expires = OA.num(expTime, now)
-				table.insert(OA.State.buffs.rtb.names, name)
+				Tuono.State.buffs.rtb.stage = Tuono.num(count, 1)
+				Tuono.State.buffs.rtb.expires = Tuono.num(expTime, now)
+				table.insert(Tuono.State.buffs.rtb.names, name)
 			end
 
 			-- Non-RtB tracked auras by name. Names are localization-dependent, so anything
 			-- learned here marks degraded: it is the least-trusted source we have.
-			if name == "Adrenaline Rush" and not OA.State.buffs.adrenalineRush.up then
+			if name == "Adrenaline Rush" and not Tuono.State.buffs.adrenalineRush.up then
 				local _, _, _, _, _, expTime = UnitBuff("player", i)
-				OA.State.buffs.adrenalineRush.up = true
-				OA.State.buffs.adrenalineRush.expires = OA.num(expTime, now)
-				OA.State.buffs.degraded = true
+				Tuono.State.buffs.adrenalineRush.up = true
+				Tuono.State.buffs.adrenalineRush.expires = Tuono.num(expTime, now)
+				Tuono.State.buffs.degraded = true
 			end
-			if name == "Opportunity" and not OA.State.buffs.opportunity.up then
+			if name == "Opportunity" and not Tuono.State.buffs.opportunity.up then
 				local _, _, count, _, _, expTime = UnitBuff("player", i)
-				OA.State.buffs.opportunity.up = true
-				OA.State.buffs.opportunity.stacks = OA.num(count, 0)
-				OA.State.buffs.opportunity.expires = OA.num(expTime, now)
-				OA.State.buffs.degraded = true
+				Tuono.State.buffs.opportunity.up = true
+				Tuono.State.buffs.opportunity.stacks = Tuono.num(count, 0)
+				Tuono.State.buffs.opportunity.expires = Tuono.num(expTime, now)
+				Tuono.State.buffs.degraded = true
 			end
 			if name == "Stealth" then
-				OA.State.stealthed = true
-				OA.State.buffs.degraded = true
+				Tuono.State.stealthed = true
+				Tuono.State.buffs.degraded = true
 			end
 
 			-- Legacy name scan: ONLY if stage is still 0
 			if rtbStageFromModern == 0 then
-				for _, buffName in ipairs(OA.RTB_BUFF_NAMES) do
+				for _, buffName in ipairs(Tuono.RTB_BUFF_NAMES) do
 					if name == buffName and name ~= "Roll the Bones" then
-						table.insert(OA.State.buffs.rtb.names, name)
-						OA.State.buffs.rtb.stage = 1
-						OA.State.buffs.degraded = true  -- Mark degraded when using legacy fallback
+						table.insert(Tuono.State.buffs.rtb.names, name)
+						Tuono.State.buffs.rtb.stage = 1
+						Tuono.State.buffs.degraded = true  -- Mark degraded when using legacy fallback
 					end
 				end
 			end
@@ -461,7 +461,7 @@ end
 local function RefreshTrinkets()
 	for slot = 13, 14 do
 		local itemID = GetInventoryItemID("player", slot)
-		OA.State.trinkets[slot].itemID = itemID
+		Tuono.State.trinkets[slot].itemID = itemID
 
 		if itemID then
 			local cd_start, cd_duration
@@ -474,19 +474,19 @@ local function RefreshTrinkets()
 			-- FAIL-CLOSED: Check for secret values BEFORE coercing
 			if isSecret(cd_start) or isSecret(cd_duration) then
 				-- Unknown cooldown: mark as not ready
-				OA.State.trinkets[slot].ready = false
-				OA.State.trinkets[slot].remaining = 0
+				Tuono.State.trinkets[slot].ready = false
+				Tuono.State.trinkets[slot].remaining = 0
 			else
-				cd_start = OA.num(cd_start, 0)
-				cd_duration = OA.num(cd_duration, 0)
+				cd_start = Tuono.num(cd_start, 0)
+				cd_duration = Tuono.num(cd_duration, 0)
 				if cd_start ~= nil and cd_duration ~= nil then
 					local now = GetTime()
 					if cd_start == 0 or cd_duration == 0 then
-						OA.State.trinkets[slot].ready = true
-						OA.State.trinkets[slot].remaining = 0
+						Tuono.State.trinkets[slot].ready = true
+						Tuono.State.trinkets[slot].remaining = 0
 					else
-						OA.State.trinkets[slot].remaining = math.max(0, (cd_start + cd_duration) - now)
-						OA.State.trinkets[slot].ready = OA.State.trinkets[slot].remaining <= 0
+						Tuono.State.trinkets[slot].remaining = math.max(0, (cd_start + cd_duration) - now)
+						Tuono.State.trinkets[slot].ready = Tuono.State.trinkets[slot].remaining <= 0
 					end
 				end
 			end
@@ -495,15 +495,15 @@ local function RefreshTrinkets()
 				local hasUse = false
 				if C_Item and C_Item.GetItemSpell then
 					local spellName, spellID = C_Item.GetItemSpell(itemID)
-					hasUse = OA.num(spellID, 0) > 0
+					hasUse = Tuono.num(spellID, 0) > 0
 				elseif GetItemSpell then
 					local spellName, spellID = GetItemSpell(itemID)
-					hasUse = OA.num(spellID, 0) > 0
+					hasUse = Tuono.num(spellID, 0) > 0
 				end
 				trinketSpellCache[itemID] = hasUse or trinketCacheSentinel
 			end
 			local cached = trinketSpellCache[itemID]
-			OA.State.trinkets[slot].onUse = (cached ~= trinketCacheSentinel) and cached or false
+			Tuono.State.trinkets[slot].onUse = (cached ~= trinketCacheSentinel) and cached or false
 		end
 	end
 end
@@ -519,16 +519,16 @@ end
 -- unit must now be attackable, alive, and actually in melee range.
 local function unitInMeleeRange(token)
 	-- Prefer a real range check against a melee ability from the active profile.
-	local profile = OA.Profiles and OA.Profiles.Active()
+	local profile = Tuono.Profiles and Tuono.Profiles.Active()
 	local meleeSpell = profile and profile.meleeRangeSpell and profile.spells[profile.meleeRangeSpell]
 	if meleeSpell then
 		local fn = (C_Spell and C_Spell.IsSpellInRange) or _G.IsSpellInRange
 		if fn then
 			local ok, inRange = pcall(fn, meleeSpell, token)
 			if ok then
-				local b, known = OA.readBool(inRange)
+				local b, known = Tuono.readBool(inRange)
 				if known then return b end
-				local n, numKnown = OA.readNum(inRange)   -- legacy API returns 1/0
+				local n, numKnown = Tuono.readNum(inRange)   -- legacy API returns 1/0
 				if numKnown then return n == 1 end
 			end
 		end
@@ -538,7 +538,7 @@ local function unitInMeleeRange(token)
 	if _G.CheckInteractDistance then
 		local ok, res = pcall(_G.CheckInteractDistance, token, 4)
 		if ok then
-			local b, known = OA.readBool(res)
+			local b, known = Tuono.readBool(res)
 			if known then return b end
 		end
 	end
@@ -546,8 +546,8 @@ local function unitInMeleeRange(token)
 end
 
 local function RefreshEnemyCount()
-	OA.State.enemyCount = nil
-	OA.State.enemyCountKnown = false
+	Tuono.State.enemyCount = nil
+	Tuono.State.enemyCountKnown = false
 
 	local api = _G.C_NamePlate
 	if not api or not api.GetNamePlates then return end
@@ -569,14 +569,14 @@ local function RefreshEnemyCount()
 			local attackable = true
 			if _G.UnitCanAttack then
 				local okA, res = pcall(_G.UnitCanAttack, "player", token)
-				local b, known = OA.readBool(okA and res)
+				local b, known = Tuono.readBool(okA and res)
 				attackable = known and b or false
 			end
 
 			local alive = true
 			if _G.UnitIsDead then
 				local okD, res = pcall(_G.UnitIsDead, token)
-				local b, known = OA.readBool(okD and res)
+				local b, known = Tuono.readBool(okD and res)
 				if known then alive = not b end
 			end
 
@@ -602,17 +602,17 @@ local function RefreshEnemyCount()
 	-- Distinguish "zero enemies" from "could not tell". If every plate we looked at was
 	-- unreadable, we know nothing -- and nil must never be treated as 0 downstream.
 	if considered > 0 and poisoned == considered then
-		OA.State.enemyCount = nil
-		OA.State.enemyCountKnown = false
+		Tuono.State.enemyCount = nil
+		Tuono.State.enemyCountKnown = false
 	else
-		OA.State.enemyCount = count
-		OA.State.enemyCountKnown = true
+		Tuono.State.enemyCount = count
+		Tuono.State.enemyCountKnown = true
 	end
 end
 
 -- SPELL OVERRIDES: talents/procs/stealth can swap the spell actually castable/on the
 -- action bar for a different (override) spellID than the base ID this addon reasons
--- about (OA.SpellIDs always holds base IDs). Both directions must resolve so a lookup
+-- about (Tuono.SpellIDs always holds base IDs). Both directions must resolve so a lookup
 -- succeeds whether we hold the base or the override ID:
 --   ResolveOverrideSpell(base)     -> override (or base itself if none active)
 --   ResolveBaseSpell(override)     -> base (or the same ID if it is not an override)
@@ -623,7 +623,7 @@ end
 -- only on talent change. NOT verified against the live client this addon actually
 -- targets (Interface 120005/120007/120100, an unreleased build); every call is
 -- pcall-guarded and falls back to the input ID unchanged.
-function OA.ResolveOverrideSpell(spellID)
+function Tuono.ResolveOverrideSpell(spellID)
 	if not spellID then return spellID end
 	if _G.C_Spell and _G.C_Spell.GetOverrideSpell then
 		local ok, id = pcall(_G.C_Spell.GetOverrideSpell, spellID)
@@ -636,7 +636,7 @@ function OA.ResolveOverrideSpell(spellID)
 	return spellID
 end
 
-function OA.ResolveBaseSpell(spellID)
+function Tuono.ResolveBaseSpell(spellID)
 	if not spellID then return spellID end
 	if _G.FindBaseSpellByID then
 		local ok, id = pcall(_G.FindBaseSpellByID, spellID)
@@ -649,11 +649,11 @@ end
 -- slot) is spellID itself, spellID's currently active override, or an override whose
 -- base is spellID. Used by Display/Highlight to resolve a base spellID to its bar
 -- slot regardless of which direction the client currently reports.
-function OA.SpellMatchesAction(spellID, actionID)
+function Tuono.SpellMatchesAction(spellID, actionID)
 	if not spellID or not actionID then return false end
 	if actionID == spellID then return true end
-	if OA.ResolveOverrideSpell(spellID) == actionID then return true end
-	if OA.ResolveBaseSpell(actionID) == spellID then return true end
+	if Tuono.ResolveOverrideSpell(spellID) == actionID then return true end
+	if Tuono.ResolveBaseSpell(actionID) == spellID then return true end
 	return false
 end
 
@@ -670,12 +670,12 @@ local function RefreshKnownSpells()
 		checkFn = function(spellID) return IsSpellKnown(spellID) end
 	else
 		-- No known-spell API available: fail-open (assume all are known)
-		OA.State.knownUnavailable = true
+		Tuono.State.knownUnavailable = true
 		return
 	end
 
-	OA.State.knownUnavailable = false
-	wipe(OA.State.knownSpells)
+	Tuono.State.knownUnavailable = false
+	wipe(Tuono.State.knownSpells)
 
 	-- Probe a spellID AND its live override/base pair, marking ALL of them known when
 	-- EITHER form checks true. A talented-and-overridden ability must not read as
@@ -683,12 +683,12 @@ local function RefreshKnownSpells()
 	-- known (or vice versa) -- this is the gating half of the override-resolution fix
 	-- (state-dependent availability must survive a base<->override swap).
 	local function probeAndMark(spellID)
-		if not spellID or OA.State.knownSpells[spellID] ~= nil then return end
+		if not spellID or Tuono.State.knownSpells[spellID] ~= nil then return end
 		local ok, isKnown = pcall(checkFn, spellID)
 		isKnown = ok and isKnown or false
 
-		local override = OA.ResolveOverrideSpell(spellID)
-		local base = OA.ResolveBaseSpell(spellID)
+		local override = Tuono.ResolveOverrideSpell(spellID)
+		local base = Tuono.ResolveBaseSpell(spellID)
 
 		if not isKnown and override ~= spellID then
 			local ok2, isKnown2 = pcall(checkFn, override)
@@ -699,23 +699,23 @@ local function RefreshKnownSpells()
 			isKnown = isKnown or (ok3 and isKnown3 or false)
 		end
 
-		OA.State.knownSpells[spellID] = isKnown
-		if override ~= spellID then OA.State.knownSpells[override] = isKnown end
-		if base ~= spellID then OA.State.knownSpells[base] = isKnown end
+		Tuono.State.knownSpells[spellID] = isKnown
+		if override ~= spellID then Tuono.State.knownSpells[override] = isKnown end
+		if base ~= spellID then Tuono.State.knownSpells[base] = isKnown end
 	end
 
-	-- Check all spells from OA.SpellIDs
-	for name, spellID in pairs(OA.SpellIDs or {}) do
+	-- Check all spells from Tuono.SpellIDs
+	for name, spellID in pairs(Tuono.SpellIDs or {}) do
 		if spellID then probeAndMark(spellID) end
 	end
 
 	-- Also check all spells referenced by rules
-	for _, rule in ipairs(OA.Rules or {}) do
+	for _, rule in ipairs(Tuono.Rules or {}) do
 		if rule.spellID then probeAndMark(rule.spellID) end
 	end
 end
 
-function OA.State.RefreshFast()
+function Tuono.State.RefreshFast()
 	local energyPower = Enum and Enum.PowerType and Enum.PowerType.Energy or 3
 	local comboPower = Enum and Enum.PowerType and Enum.PowerType.ComboPoints or 4
 
@@ -724,55 +724,55 @@ function OA.State.RefreshFast()
 	-- position 1 permanently. IsStealthed is a plain boolean and stays readable.
 	if _G.IsStealthed then
 		local ok, stealthed = pcall(_G.IsStealthed)
-		if ok then OA.State.stealthed = stealthed and true or false end
+		if ok then Tuono.State.stealthed = stealthed and true or false end
 	end
 
 	-- RESOURCES MUST REPORT READABILITY, NOT JUST A NUMBER.
-	-- The old code was OA.num(UnitPower(...), 0). When Midnight makes a resource secret
+	-- The old code was Tuono.num(UnitPower(...), 0). When Midnight makes a resource secret
 	-- that yields a confident "0 energy / 0 combo points" -- and every canAfford() gate
 	-- in Rotation.lua then fails, Predict() returns an EMPTY sequence, and the bar falls
 	-- back to a stale Blizzard pick. Unreadable must be UNKNOWN, so the predictor can
 	-- drop the gate instead of asserting zero.
-	local energy, energyKnown = OA.readNum(UnitPower("player", energyPower))
-	local energyMax, energyMaxKnown = OA.readNum(UnitPowerMax("player", energyPower))
-	local cp, cpKnown = OA.readNum(UnitPower("player", comboPower))
-	local cpMax, cpMaxKnown = OA.readNum(UnitPowerMax("player", comboPower))
+	local energy, energyKnown = Tuono.readNum(UnitPower("player", energyPower))
+	local energyMax, energyMaxKnown = Tuono.readNum(UnitPowerMax("player", energyPower))
+	local cp, cpKnown = Tuono.readNum(UnitPower("player", comboPower))
+	local cpMax, cpMaxKnown = Tuono.readNum(UnitPowerMax("player", comboPower))
 
-	OA.State.energyMax = energyMax or 0
-	OA.State.energyMaxKnown = energyMaxKnown
+	Tuono.State.energyMax = energyMax or 0
+	Tuono.State.energyMaxKnown = energyMaxKnown
 
 	-- THE SHADOW MODEL IS THE SINGLE SOURCE OF ENERGY, ALWAYS -- not just a fallback.
 	-- It measures directly whenever the API is readable and integrates forward when it
 	-- is not. Running it only on the unreadable path was a seeding bug: the model never
 	-- saw a real measurement to anchor to, so the moment energy went secret it had
 	-- nothing to extrapolate from and reported "unknown" forever.
-	if OA.Energy then
-		pcall(OA.Energy.Advance)
-		local est, usable, conf = OA.Energy.Get()
-		OA.State.energy = est
-		OA.State.energyKnown = usable
-		OA.State.energySource = usable and conf or "unknown"
+	if Tuono.Energy then
+		pcall(Tuono.Energy.Advance)
+		local est, usable, conf = Tuono.Energy.Get()
+		Tuono.State.energy = est
+		Tuono.State.energyKnown = usable
+		Tuono.State.energySource = usable and conf or "unknown"
 	elseif energyKnown then
-		OA.State.energy = energy or 0
-		OA.State.energyKnown = true
-		OA.State.energySource = "measured"
+		Tuono.State.energy = energy or 0
+		Tuono.State.energyKnown = true
+		Tuono.State.energySource = "measured"
 	else
-		OA.State.energy = 0
-		OA.State.energyKnown = false
-		OA.State.energySource = "unknown"
+		Tuono.State.energy = 0
+		Tuono.State.energyKnown = false
+		Tuono.State.energySource = "unknown"
 	end
-	OA.State.comboPoints = cp or 0
-	OA.State.comboPointsKnown = cpKnown
+	Tuono.State.comboPoints = cp or 0
+	Tuono.State.comboPointsKnown = cpKnown
 	-- comboPointsMax is a character constant (5/6/7), not combat state. If it ever reads
 	-- secret, keeping the last known value beats collapsing to 0 -- `cp < cpMax` with
 	-- cpMax==0 is false for every cp, which silently disables the builder rule.
 	if cpMaxKnown and cpMax and cpMax > 0 then
-		OA.State.comboPointsMax = cpMax
-		OA.State.lastKnownCPMax = cpMax
-	elseif OA.State.lastKnownCPMax then
-		OA.State.comboPointsMax = OA.State.lastKnownCPMax
+		Tuono.State.comboPointsMax = cpMax
+		Tuono.State.lastKnownCPMax = cpMax
+	elseif Tuono.State.lastKnownCPMax then
+		Tuono.State.comboPointsMax = Tuono.State.lastKnownCPMax
 	end
-	OA.State.comboPointsMaxKnown = cpMaxKnown
+	Tuono.State.comboPointsMaxKnown = cpMaxKnown
 
 	RefreshCooldowns()
 
@@ -780,7 +780,7 @@ function OA.State.RefreshFast()
 	-- TIER 3 Fallback: only safe to run NOT in combat (aura scanning can throw on secret values in combat)
 	-- When inCombat=true, skip Tier 3 and trust Tier 1 delta tracking.
 	-- If Tier 1 failed (degraded), stay degraded; Tier 3 won't fix it mid-combat.
-	if (now - lastBuffScan) >= 0.5 and not OA.State.inCombat then
+	if (now - lastBuffScan) >= 0.5 and not Tuono.State.inCombat then
 		-- Periodic fallback scan in case delta tracking lost sync (out of combat only).
 		-- ISOLATED pcall: as of 12.1.0 the index/slot/instanceID aura paths do not merely
 		-- return secrets, they raise an immediate Lua ERROR while auras are restricted.
@@ -788,7 +788,7 @@ function OA.State.RefreshFast()
 		-- it -- enemy count and trinket state included -- so a hidden aura silently took
 		-- out unrelated, still-readable subsystems.
 		local ok = pcall(RefreshBuffsFallback)
-		if not ok then OA.State.buffs.degraded = true end
+		if not ok then Tuono.State.buffs.degraded = true end
 		lastBuffScan = now
 	end
 
@@ -812,11 +812,11 @@ local function OnPlayerEquipmentChanged(event)
 end
 
 local function OnPlayerRegenDisabled(event)
-	OA.State.inCombat = true
+	Tuono.State.inCombat = true
 end
 
 local function OnPlayerRegenEnabled(event)
-	OA.State.inCombat = false
+	Tuono.State.inCombat = false
 end
 
 local function OnUnitAura(event, unit, updateInfo)
@@ -824,7 +824,7 @@ local function OnUnitAura(event, unit, updateInfo)
 		-- TIER 1: Process delta updates if updateInfo available
 		if updateInfo then
 			ProcessAuraDelta(updateInfo)
-		elseif not OA.State.inCombat then
+		elseif not Tuono.State.inCombat then
 			-- Fallback: full refresh if no updateInfo. Same combat gate as the periodic
 			-- path -- this call site was the hole that let the index scan run in combat.
 			RefreshBuffsFallback()
@@ -834,7 +834,7 @@ end
 
 local function OnUnitSpellcastSucceeded(event, unit, castGUID, spellID)
 	if unit == "player" then
-		lastCast.spellID = OA.num(spellID, 0)
+		lastCast.spellID = Tuono.num(spellID, 0)
 		lastCast.t = GetTime()
 	end
 end
@@ -856,14 +856,14 @@ local function OnTalentChange(event)
 	RefreshKnownSpells()
 end
 
-OA.RegisterEvent("PLAYER_ENTERING_WORLD", OnPlayerEnteringWorldFull)
-OA.RegisterEvent("PLAYER_EQUIPMENT_CHANGED", OnPlayerEquipmentChanged)
-OA.RegisterEvent("PLAYER_REGEN_DISABLED", OnPlayerRegenDisabled)
-OA.RegisterEvent("PLAYER_REGEN_ENABLED", OnPlayerRegenEnabled)
-OA.RegisterEvent("UNIT_AURA", OnUnitAura)
-OA.RegisterEvent("UNIT_SPELLCAST_SUCCEEDED", OnUnitSpellcastSucceeded)
-OA.RegisterEvent("NAME_PLATE_UNIT_ADDED", OnNamePlateUnitAdded)
-OA.RegisterEvent("NAME_PLATE_UNIT_REMOVED", OnNamePlateUnitRemoved)
+Tuono.RegisterEvent("PLAYER_ENTERING_WORLD", OnPlayerEnteringWorldFull)
+Tuono.RegisterEvent("PLAYER_EQUIPMENT_CHANGED", OnPlayerEquipmentChanged)
+Tuono.RegisterEvent("PLAYER_REGEN_DISABLED", OnPlayerRegenDisabled)
+Tuono.RegisterEvent("PLAYER_REGEN_ENABLED", OnPlayerRegenEnabled)
+Tuono.RegisterEvent("UNIT_AURA", OnUnitAura)
+Tuono.RegisterEvent("UNIT_SPELLCAST_SUCCEEDED", OnUnitSpellcastSucceeded)
+Tuono.RegisterEvent("NAME_PLATE_UNIT_ADDED", OnNamePlateUnitAdded)
+Tuono.RegisterEvent("NAME_PLATE_UNIT_REMOVED", OnNamePlateUnitRemoved)
 
 -- Register for talent/spell changes. These used to be guarded by `if _G.EVENT_NAME
 -- then ... end` -- that tests for a GLOBAL VARIABLE happening to share the event's
@@ -872,17 +872,17 @@ OA.RegisterEvent("NAME_PLATE_UNIT_REMOVED", OnNamePlateUnitRemoved)
 -- refreshed knownSpells/overrides). All four are VERIFIED real, current WoW events
 -- (warcraft.wiki.gg, 2026-08-01) and are registered directly, same as every other
 -- event in this file.
-if not OA._RegisteredTalentEvents then
-	OA._RegisteredTalentEvents = true
-	OA.RegisterEvent("PLAYER_TALENT_UPDATE", OnTalentChange)
-	OA.RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED", OnTalentChange)
-	OA.RegisterEvent("TRAIT_CONFIG_UPDATED", OnTalentChange)
-	OA.RegisterEvent("SPELLS_CHANGED", OnTalentChange)
+if not Tuono._RegisteredTalentEvents then
+	Tuono._RegisteredTalentEvents = true
+	Tuono.RegisterEvent("PLAYER_TALENT_UPDATE", OnTalentChange)
+	Tuono.RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED", OnTalentChange)
+	Tuono.RegisterEvent("TRAIT_CONFIG_UPDATED", OnTalentChange)
+	Tuono.RegisterEvent("SPELLS_CHANGED", OnTalentChange)
 
 	-- STEALTH can flip which override is active for a spell (VERIFIED example from
 	-- FindBaseSpellByID's own docs: a Shadowrunner-style talent overrides Stealth
 	-- itself while stealthed). Re-probe known/override state on the same trigger
 	-- Display/Highlight use to invalidate their caches, so a talented-and-overridden
 	-- ability is never read as "unknown" mid-transition.
-	OA.RegisterEvent("UPDATE_STEALTH", OnTalentChange)
+	Tuono.RegisterEvent("UPDATE_STEALTH", OnTalentChange)
 end

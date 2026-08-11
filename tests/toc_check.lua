@@ -1,5 +1,5 @@
 #!/usr/bin/env lua
--- TOC Lint: Verify OutlawAssist.toc integrity
+-- TOC Lint: Verify Tuono.toc integrity
 
 local function readFile(path)
   local f = io.open(path, "r")
@@ -46,7 +46,7 @@ local function runTocCheck()
   end
 
   -- Test 1: Read TOC file
-  local tocPath = "OutlawAssist/OutlawAssist.toc"
+  local tocPath = "Tuono/Tuono.toc"
   local tocContent = readFile(tocPath)
 
   test("toc file exists", function()
@@ -109,35 +109,35 @@ local function runTocCheck()
   -- Test 4: Verify every TOC-listed file exists
   test("all toc-listed files exist on disk", function()
     for _, file in ipairs(tocFiles) do
-      local fullPath = "OutlawAssist/" .. file
+      local fullPath = "Tuono/" .. file
       if not fileExists(fullPath) then
         error("File listed in TOC not found: " .. fullPath)
       end
     end
   end)
 
-  -- Test 5: Verify all OutlawAssist and data Lua files are in TOC
+  -- Test 5: Verify all Tuono and data Lua files are in TOC
   test("all outlaw assist lua files are listed in toc", function()
-    -- Find all .lua files in OutlawAssist/ (excluding subdirs for now)
+    -- Find all .lua files in Tuono/ (excluding subdirs for now)
     local allFiles = {}
 
-    -- Check OutlawAssist/*.lua
-    local p = io.popen("find OutlawAssist -maxdepth 1 -name '*.lua' -type f")
+    -- Check Tuono/*.lua
+    local p = io.popen("find Tuono -maxdepth 1 -name '*.lua' -type f")
     if p then
       for line in p:lines() do
-        -- Strip OutlawAssist/ prefix
-        local file = line:gsub("^OutlawAssist/", "")
+        -- Strip Tuono/ prefix
+        local file = line:gsub("^Tuono/", "")
         table.insert(allFiles, file)
       end
       p:close()
     end
 
-    -- Check OutlawAssist/data/*.lua
-    local p2 = io.popen("find OutlawAssist/data -name '*.lua' -type f")
+    -- Check Tuono/data/*.lua
+    local p2 = io.popen("find Tuono/data -name '*.lua' -type f")
     if p2 then
       for line in p2:lines() do
-        -- Strip OutlawAssist/ prefix
-        local file = line:gsub("^OutlawAssist/", "")
+        -- Strip Tuono/ prefix
+        local file = line:gsub("^Tuono/", "")
         table.insert(allFiles, file)
       end
       p2:close()

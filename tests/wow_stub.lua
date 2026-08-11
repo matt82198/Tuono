@@ -47,7 +47,7 @@ function stub.FireEvent(event, ...)
   end
 
   -- Also fire through any registered frames' OnEvent handlers
-  -- This ensures OA.frame receives events properly
+  -- This ensures Tuono.frame receives events properly
   for _, frame in ipairs(stub.frames) do
     if frame.scripts.OnEvent then
       frame.scripts.OnEvent(frame, event, ...)

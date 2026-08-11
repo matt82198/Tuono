@@ -1,4 +1,4 @@
-local ADDON_NAME, OA = ...
+local ADDON_NAME, Tuono = ...
 
 -- ============================================================================
 -- PROFILE REGISTRY
@@ -9,26 +9,26 @@ local ADDON_NAME, OA = ...
 -- that separation is the whole point of the framework.
 --
 -- LOAD-ORDER CONTRACT (this is load-bearing, do not reorder the TOC casually):
---   Profiles.lua        creates the SHARED OA.SpellIDs table
+--   Profiles.lua        creates the SHARED Tuono.SpellIDs table
 --   profiles/*.lua      register profiles; the first one registered activates
 --                       immediately so that load-time readers see populated data
---   StateTracker.lua    reads OA.SpellIDs
---   Rotation.lua        publishes OA.RuleHelpers and consumes the active profile
+--   StateTracker.lua    reads Tuono.SpellIDs
+--   Rotation.lua        publishes Tuono.RuleHelpers and consumes the active profile
 --
--- OA.SpellIDs is MUTATED IN PLACE on activation, never reassigned. Half this addon
+-- Tuono.SpellIDs is MUTATED IN PLACE on activation, never reassigned. Half this addon
 -- captured a reference to it at load; swapping the table would silently strand every
 -- one of those references pointing at the old spec's data.
 -- ============================================================================
 
-OA.Profiles = OA.Profiles or {}
-local P = OA.Profiles
+Tuono.Profiles = Tuono.Profiles or {}
+local P = Tuono.Profiles
 
 P.registry = P.registry or {}
 P.order = P.order or {}
 P.active = nil
 
 -- Shared, mutated in place. See the contract note above.
-OA.SpellIDs = OA.SpellIDs or {}
+Tuono.SpellIDs = Tuono.SpellIDs or {}
 
 -- Callbacks fired after a profile becomes active, so modules can rebuild anything they
 -- derived from the old profile (Rotation's spellID->cooldown-key map, for one).
@@ -58,7 +58,7 @@ function P.Register(profile)
 	P.registry[profile.id] = profile
 
 	-- First profile in wins the default slot so load-time consumers (data/rules.lua
-	-- reads OA.SpellIDs while loading) never see an empty table.
+	-- reads Tuono.SpellIDs while loading) never see an empty table.
 	if not P.active then
 		P.Activate(profile.id)
 	end
@@ -91,8 +91,8 @@ function P.Activate(id)
 	P.active = id
 
 	-- Mutate the shared table in place.
-	for k in pairs(OA.SpellIDs) do OA.SpellIDs[k] = nil end
-	for k, v in pairs(profile.spells) do OA.SpellIDs[k] = v end
+	for k in pairs(Tuono.SpellIDs) do Tuono.SpellIDs[k] = nil end
+	for k, v in pairs(profile.spells) do Tuono.SpellIDs[k] = v end
 
 	for _, fn in ipairs(P.activationHooks) do
 		pcall(fn, profile)
@@ -135,10 +135,10 @@ function P.MatchesPlayer()
 	return true
 end
 
-OA.RegisterEvent("PLAYER_LOGIN", function()
+Tuono.RegisterEvent("PLAYER_LOGIN", function()
 	-- A saved manual choice beats auto-detection; the player may be theorycrafting a
 	-- spec they are not currently in.
-	local saved = OA.db and OA.db.activeProfile
+	local saved = Tuono.db and Tuono.db.activeProfile
 	if saved and P.registry[saved] then
 		P.Activate(saved)
 	else
@@ -146,8 +146,8 @@ OA.RegisterEvent("PLAYER_LOGIN", function()
 	end
 end)
 
-OA.RegisterEvent("PLAYER_SPECIALIZATION_CHANGED", function(event, unit)
+Tuono.RegisterEvent("PLAYER_SPECIALIZATION_CHANGED", function(event, unit)
 	if unit and unit ~= "player" then return end
-	if OA.db and OA.db.activeProfile then return end
+	if Tuono.db and Tuono.db.activeProfile then return end
 	P.ResolveForPlayer()
 end)

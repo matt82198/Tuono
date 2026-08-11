@@ -1,5 +1,5 @@
 #!/usr/bin/env lua
--- Test runner for OutlawAssist addon
+-- Test runner for Tuono addon
 
 -- Run TOC lint first (fail-closed)
 local toc_check = loadfile("tests/toc_check.lua")
@@ -36,10 +36,10 @@ end
 local stub = require("tests.wow_stub")
 
 -- Global setup
-_G.ADDON_NAME = "OutlawAssist"
+_G.ADDON_NAME = "Tuono"
 -- BARE table, exactly like the WoW client's addon-shared table: modules MUST create
 -- their own subtables. Pre-seeding here masked a real in-game load failure (Display).
-local OA = {}
+local Tuono = {}
 
 -- Inject stub into globals
 for k, v in pairs(stub) do
@@ -50,16 +50,16 @@ end
 
 -- Load addon files in TOC order
 local files = {
-  "OutlawAssist/Core.lua",
-  "OutlawAssist/data/rules.lua",
-  "OutlawAssist/StateTracker.lua",
-  "OutlawAssist/AssistReader.lua",
-  "OutlawAssist/Rotation.lua",
-  "OutlawAssist/IntelligenceLayer.lua",
-  "OutlawAssist/Display.lua",
-  "OutlawAssist/Highlight.lua",
-  "OutlawAssist/Config.lua",
-  "OutlawAssist/ApiTest.lua"
+  "Tuono/Core.lua",
+  "Tuono/data/rules.lua",
+  "Tuono/StateTracker.lua",
+  "Tuono/AssistReader.lua",
+  "Tuono/Rotation.lua",
+  "Tuono/IntelligenceLayer.lua",
+  "Tuono/Display.lua",
+  "Tuono/Highlight.lua",
+  "Tuono/Config.lua",
+  "Tuono/ApiTest.lua"
 }
 
 for _, file in ipairs(files) do
@@ -68,7 +68,7 @@ for _, file in ipairs(files) do
     print("FAIL: Could not load " .. file)
     os.exit(1)
   end
-  local ok, err = pcall(fn, _G.ADDON_NAME, OA)
+  local ok, err = pcall(fn, _G.ADDON_NAME, Tuono)
   if not ok then
     print("FAIL: Error loading " .. file .. ": " .. tostring(err))
     os.exit(1)
@@ -111,66 +111,66 @@ local function test(name, fn)
 end
 
 -- Fire login events
-stub.FireEvent("ADDON_LOADED", "OutlawAssist")
+stub.FireEvent("ADDON_LOADED", "Tuono")
 stub.FireEvent("PLAYER_LOGIN")
 stub.FireEvent("PLAYER_ENTERING_WORLD")
 
 -- Ensure db is properly initialized with defaults
-if OA.defaults and not OA.db then
-  OA.db = {}
-  for k, v in pairs(OA.defaults) do
+if Tuono.defaults and not Tuono.db then
+  Tuono.db = {}
+  for k, v in pairs(Tuono.defaults) do
     if type(v) == "table" then
-      OA.db[k] = {}
+      Tuono.db[k] = {}
       for k2, v2 in pairs(v) do
-        OA.db[k][k2] = v2
+        Tuono.db[k][k2] = v2
       end
     else
-      OA.db[k] = v
+      Tuono.db[k] = v
     end
   end
-  _G.OutlawAssistDB = OA.db
+  _G.TuonoDB = Tuono.db
 end
 
 -- Initialize Assist
-if OA.Assist and OA.Assist.Update then
-  OA.Assist.Update()
+if Tuono.Assist and Tuono.Assist.Update then
+  Tuono.Assist.Update()
 end
 
 -- Test 1: Base queue with assist available
 test("assist available - queue adapts to varying nextSpellID values", function()
   -- Self-sufficient: prevent opener rule from pinning by setting inCombat=true
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
+  Tuono.State.stealthed = false
 
   _G.C_AssistedCombat.GetNextCastSpell = function() return 193315 end
-  OA.Assist.Update()
-  local r = OA.Engine.Evaluate()
+  Tuono.Assist.Update()
+  local r = Tuono.Engine.Evaluate()
   assert_true(r.queue ~= nil, "queue exists")
   assert_true(#r.queue > 0, "queue has entries")
   assert_eq(r.queue[1].spellID, 193315, "queue adapts: starts with 193315 when GetNextCastSpell returns 193315")
 
   _G.C_AssistedCombat.GetNextCastSpell = function() return 1234 end
-  OA.Assist.Update()
-  r = OA.Engine.Evaluate()
+  Tuono.Assist.Update()
+  r = Tuono.Engine.Evaluate()
   assert_eq(r.queue[1].spellID, 1234, "queue adapts: starts with 1234 when GetNextCastSpell returns 1234")
 
   _G.C_AssistedCombat.GetNextCastSpell = function() return 193315 end
-  OA.State.inCombat = false
+  Tuono.State.inCombat = false
 end)
 
 -- Test 2: AR PIN at low CP
 test("adrenaline rush PIN when CP<=2 and ready", function()
   -- Self-sufficient state setup
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
+  Tuono.State.stealthed = false
   stub.state.comboPoints = 2
   stub.state.cooldowns[13750] = {startTime = 0, duration = 0}
-  OA.Assist.Update()
-  OA.State.RefreshFast()
+  Tuono.Assist.Update()
+  Tuono.State.RefreshFast()
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
   local foundAR = false
   for i, entry in ipairs(r.queue) do
     if entry.spellID == 13750 then
@@ -184,14 +184,14 @@ end)
 -- Test 3: BtE PIN at high CP
 test("between the eyes PIN when CP>=6", function()
   -- Self-sufficient state setup
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
+  Tuono.State.stealthed = false
   stub.state.comboPoints = 6
   stub.state.cooldowns[13750] = {startTime = 100, duration = 10}
-  OA.Assist.Update()
-  OA.State.RefreshFast()
-  local r = OA.Engine.Evaluate()
+  Tuono.Assist.Update()
+  Tuono.State.RefreshFast()
+  local r = Tuono.Engine.Evaluate()
   assert_true(r.queue[1] ~= nil, "queue has first entry")
   assert_eq(r.queue[1].spellID, 315341, "BtE pinned to position 1")
 end)
@@ -199,13 +199,13 @@ end)
 -- Test 4: Engine.Evaluate validates actual logic
 test("engine.evaluate produces valid queue and advisory structures", function()
   -- Self-sufficient state setup
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
+  Tuono.State.stealthed = false
   stub.state.comboPoints = 2
-  OA.Assist.Update()
-  OA.State.RefreshFast()
-  local r = OA.Engine.Evaluate()
+  Tuono.Assist.Update()
+  Tuono.State.RefreshFast()
+  local r = Tuono.Engine.Evaluate()
   assert_true(r ~= nil, "result exists")
   assert_true(r.queue ~= nil, "queue exists")
   assert_true(type(r.queue) == "table", "queue is a table")
@@ -227,7 +227,7 @@ end)
 -- MANDATED TEST 1: Trinket advisory rule exists and fires when conditions met
 test("trinket advisory rule exists for AR buff + trinket ready", function()
   local foundRule = false
-  for _, rule in ipairs(OA.Rules or {}) do
+  for _, rule in ipairs(Tuono.Rules or {}) do
     if rule.name == "trinket_slot13_during_ar" then
       foundRule = true
       break
@@ -236,14 +236,14 @@ test("trinket advisory rule exists for AR buff + trinket ready", function()
   assert_true(foundRule, "trinket_slot13_during_ar rule exists")
 
   -- Self-sufficient state setup
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.buffs.adrenalineRush.up = true
-  OA.State.trinkets[13].ready = true
-  OA.State.trinkets[13].onUse = true
+  Tuono.State.stealthed = false
+  Tuono.State.buffs.adrenalineRush.up = true
+  Tuono.State.trinkets[13].ready = true
+  Tuono.State.trinkets[13].onUse = true
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
   -- v0.3 contract: trinket entries fold into queue with kind="trinket" and itemSlot
   local foundTrinket = false
   for _, entry in ipairs(r.queue) do
@@ -257,10 +257,10 @@ end)
 
 -- MANDATED TEST 2: RtB reroll advisory at stage 1
 test("rtb reroll advisory at stage 1 with AR CD remaining > 20", function()
-  OA.State.buffs.rtb.stage = 1
-  OA.State.cooldowns.adrenalineRush.remaining = 30
+  Tuono.State.buffs.rtb.stage = 1
+  Tuono.State.cooldowns.adrenalineRush.remaining = 30
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
   local foundReroll = false
   for _, adv in ipairs(r.advisories) do
     if adv.kind == "rtb" and adv.text:find("reroll") and adv.active then
@@ -273,10 +273,10 @@ end)
 
 -- MANDATED TEST 2B: RtB reroll NOT active at stage 3
 test("rtb reroll advisory NOT active at stage 3", function()
-  OA.State.buffs.rtb.stage = 3
-  OA.State.cooldowns.adrenalineRush.remaining = 30
+  Tuono.State.buffs.rtb.stage = 3
+  Tuono.State.cooldowns.adrenalineRush.remaining = 30
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
   local hasRerollAdv = false
   for _, adv in ipairs(r.advisories) do
     if adv.kind == "rtb" and adv.text:find("reroll") then
@@ -290,7 +290,7 @@ end)
 -- MANDATED TEST 3: Buff scan propagation via UNIT_AURA event
 test("buff scan propagation on UNIT_AURA event fires handler", function()
   local foundHandler = false
-  local unitAuraHandlers = OA.eventHandlers and OA.eventHandlers["UNIT_AURA"]
+  local unitAuraHandlers = Tuono.eventHandlers and Tuono.eventHandlers["UNIT_AURA"]
   if unitAuraHandlers and #unitAuraHandlers > 0 then
     foundHandler = true
   end
@@ -299,28 +299,28 @@ end)
 
 -- Test 5: AoE mode toggle
 test("aoe mode toggle via handler", function()
-  OA.db.aoeMode = false
-  assert_false(OA.db.aoeMode, "aoe mode initially false")
+  Tuono.db.aoeMode = false
+  assert_false(Tuono.db.aoeMode, "aoe mode initially false")
 
-  local HandleAoe = OA.slashCommands and OA.slashCommands.aoe and OA.slashCommands.aoe.fn
+  local HandleAoe = Tuono.slashCommands and Tuono.slashCommands.aoe and Tuono.slashCommands.aoe.fn
   assert_true(HandleAoe ~= nil, "aoe handler exists")
   HandleAoe()
-  assert_true(OA.db.aoeMode, "aoe mode toggled true via handler")
+  assert_true(Tuono.db.aoeMode, "aoe mode toggled true via handler")
 
   HandleAoe()
-  assert_false(OA.db.aoeMode, "aoe mode toggled false via handler")
+  assert_false(Tuono.db.aoeMode, "aoe mode toggled false via handler")
 end)
 
 -- Test 6: IntelligenceLayer integration
 test("intelligence layer evaluate with various states", function()
   -- Self-sufficient state setup
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
+  Tuono.State.stealthed = false
   stub.state.comboPoints = 3
-  OA.Assist.Update()
-  OA.State.RefreshFast()
-  local r = OA.Engine.Evaluate()
+  Tuono.Assist.Update()
+  Tuono.State.RefreshFast()
+  local r = Tuono.Engine.Evaluate()
   assert_true(r.queue ~= nil, "queue populated")
   assert_true(#r.queue >= 1, "queue has at least base spell")
 end)
@@ -328,13 +328,13 @@ end)
 -- Test 8: Intelligence Layer Queue Content
 test("intelligence layer queue reflects specific spell IDs based on combo point state", function()
   -- Self-sufficient state setup
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
+  Tuono.State.stealthed = false
   stub.state.comboPoints = 2
-  OA.Assist.Update()
-  OA.State.RefreshFast()
-  local r = OA.Engine.Evaluate()
+  Tuono.Assist.Update()
+  Tuono.State.RefreshFast()
+  local r = Tuono.Engine.Evaluate()
   assert_true(#r.queue >= 1, "queue populated at low CP")
   local hasSpells = false
   for _, entry in ipairs(r.queue) do
@@ -346,9 +346,9 @@ test("intelligence layer queue reflects specific spell IDs based on combo point 
   assert_true(hasSpells, "queue contains valid spell IDs at low CP")
 
   stub.state.comboPoints = 6
-  OA.Assist.Update()
-  OA.State.RefreshFast()
-  r = OA.Engine.Evaluate()
+  Tuono.Assist.Update()
+  Tuono.State.RefreshFast()
+  r = Tuono.Engine.Evaluate()
   assert_true(#r.queue >= 1, "queue populated at high CP")
   local hasSpells2 = false
   for _, entry in ipairs(r.queue) do
@@ -376,9 +376,9 @@ test("assist unavailable - own predictions still drive the queue", function()
 
   _G.C_AssistedCombat = nil
   local ok, err = pcall(function()
-    OA.Assist.Update()
-    OA.State.RefreshFast()
-    local r = OA.Engine.Evaluate()
+    Tuono.Assist.Update()
+    Tuono.State.RefreshFast()
+    local r = Tuono.Engine.Evaluate()
 
     -- v1.2 design: Blizzard's assist is NOT the queue source (proven static in live
     -- combat). With it absent we must still emit OUR predicted sequence.
@@ -398,59 +398,59 @@ end)
 test("state tracker refreshes energy/cp from UnitPower", function()
   stub.state.energy = 75
   stub.state.comboPoints = 3
-  OA.State.RefreshFast()
+  Tuono.State.RefreshFast()
 
-  assert_eq(OA.State.energy, 75, "energy synced")
-  assert_eq(OA.State.comboPoints, 3, "combo points synced")
+  assert_eq(Tuono.State.energy, 75, "energy synced")
+  assert_eq(Tuono.State.comboPoints, 3, "combo points synced")
 end)
 
 -- Test 9: StateTracker initialization
 test("state tracker initializes with correct default values", function()
-  assert_true(type(OA.State.energy) == "number", "energy field is a number")
-  assert_true(OA.State.energy >= 0, "energy initialized to >= 0")
-  assert_true(type(OA.State.comboPoints) == "number", "comboPoints field is a number")
-  assert_true(OA.State.comboPoints >= 0, "comboPoints initialized to >= 0")
-  assert_true(OA.State.buffs ~= nil, "buffs field exists")
-  assert_true(type(OA.State.buffs) == "table", "buffs is a table")
-  assert_true(OA.State.cooldowns ~= nil, "cooldowns field exists")
-  assert_true(type(OA.State.cooldowns) == "table", "cooldowns is a table")
-  assert_true(OA.State.trinkets ~= nil, "trinkets field exists")
-  assert_true(type(OA.State.trinkets) == "table", "trinkets is a table")
+  assert_true(type(Tuono.State.energy) == "number", "energy field is a number")
+  assert_true(Tuono.State.energy >= 0, "energy initialized to >= 0")
+  assert_true(type(Tuono.State.comboPoints) == "number", "comboPoints field is a number")
+  assert_true(Tuono.State.comboPoints >= 0, "comboPoints initialized to >= 0")
+  assert_true(Tuono.State.buffs ~= nil, "buffs field exists")
+  assert_true(type(Tuono.State.buffs) == "table", "buffs is a table")
+  assert_true(Tuono.State.cooldowns ~= nil, "cooldowns field exists")
+  assert_true(type(Tuono.State.cooldowns) == "table", "cooldowns is a table")
+  assert_true(Tuono.State.trinkets ~= nil, "trinkets field exists")
+  assert_true(type(Tuono.State.trinkets) == "table", "trinkets is a table")
 end)
 
 -- Test 10: Config slash command
 test("config slash command toggle handler works correctly", function()
-  assert_true(OA.slashCommands ~= nil, "slash commands registered")
-  assert_true(OA.slashCommands.toggle ~= nil, "toggle command exists")
-  assert_true(OA.defaults ~= nil, "defaults defined")
+  assert_true(Tuono.slashCommands ~= nil, "slash commands registered")
+  assert_true(Tuono.slashCommands.toggle ~= nil, "toggle command exists")
+  assert_true(Tuono.defaults ~= nil, "defaults defined")
 
-  local toggleHandler = OA.slashCommands.toggle.fn
+  local toggleHandler = Tuono.slashCommands.toggle.fn
   assert_true(toggleHandler ~= nil, "toggle handler is callable")
 
-  local originalState = OA.db.show.queue
+  local originalState = Tuono.db.show.queue
   toggleHandler("queue")
-  assert_true(OA.db.show.queue ~= originalState, "toggle handler actually changes state")
+  assert_true(Tuono.db.show.queue ~= originalState, "toggle handler actually changes state")
 
   toggleHandler("queue")
-  assert_eq(OA.db.show.queue, originalState, "toggle handler can toggle back")
+  assert_eq(Tuono.db.show.queue, originalState, "toggle handler can toggle back")
 end)
 
 -- Test 11: Display render runs without error
 test("display render executes without error", function()
-  if OA.Display and OA.Display.Init then
-    OA.Display.Init()
+  if Tuono.Display and Tuono.Display.Init then
+    Tuono.Display.Init()
   end
-  local r = OA.Engine.Evaluate()
-  if OA.Display and OA.Display.Render then
-    OA.Display.Render(r)
+  local r = Tuono.Engine.Evaluate()
+  if Tuono.Display and Tuono.Display.Render then
+    Tuono.Display.Render(r)
   end
   assert_true(true, "render completed")
 end)
 
 -- Test 12: ApiTest module initialization
 test("apitest command handler exists", function()
-  assert_true(OA.slashCommands ~= nil, "slash commands exist")
-  assert_true(OA.slashCommands.apitest ~= nil or OA.slashCommands.debug ~= nil, "api test or debug command exists")
+  assert_true(Tuono.slashCommands ~= nil, "slash commands exist")
+  assert_true(Tuono.slashCommands.apitest ~= nil or Tuono.slashCommands.debug ~= nil, "api test or debug command exists")
 end)
 
 -- Test 12b: StateTracker with UnitBuff unavailable
@@ -465,10 +465,10 @@ test("buff scan with C_UnitAuras when UnitBuff unavailable", function()
   stub.state.buffs.adrenalineRush = true
   stub.state.buffs.adrenalineRushExpires = stub.state.time + 100
 
-  OA.State.RefreshFast()
+  Tuono.State.RefreshFast()
 
-  assert_true(OA.State.buffs ~= nil, "buffs state exists")
-  assert_true(OA.State.buffs.adrenalineRush.up, "adrenaline rush buff detected as up=true when stub has it active")
+  assert_true(Tuono.State.buffs ~= nil, "buffs state exists")
+  assert_true(Tuono.State.buffs.adrenalineRush.up, "adrenaline rush buff detected as up=true when stub has it active")
 
   _G.UnitBuff = originalUnitBuff
 end)
@@ -480,7 +480,7 @@ test("buff scan with UnitBuff fallback when C_UnitAuras unavailable", function()
 
   -- Tier 3 (legacy index scan) is deliberately OOC-only: in combat those field reads
   -- can hit secret values. This test exercises the OOC path, so pin inCombat=false.
-  OA.State.inCombat = false
+  Tuono.State.inCombat = false
 
   stub.state.buffs.adrenalineRush = false
   stub.state.buffs.adrenalineRushExpires = 0
@@ -499,9 +499,9 @@ test("buff scan with UnitBuff fallback when C_UnitAuras unavailable", function()
 
   stub.Tick(1.0)
 
-  OA.State.RefreshFast()
+  Tuono.State.RefreshFast()
 
-  assert_true(OA.State.buffs.opportunity.up, "opportunity buff detected via UnitBuff fallback")
+  assert_true(Tuono.State.buffs.opportunity.up, "opportunity buff detected via UnitBuff fallback")
 
   _G.C_UnitAuras = originalC_UnitAuras
   _G.UnitBuff = originalUnitBuff
@@ -511,8 +511,8 @@ end)
 test("energy cap advisory not active when energyMax is 0", function()
   stub.state.energy = 100
   stub.state.energyMax = 0
-  OA.State.RefreshFast()
-  local r = OA.Engine.Evaluate()
+  Tuono.State.RefreshFast()
+  local r = Tuono.Engine.Evaluate()
 
   local hasEnergyAdv = false
   for _, adv in ipairs(r.advisories) do
@@ -541,16 +541,16 @@ test("secret value handling - full tick without error", function()
     return 0
   end
 
-  OA.Assist.Update()
-  OA.State.RefreshFast()
-  local r = OA.Engine.Evaluate()
-  OA.Display.Render(r)
+  Tuono.Assist.Update()
+  Tuono.State.RefreshFast()
+  local r = Tuono.Engine.Evaluate()
+  Tuono.Display.Render(r)
 
-  assert_true(type(OA.State.energy) == "number", "energy coerced to number despite secret input")
-  assert_true(type(OA.State.comboPoints) == "number", "comboPoints coerced to number despite secret input")
+  assert_true(type(Tuono.State.energy) == "number", "energy coerced to number despite secret input")
+  assert_true(type(Tuono.State.comboPoints) == "number", "comboPoints coerced to number despite secret input")
 
-  assert_false(_G.issecretvalue(OA.State.energy), "energy must not be a secret value")
-  assert_false(_G.issecretvalue(OA.State.comboPoints), "comboPoints must not be a secret value")
+  assert_false(_G.issecretvalue(Tuono.State.energy), "energy must not be a secret value")
+  assert_false(_G.issecretvalue(Tuono.State.comboPoints), "comboPoints must not be a secret value")
 
   _G.UnitPower = originalUnitPower
 end)
@@ -567,7 +567,7 @@ end)
 test("rule 16 blade_rush_tier_priority exists and uses ready", function()
   local found = false
   local rule = nil
-  for _, r in ipairs(OA.Rules or {}) do
+  for _, r in ipairs(Tuono.Rules or {}) do
     if r.name == "blade_rush_tier_priority" then
       found = true
       rule = r
@@ -576,15 +576,15 @@ test("rule 16 blade_rush_tier_priority exists and uses ready", function()
   end
   assert_true(found, "blade_rush_tier_priority rule must exist")
   assert_true(type(rule.when) == "function", "rule condition must be a function")
-  OA.State.tier.fourPc = true
-  OA.State.cooldowns.bladeRush.ready = true
-  assert_true(rule.when(OA.State, {}), "rule fires when 4PC + ready")
+  Tuono.State.tier.fourPc = true
+  Tuono.State.cooldowns.bladeRush.ready = true
+  assert_true(rule.when(Tuono.State, {}), "rule fires when 4PC + ready")
 end)
 
 -- TEST: Deleted rules no longer exist
 test("combo_point_priority rule deleted", function()
   local found = false
-  for _, rule in ipairs(OA.Rules or {}) do
+  for _, rule in ipairs(Tuono.Rules or {}) do
     if rule.name == "combo_point_priority" then
       found = true
       break
@@ -595,7 +595,7 @@ end)
 
 test("bte_stun_immunity rule deleted", function()
   local found = false
-  for _, rule in ipairs(OA.Rules or {}) do
+  for _, rule in ipairs(Tuono.Rules or {}) do
     if rule.name == "bte_stun_immunity" then
       found = true
       break
@@ -607,7 +607,7 @@ end)
 -- TEST: New roll_the_bones_open rule exists and fires
 test("roll_the_bones_open rule exists", function()
   local found = false
-  for _, rule in ipairs(OA.Rules or {}) do
+  for _, rule in ipairs(Tuono.Rules or {}) do
     if rule.name == "roll_the_bones_open" then
       found = true
       break
@@ -619,7 +619,7 @@ end)
 -- TEST: New pistol_shot_low_energy rule exists
 test("pistol_shot_low_energy rule exists", function()
   local found = false
-  for _, rule in ipairs(OA.Rules or {}) do
+  for _, rule in ipairs(Tuono.Rules or {}) do
     if rule.name == "pistol_shot_low_energy" then
       found = true
       break
@@ -633,12 +633,12 @@ test("aoeDetected path - detects blade flurry in queue", function()
   assert_true(_G.C_AssistedCombat ~= nil, "C_AssistedCombat is available")
   assert_true(_G.C_AssistedCombat.GetRotationSpells ~= nil, "GetRotationSpells is available")
 
-  OA.Assist.Update()
+  Tuono.Assist.Update()
 
-  assert_true(OA.Assist.aoeDetected, "aoeDetected true when blade flurry in queue")
+  assert_true(Tuono.Assist.aoeDetected, "aoeDetected true when blade flurry in queue")
 
   local foundRule = false
-  for _, rule in ipairs(OA.Rules or {}) do
+  for _, rule in ipairs(Tuono.Rules or {}) do
     if rule.spellID == 13877 then
       foundRule = true
       break
@@ -649,10 +649,10 @@ end)
 
 -- GAP TEST 2: aoeDetected affects rule behavior
 test("aoeDetected true causes blade_flurry_aoe rule to fire", function()
-  OA.Assist.aoeDetected = true
-  OA.db.aoeMode = true
+  Tuono.Assist.aoeDetected = true
+  Tuono.db.aoeMode = true
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
 
   assert_true(r.queue ~= nil, "queue populated")
   assert_true(r.advisories ~= nil, "advisories populated")
@@ -663,27 +663,27 @@ end)
 test("display frames auto-initialized after PLAYER_LOGIN", function()
   stub.FireEvent("PLAYER_LOGIN")
 
-  assert_true(OA.Display.anchor ~= nil, "Display anchor exists after PLAYER_LOGIN (auto-initialized)")
-  assert_true(OA.Display.anchor.strip ~= nil, "unified strip created")
-  assert_true(OA.Display.anchor.icons ~= nil, "icons array created")
-  assert_true(#OA.Display.anchor.icons > 0, "icons array populated")
-  assert_true(OA.Display.anchor.rotationIcons == nil, "rotationIcons not created (unified strip only)")
-  assert_true(OA.Display.anchor.cdRow == nil, "cdRow not created (unified strip only)")
-  assert_true(OA.Display.anchor.trinketRow == nil, "trinketRow not created (unified strip only)")
-  assert_true(OA.Display.anchor.rtbPanel == nil, "rtbPanel not created (unified strip only)")
+  assert_true(Tuono.Display.anchor ~= nil, "Display anchor exists after PLAYER_LOGIN (auto-initialized)")
+  assert_true(Tuono.Display.anchor.strip ~= nil, "unified strip created")
+  assert_true(Tuono.Display.anchor.icons ~= nil, "icons array created")
+  assert_true(#Tuono.Display.anchor.icons > 0, "icons array populated")
+  assert_true(Tuono.Display.anchor.rotationIcons == nil, "rotationIcons not created (unified strip only)")
+  assert_true(Tuono.Display.anchor.cdRow == nil, "cdRow not created (unified strip only)")
+  assert_true(Tuono.Display.anchor.trinketRow == nil, "trinketRow not created (unified strip only)")
+  assert_true(Tuono.Display.anchor.rtbPanel == nil, "rtbPanel not created (unified strip only)")
 end)
 
--- GAP TEST 4: P0 bite-proof - /oa reset and /oa status work without errors
+-- GAP TEST 4: P0 bite-proof - /tuono reset and /tuono status work without errors
 test("display reset and status commands work without errors", function()
-  local resetHandler = OA.slashCommands and OA.slashCommands.reset and OA.slashCommands.reset.fn
-  local statusHandler = OA.slashCommands and OA.slashCommands.status and OA.slashCommands.status.fn
+  local resetHandler = Tuono.slashCommands and Tuono.slashCommands.reset and Tuono.slashCommands.reset.fn
+  local statusHandler = Tuono.slashCommands and Tuono.slashCommands.status and Tuono.slashCommands.status.fn
 
   assert_true(resetHandler ~= nil, "reset handler exists")
   assert_true(statusHandler ~= nil, "status handler exists")
 
   resetHandler()
-  assert_true(OA.db ~= nil, "db exists after reset")
-  assert_eq(OA.db.aoeMode, false, "db reset to defaults")
+  assert_true(Tuono.db ~= nil, "db exists after reset")
+  assert_eq(Tuono.db.aoeMode, false, "db reset to defaults")
 
   statusHandler()
   assert_true(true, "status handler completed without error")
@@ -696,7 +696,7 @@ test("load canary verifies all modules loaded at PLAYER_LOGIN", function()
   local missing = {}
 
   for _, mod in ipairs(expectedModules) do
-    if not OA[mod] then
+    if not Tuono[mod] then
       allPresent = false
       table.insert(missing, mod)
     end
@@ -707,13 +707,13 @@ end)
 
 -- GAP TEST 6: Load canary - simulate missing module and verify canary prints
 test("load canary detects missing module", function()
-  local savedEngine = OA.Engine
-  OA.Engine = nil
+  local savedEngine = Tuono.Engine
+  Tuono.Engine = nil
 
   local expectedModules = {"State", "Assist", "Engine", "Rules", "Display", "defaults"}
   local missing = {}
   for _, mod in ipairs(expectedModules) do
-    if not OA[mod] then
+    if not Tuono[mod] then
       table.insert(missing, mod)
     end
   end
@@ -721,7 +721,7 @@ test("load canary detects missing module", function()
   assert_true(#missing > 0, "missing module detected by canary")
   assert_true(missing[1] == "Engine", "missing module is Engine")
 
-  OA.Engine = savedEngine
+  Tuono.Engine = savedEngine
 end)
 
 -- === polling-lane tests ===
@@ -729,18 +729,18 @@ end)
 -- TEST: Dynamic interval based on combat state
 test("dynamic tick interval - 0.1s in combat, 0.5s idle", function()
   -- Verify handler exists and has correct structure
-  assert_true(#OA.updateHandlers > 0, "update handlers registered")
-  local handler = OA.updateHandlers[1]
+  assert_true(#Tuono.updateHandlers > 0, "update handlers registered")
+  local handler = Tuono.updateHandlers[1]
   assert_true(handler.interval ~= nil, "handler has interval field")
   assert_true(type(handler.elapsed) == "number", "handler.elapsed is a number")
 
   -- The dynamic interval logic is in Core.lua OnUpdate and applies at tick time
   -- Test verifies the mechanism can be called without error
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.Tick(0.05)
   assert_true(true, "tick completed during combat state")
 
-  OA.State.inCombat = false
+  Tuono.State.inCombat = false
   stub.Tick(0.05)
   assert_true(true, "tick completed during idle state")
 end)
@@ -748,7 +748,7 @@ end)
 -- TEST: Event-forced immediate update on UNIT_SPELLCAST_SUCCEEDED
 test("forced immediate update on UNIT_SPELLCAST_SUCCEEDED", function()
   -- Reset handler elapsed to a value that would not normally trigger
-  OA.updateHandlers[1].elapsed = 0.01
+  Tuono.updateHandlers[1].elapsed = 0.01
 
   -- Fire UNIT_SPELLCAST_SUCCEEDED for player
   stub.FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", "cast123", 193315)
@@ -761,47 +761,47 @@ end)
 -- TEST: Deviation detection - flag set when cast ~= recommendation
 test("deviation detection - deviated flag set when player casts != recommendation", function()
   -- Set the recommendation
-  OA.Assist.nextSpellID = 193315  -- Sinister Strike
+  Tuono.Assist.nextSpellID = 193315  -- Sinister Strike
 
   -- Verify deviated flag is false initially
-  assert_false(OA.Assist.deviated, "deviated flag initially false")
+  assert_false(Tuono.Assist.deviated, "deviated flag initially false")
 
   -- Fire UNIT_SPELLCAST_SUCCEEDED with a DIFFERENT spell (deviation)
   stub.FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", "cast456", 271877)  -- Backstab
 
   -- Verify deviation flag was set
-  assert_true(OA.Assist.deviated, "deviated flag set when player cast != recommendation")
+  assert_true(Tuono.Assist.deviated, "deviated flag set when player cast != recommendation")
 end)
 
 -- TEST: Deviation flag cleared on Update
 test("deviation flag cleared on Assist.Update()", function()
   -- Set deviated flag
-  OA.Assist.deviated = true
+  Tuono.Assist.deviated = true
 
   -- Call Update() which should clear it
-  OA.Assist.Update()
+  Tuono.Assist.Update()
 
   -- Verify it was cleared
-  assert_false(OA.Assist.deviated, "deviated flag cleared after Update()")
+  assert_false(Tuono.Assist.deviated, "deviated flag cleared after Update()")
 end)
 
 -- TEST: Deviation detection filters unit=="player" only
 test("deviation detection ignores non-player units", function()
-  OA.Assist.nextSpellID = 193315
-  OA.Assist.deviated = false
+  Tuono.Assist.nextSpellID = 193315
+  Tuono.Assist.deviated = false
 
   -- Fire UNIT_SPELLCAST_SUCCEEDED for a different unit
   stub.FireEvent("UNIT_SPELLCAST_SUCCEEDED", "target", "cast789", 271877)
 
   -- Verify deviation flag was NOT set (different unit)
-  assert_false(OA.Assist.deviated, "deviated flag NOT set for non-player unit")
+  assert_false(Tuono.Assist.deviated, "deviated flag NOT set for non-player unit")
 end)
 
 -- TEST: RequestImmediateUpdate function exists
-test("OA.RequestImmediateUpdate function callable", function()
-  assert_true(type(OA.RequestImmediateUpdate) == "function", "RequestImmediateUpdate is a function")
+test("Tuono.RequestImmediateUpdate function callable", function()
+  assert_true(type(Tuono.RequestImmediateUpdate) == "function", "RequestImmediateUpdate is a function")
   -- Call it without error
-  OA.RequestImmediateUpdate()
+  Tuono.RequestImmediateUpdate()
   assert_true(true, "RequestImmediateUpdate executed without error")
 end)
 
@@ -811,23 +811,23 @@ end)
 test("handler signature: UNIT_AURA receives (event, unit) correctly", function()
   stub.FireEvent("UNIT_AURA", "player")
 
-  assert_true(OA.State.stealthed ~= nil, "State.stealthed exists after UNIT_AURA fired")
-  assert_true(type(OA.State.stealthed) == "boolean", "State.stealthed is a boolean after handler call")
+  assert_true(Tuono.State.stealthed ~= nil, "State.stealthed exists after UNIT_AURA fired")
+  assert_true(type(Tuono.State.stealthed) == "boolean", "State.stealthed is a boolean after handler call")
 end)
 
 -- TEST: Pistol shot rule resolves spellID lazily
 test("pistol shot rule resolves spellID lazily at evaluate time", function()
   -- Self-sufficient: manual state AFTER RefreshFast (it recomputes from stub and clobbers)
-  OA.Assist.Update()
-  OA.State.RefreshFast()
-  OA.State.inCombat = true
+  Tuono.Assist.Update()
+  Tuono.State.RefreshFast()
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.buffs.opportunity.up = true
-  OA.State.energy = 30
+  Tuono.State.stealthed = false
+  Tuono.State.buffs.opportunity.up = true
+  Tuono.State.energy = 30
 
   local psRule = nil
-  for _, rule in ipairs(OA.Rules or {}) do
+  for _, rule in ipairs(Tuono.Rules or {}) do
     if rule.name == "pistol_shot_low_energy" then
       psRule = rule
       break
@@ -838,16 +838,16 @@ test("pistol shot rule resolves spellID lazily at evaluate time", function()
   assert_true(psRule.spellID == nil or psRule.spellID == 0, "pistol shot rule has nil/0 spellID at load (lazy)")
   assert_true(psRule.resolveSpellID ~= nil, "pistol shot rule has resolveSpellID function")
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
   local foundPistol = false
   for _, entry in ipairs(r.queue) do
-    if entry.spellID == OA.SpellIDs.pistolShot then
+    if entry.spellID == Tuono.SpellIDs.pistolShot then
       foundPistol = true
       break
     end
   end
   for _, adv in ipairs(r.advisories) do
-    if adv.icon == OA.SpellIDs.pistolShot then
+    if adv.icon == Tuono.SpellIDs.pistolShot then
       foundPistol = true
       break
     end
@@ -858,15 +858,15 @@ end)
 -- TEST: Unified queue contains cooldown entry when AR ready
 test("unified queue: cooldown entry when AR ready + rule fires", function()
   -- Self-sufficient: manual state AFTER RefreshFast (it recomputes from stub and clobbers)
-  OA.Assist.Update()
-  OA.State.RefreshFast()
-  OA.State.inCombat = true
+  Tuono.Assist.Update()
+  Tuono.State.RefreshFast()
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.cooldowns.adrenalineRush.ready = true
-  OA.State.comboPoints = 2
+  Tuono.State.stealthed = false
+  Tuono.State.cooldowns.adrenalineRush.ready = true
+  Tuono.State.comboPoints = 2
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
   local foundCooldown = false
   for _, entry in ipairs(r.queue) do
     if entry.spellID == 13750 and entry.kind == "cooldown" then
@@ -879,13 +879,13 @@ end)
 
 -- TEST: Trinket entry with itemSlot during AR window
 test("unified queue: trinket entry with itemSlot when AR up + trinket ready", function()
-  OA.State.buffs.adrenalineRush.up = true
-  OA.State.trinkets[13].ready = true
-  OA.State.trinkets[13].onUse = true
-  OA.Assist.Update()
-  OA.State.RefreshFast()
+  Tuono.State.buffs.adrenalineRush.up = true
+  Tuono.State.trinkets[13].ready = true
+  Tuono.State.trinkets[13].onUse = true
+  Tuono.Assist.Update()
+  Tuono.State.RefreshFast()
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
   local foundTrinket = false
   for _, entry in ipairs(r.queue) do
     if entry.kind == "trinket" and entry.itemSlot == 13 then
@@ -901,34 +901,34 @@ test("unified queue: RtB entry at stage 0", function()
   -- Self-sufficient: manual state AFTER RefreshFast (it recomputes from stub and clobbers).
   -- Must neutralize ALL other rule inputs: leftover hot state (AR buff, trinkets, low CP)
   -- adds fold-entries that push the queue past 8 and truncate the RtB append (last rule).
-  OA.Assist.Update()
-  OA.State.RefreshFast()
-  OA.State.inCombat = true
+  Tuono.Assist.Update()
+  Tuono.State.RefreshFast()
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.buffs.rtb.stage = 0
-  OA.State.buffs.rtb.expires = 0
-  OA.State.buffs.adrenalineRush.up = false
-  OA.State.buffs.opportunity.up = false
-  OA.State.cooldowns.adrenalineRush.ready = false
-  OA.State.cooldowns.adrenalineRush.remaining = 60
-  OA.State.cooldowns.bladeRush.ready = false
-  OA.State.cooldowns.preparation.ready = false
-  OA.State.trinkets[13].ready = false
-  OA.State.trinkets[14].ready = false
-  OA.State.comboPoints = 4
-  OA.State.energy = 50
-  OA.State.energyMax = 100
-  OA.State.tier.twoPc = false
-  OA.State.tier.fourPc = false
+  Tuono.State.stealthed = false
+  Tuono.State.buffs.rtb.stage = 0
+  Tuono.State.buffs.rtb.expires = 0
+  Tuono.State.buffs.adrenalineRush.up = false
+  Tuono.State.buffs.opportunity.up = false
+  Tuono.State.cooldowns.adrenalineRush.ready = false
+  Tuono.State.cooldowns.adrenalineRush.remaining = 60
+  Tuono.State.cooldowns.bladeRush.ready = false
+  Tuono.State.cooldowns.preparation.ready = false
+  Tuono.State.trinkets[13].ready = false
+  Tuono.State.trinkets[14].ready = false
+  Tuono.State.comboPoints = 4
+  Tuono.State.energy = 50
+  Tuono.State.energyMax = 100
+  Tuono.State.tier.twoPc = false
+  Tuono.State.tier.fourPc = false
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
   local foundRtb = false
   for _, entry in ipairs(r.queue) do
     -- Since v1.3.1 the simulator itself predicts Roll the Bones at stage 0, so the
     -- separate rule-derived entry is deduped as redundant. What matters is that RtB is
     -- RECOMMENDED at stage 0, not which subsystem produced it.
-    if entry.spellID == OA.SpellIDs.rollTheBones then
+    if entry.spellID == Tuono.SpellIDs.rollTheBones then
       foundRtb = true
       break
     end
@@ -938,15 +938,15 @@ end)
 
 -- TEST: Opener pins when OOC+unstealthed
 test("unified queue: opener stealth pins when OOC + unstealthed", function()
-  OA.State.inCombat = false
+  Tuono.State.inCombat = false
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.Assist.Update()
-  OA.State.RefreshFast()
+  Tuono.State.stealthed = false
+  Tuono.Assist.Update()
+  Tuono.State.RefreshFast()
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
   if #r.queue > 0 then
-    assert_eq(r.queue[1].spellID, OA.SpellIDs.stealth, "stealth pinned at position 1 when OOC+unstealthed")
+    assert_eq(r.queue[1].spellID, Tuono.SpellIDs.stealth, "stealth pinned at position 1 when OOC+unstealthed")
     assert_eq(r.queue[1].kind, "opener", "stealth entry has kind=opener")
   end
 end)
@@ -954,15 +954,15 @@ end)
 -- TEST: Queue dedup by spellID
 test("unified queue: dedup by spellID", function()
   -- Self-sufficient: manual state AFTER RefreshFast (it recomputes from stub and clobbers)
-  OA.Assist.Update()
-  OA.State.RefreshFast()
-  OA.State.inCombat = true
+  Tuono.Assist.Update()
+  Tuono.State.RefreshFast()
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.cooldowns.adrenalineRush.ready = true
-  OA.State.comboPoints = 2
+  Tuono.State.stealthed = false
+  Tuono.State.cooldowns.adrenalineRush.ready = true
+  Tuono.State.comboPoints = 2
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
   local arCount = 0
   for _, entry in ipairs(r.queue) do
     if entry.spellID == 13750 then
@@ -974,41 +974,41 @@ end)
 
 -- TEST: Queue truncates to 8
 test("unified queue: truncates to 8 entries", function()
-  OA.State.cooldowns.adrenalineRush.ready = true
-  OA.State.cooldowns.bladeRush.ready = true
-  OA.State.cooldowns.preparation.ready = true
-  OA.State.buffs.adrenalineRush.up = true
-  OA.State.trinkets[13].ready = true
-  OA.State.trinkets[13].onUse = true
-  OA.State.trinkets[14].ready = true
-  OA.State.trinkets[14].onUse = true
-  OA.State.buffs.rtb.stage = 0
-  OA.Assist.Update()
-  OA.State.RefreshFast()
+  Tuono.State.cooldowns.adrenalineRush.ready = true
+  Tuono.State.cooldowns.bladeRush.ready = true
+  Tuono.State.cooldowns.preparation.ready = true
+  Tuono.State.buffs.adrenalineRush.up = true
+  Tuono.State.trinkets[13].ready = true
+  Tuono.State.trinkets[13].onUse = true
+  Tuono.State.trinkets[14].ready = true
+  Tuono.State.trinkets[14].onUse = true
+  Tuono.State.buffs.rtb.stage = 0
+  Tuono.Assist.Update()
+  Tuono.State.RefreshFast()
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
   assert_true(#r.queue <= 8, "queue truncated to 8 or fewer entries")
 end)
 
 -- TEST: Stealth state tracking
 test("unified queue: stealth state tracked", function()
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  assert_false(OA.State.stealthed, "stealthed initially false")
+  Tuono.State.stealthed = false
+  assert_false(Tuono.State.stealthed, "stealthed initially false")
 
   stub.state.stealthed = true  -- RefreshFast reads IsStealthed(), so drive the source
-  OA.State.stealthed = true
-  assert_true(OA.State.stealthed, "stealthed set to true")
+  Tuono.State.stealthed = true
+  assert_true(Tuono.State.stealthed, "stealthed set to true")
 
-  OA.State.inCombat = false
+  Tuono.State.inCombat = false
   stub.state.stealthed = true  -- RefreshFast reads IsStealthed(), so drive the source
-  OA.State.stealthed = true
-  OA.Assist.Update()
-  OA.State.RefreshFast()
+  Tuono.State.stealthed = true
+  Tuono.Assist.Update()
+  Tuono.State.RefreshFast()
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
   local stealthPinned = false
-  if #r.queue > 0 and r.queue[1].spellID == OA.SpellIDs.stealth then
+  if #r.queue > 0 and r.queue[1].spellID == Tuono.SpellIDs.stealth then
     stealthPinned = true
   end
   assert_false(stealthPinned, "stealth NOT pinned when already stealthed")
@@ -1016,12 +1016,12 @@ end)
 
 -- TEST: Queue entries have required fields
 test("unified queue: entries have required structure", function()
-  OA.State.cooldowns.adrenalineRush.ready = true
-  OA.State.comboPoints = 2
-  OA.Assist.Update()
-  OA.State.RefreshFast()
+  Tuono.State.cooldowns.adrenalineRush.ready = true
+  Tuono.State.comboPoints = 2
+  Tuono.Assist.Update()
+  Tuono.State.RefreshFast()
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
   assert_true(#r.queue >= 1, "queue has entries")
 
   for i, entry in ipairs(r.queue) do
@@ -1034,12 +1034,12 @@ end)
 
 -- UI Test 1: Strip renders correct number of icons per iconCount config
 test("strip renders correct number of icons per iconCount", function()
-  OA.db.display.iconCount = 4
-  if OA.Display and OA.Display.Init then
-    OA.Display.Init()
+  Tuono.db.display.iconCount = 4
+  if Tuono.Display and Tuono.Display.Init then
+    Tuono.Display.Init()
   end
 
-  local anchor = OA.Display.anchor
+  local anchor = Tuono.Display.anchor
   assert_true(anchor ~= nil, "anchor exists")
   assert_true(anchor.strip ~= nil, "strip frame exists")
   assert_true(anchor.icons ~= nil, "icons array exists")
@@ -1048,9 +1048,9 @@ end)
 
 -- UI Test 2: kind→border color mapping applied correctly
 test("kind to border color mapping applied", function()
-  OA.db.display.iconCount = 4
-  if OA.Display and OA.Display.Init then
-    OA.Display.Init()
+  Tuono.db.display.iconCount = 4
+  if Tuono.Display and Tuono.Display.Init then
+    Tuono.Display.Init()
   end
 
   local result = {
@@ -1063,9 +1063,9 @@ test("kind to border color mapping applied", function()
     advisories = {}
   }
 
-  OA.Display.Render(result)
+  Tuono.Display.Render(result)
 
-  local anchor = OA.Display.anchor
+  local anchor = Tuono.Display.anchor
   for i = 1, 4 do
     local icon = anchor.icons[i]
     assert_true(icon ~= nil, "icon " .. i .. " exists")
@@ -1074,9 +1074,9 @@ end)
 
 -- UI Test 3: Keybind text appears when mapping provided
 test("keybind text displayed when mapping provided", function()
-  OA.db.display.iconCount = 3
-  if OA.Display and OA.Display.Init then
-    OA.Display.Init()
+  Tuono.db.display.iconCount = 3
+  if Tuono.Display and Tuono.Display.Init then
+    Tuono.Display.Init()
   end
 
   local result = {
@@ -1088,9 +1088,9 @@ test("keybind text displayed when mapping provided", function()
     advisories = {}
   }
 
-  OA.Display.Render(result)
+  Tuono.Display.Render(result)
 
-  local anchor = OA.Display.anchor
+  local anchor = Tuono.Display.anchor
   if anchor.icons[1] then
     assert_true(anchor.icons[1].keyText ~= nil, "keyText element exists on icon 1")
   end
@@ -1098,35 +1098,35 @@ end)
 
 -- UI Test 4: Strip reflow re-anchors icons horizontally
 test("strip reflow re-anchors icons horizontally", function()
-  OA.db.display.iconCount = 5
-  if OA.Display and OA.Display.Init then
-    OA.Display.Init()
+  Tuono.db.display.iconCount = 5
+  if Tuono.Display and Tuono.Display.Init then
+    Tuono.Display.Init()
   end
 
-  local anchor = OA.Display.anchor
+  local anchor = Tuono.Display.anchor
   assert_true(anchor.strip ~= nil, "strip exists")
   assert_true(#anchor.icons >= 5, "icons array has at least 5 icons")
 end)
 
--- UI Test 5: Strip scale adjustable via /oa scale
+-- UI Test 5: Strip scale adjustable via /tuono scale
 test("strip scale adjustable via config", function()
-  OA.db.display.scale = 1.0
-  assert_eq(OA.db.display.scale, 1.0, "scale set to 1.0")
+  Tuono.db.display.scale = 1.0
+  assert_eq(Tuono.db.display.scale, 1.0, "scale set to 1.0")
 
-  OA.db.display.scale = 1.5
-  assert_eq(OA.db.display.scale, 1.5, "scale changed to 1.5")
+  Tuono.db.display.scale = 1.5
+  assert_eq(Tuono.db.display.scale, 1.5, "scale changed to 1.5")
 
-  OA.db.display.scale = 0.8
-  assert_eq(OA.db.display.scale, 0.8, "scale changed to 0.8")
+  Tuono.db.display.scale = 0.8
+  assert_eq(Tuono.db.display.scale, 0.8, "scale changed to 0.8")
 end)
 
 -- UI Test 6: Icon count configuration
 test("icon count configuration updates display", function()
-  OA.db.display.iconCount = 5
-  assert_eq(OA.db.display.iconCount, 5, "iconCount changed to 5")
+  Tuono.db.display.iconCount = 5
+  assert_eq(Tuono.db.display.iconCount, 5, "iconCount changed to 5")
 
-  OA.db.display.iconCount = 6
-  assert_eq(OA.db.display.iconCount, 6, "iconCount changed to 6")
+  Tuono.db.display.iconCount = 6
+  assert_eq(Tuono.db.display.iconCount, 6, "iconCount changed to 6")
 end)
 
 -- === threat-lane tests ===
@@ -1155,9 +1155,9 @@ test("threat detector: 3 hostile plates detected, enemyCount==3", function()
   stub.AddNamePlate("nameplate3", 3)
 
   stub.Tick(0.5)  -- Advance time to ensure RefreshEnemyCount is called (time-gated at 0.25s)
-  OA.State.RefreshFast()
+  Tuono.State.RefreshFast()
 
-  assert_eq(OA.State.enemyCount, 3, "enemyCount equals 3 with 3 hostile plates")
+  assert_eq(Tuono.State.enemyCount, 3, "enemyCount equals 3 with 3 hostile plates")
 end)
 
 -- Threat Test 2: blade_flurry rule fires with 2+ enemies (via threatcount signal, not aoeDetected)
@@ -1165,7 +1165,7 @@ test("threat detector: blade_flurry_aoe rule fires when enemyCount >= 2", functi
   stub.ClearNamePlates()
   stub.AddNamePlate("nameplate1", 3)
   stub.AddNamePlate("nameplate2", 3)
-  OA.db.aoeMode = false
+  Tuono.db.aoeMode = false
 
   -- Disable aoeDetected by preventing blade flurry from being in the queue
   local originalGetRotationSpells = _G.C_AssistedCombat.GetRotationSpells
@@ -1173,12 +1173,12 @@ test("threat detector: blade_flurry_aoe rule fires when enemyCount >= 2", functi
     return {193315, 271877, 315341}  -- No blade flurry (13877)
   end
 
-  OA.Assist.Update()
-  OA.State.RefreshFast()
+  Tuono.Assist.Update()
+  Tuono.State.RefreshFast()
 
-  assert_false(OA.Assist.aoeDetected, "aoeDetected false (blade flurry not in queue)")
+  assert_false(Tuono.Assist.aoeDetected, "aoeDetected false (blade flurry not in queue)")
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
   local foundBladeFlurry = false
   for _, entry in ipairs(r.queue) do
     if entry.spellID == 13877 then
@@ -1195,13 +1195,13 @@ end)
 test("threat detector: single plate gives enemyCount=1, rule doesn't fire", function()
   stub.ClearNamePlates()
   stub.AddNamePlate("nameplate1", 3)
-  OA.db.aoeMode = false
+  Tuono.db.aoeMode = false
 
   stub.Tick(0.5)  -- Advance time to ensure RefreshEnemyCount is called
-  OA.Assist.Update()  -- Reset aoeDetected based on current GetRotationSpells (blade flurry IS in queue)
-  OA.State.RefreshFast()
+  Tuono.Assist.Update()  -- Reset aoeDetected based on current GetRotationSpells (blade flurry IS in queue)
+  Tuono.State.RefreshFast()
 
-  assert_eq(OA.State.enemyCount, 1, "enemyCount equals 1 with 1 plate")
+  assert_eq(Tuono.State.enemyCount, 1, "enemyCount equals 1 with 1 plate")
 
   -- With enemyCount=1 (< threshold of 2), rule should not fire even if aoeDetected is true
   -- The rule uses composite signal: aoeMode OR aoeDetected OR (enemyCount >= 2)
@@ -1212,10 +1212,10 @@ test("threat detector: single plate gives enemyCount=1, rule doesn't fire", func
   _G.C_AssistedCombat.GetRotationSpells = function()
     return {193315, 271877, 315341}  -- No blade flurry
   end
-  OA.Assist.Update()  -- Now aoeDetected should be false
+  Tuono.Assist.Update()  -- Now aoeDetected should be false
   _G.C_AssistedCombat.GetRotationSpells = originalGetRotationSpells
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
   local foundBladeFlurry = false
   for _, entry in ipairs(r.queue) do
     if entry.spellID == 13877 then
@@ -1233,9 +1233,9 @@ test("threat detector: C_NamePlate absent gives enemyCount==nil", function()
   _G.C_NamePlate = nil
 
   stub.Tick(0.5)
-  OA.State.RefreshFast()
+  Tuono.State.RefreshFast()
 
-  assert_eq(OA.State.enemyCount, nil, "enemyCount is nil when C_NamePlate absent")
+  assert_eq(Tuono.State.enemyCount, nil, "enemyCount is nil when C_NamePlate absent")
 
   _G.C_NamePlate = originalC_NamePlate
 end)
@@ -1251,9 +1251,9 @@ test("threat detector: secret threat values degrade to enemyCount==nil", functio
   end
 
   stub.Tick(0.5)
-  OA.State.RefreshFast()
+  Tuono.State.RefreshFast()
 
-  assert_eq(OA.State.enemyCount, nil, "enemyCount is nil when all threats are secret")
+  assert_eq(Tuono.State.enemyCount, nil, "enemyCount is nil when all threats are secret")
 
   _G.UnitThreatSituation = originalUnitThreatSituation
 end)
@@ -1263,28 +1263,28 @@ test("threat detector: NAME_PLATE_UNIT_ADDED event triggers recompute", function
   stub.ClearNamePlates()
   stub.AddNamePlate("nameplate1", 3)
   stub.Tick(0.5)  -- Advance time for first refresh
-  OA.State.RefreshFast()
-  assert_eq(OA.State.enemyCount, 1, "initial enemyCount==1 with 1 plate")
+  Tuono.State.RefreshFast()
+  assert_eq(Tuono.State.enemyCount, 1, "initial enemyCount==1 with 1 plate")
 
   -- Add another plate and fire event (event handler directly calls RefreshEnemyCount, no time-gating)
   stub.AddNamePlate("nameplate2", 3)
   stub.Tick(0.1)  -- Small advance in time (event still triggers immediately)
   stub.FireEvent("NAME_PLATE_UNIT_ADDED", "nameplate2")
 
-  assert_eq(OA.State.enemyCount, 2, "enemyCount updated to 2 after NAME_PLATE_UNIT_ADDED event")
+  assert_eq(Tuono.State.enemyCount, 2, "enemyCount updated to 2 after NAME_PLATE_UNIT_ADDED event")
 end)
 
 -- Threat Test 7: blade_flurry composite signal - all three true
 test("threat detector: blade_flurry fires when ANY signal true (aoeMode=true)", function()
   stub.ClearNamePlates()
   stub.AddNamePlate("nameplate1", 3)
-  OA.db.aoeMode = true
-  OA.Assist.aoeDetected = false
+  Tuono.db.aoeMode = true
+  Tuono.Assist.aoeDetected = false
 
-  OA.Assist.Update()
-  OA.State.RefreshFast()
+  Tuono.Assist.Update()
+  Tuono.State.RefreshFast()
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
   local foundBladeFlurry = false
   for _, entry in ipairs(r.queue) do
     if entry.spellID == 13877 then
@@ -1298,13 +1298,13 @@ end)
 -- Threat Test 8: blade_flurry composite signal - aoeDetected true
 test("threat detector: blade_flurry fires when ANY signal true (aoeDetected=true)", function()
   stub.ClearNamePlates()
-  OA.db.aoeMode = false
-  OA.Assist.aoeDetected = true
+  Tuono.db.aoeMode = false
+  Tuono.Assist.aoeDetected = true
 
-  OA.Assist.Update()
-  OA.State.RefreshFast()
+  Tuono.Assist.Update()
+  Tuono.State.RefreshFast()
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
   local foundBladeFlurry = false
   for _, entry in ipairs(r.queue) do
     if entry.spellID == 13877 then
@@ -1319,9 +1319,9 @@ end)
 
 -- AURA TEST 1: Delta add with readable spellId maps + sets state
 test("aura-infra: delta add with readable spellId maps + sets state", function()
-  OA.State.buffs.adrenalineRush.up = false
-  OA.State.buffs.adrenalineRush.expires = 0
-  OA.State.buffs.degraded = false
+  Tuono.State.buffs.adrenalineRush.up = false
+  Tuono.State.buffs.adrenalineRush.expires = 0
+  Tuono.State.buffs.degraded = false
 
   local updateInfo = {
     addedAuras = {
@@ -1335,16 +1335,16 @@ test("aura-infra: delta add with readable spellId maps + sets state", function()
 
   stub.FireEvent("UNIT_AURA", "player", updateInfo)
 
-  assert_true(OA.State.buffs.adrenalineRush.up, "adrenalineRush.up set to true after delta add")
-  assert_true(OA.State.buffs.adrenalineRush.expires > stub.state.time, "adrenalineRush.expires set to future time")
-  assert_false(OA.State.buffs.degraded, "degraded not set when readable spellId matched")
+  assert_true(Tuono.State.buffs.adrenalineRush.up, "adrenalineRush.up set to true after delta add")
+  assert_true(Tuono.State.buffs.adrenalineRush.expires > stub.state.time, "adrenalineRush.expires set to future time")
+  assert_false(Tuono.State.buffs.degraded, "degraded not set when readable spellId matched")
 end)
 
 -- AURA TEST 2: Delta add with SECRET spellId + recent matching cast correlates
 test("aura-infra: delta add with SECRET spellId + cast correlation", function()
-  OA.State.buffs.rtb.stage = 0
-  OA.State.buffs.rtb.expires = 0
-  OA.State.buffs.degraded = false
+  Tuono.State.buffs.rtb.stage = 0
+  Tuono.State.buffs.rtb.expires = 0
+  Tuono.State.buffs.degraded = false
 
   -- Simulate lastCast from UNIT_SPELLCAST_SUCCEEDED (fired just before delta)
   stub.FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-guid-123", 315508)
@@ -1363,14 +1363,14 @@ test("aura-infra: delta add with SECRET spellId + cast correlation", function()
 
   stub.FireEvent("UNIT_AURA", "player", updateInfo)
 
-  assert_true(OA.State.buffs.rtb.stage > 0, "rtb.stage set after correlation")
-  assert_false(OA.State.buffs.degraded, "degraded not set when cast-correlation succeeded")
+  assert_true(Tuono.State.buffs.rtb.stage > 0, "rtb.stage set after correlation")
+  assert_false(Tuono.State.buffs.degraded, "degraded not set when cast-correlation succeeded")
 end)
 
 -- AURA TEST 3: Removal clears state
 test("aura-infra: removal clears state", function()
-  OA.State.buffs.opportunity.up = false
-  OA.State.buffs.opportunity.expires = 0
+  Tuono.State.buffs.opportunity.up = false
+  Tuono.State.buffs.opportunity.expires = 0
 
   -- First add the aura so it gets tracked in the map
   local addInfo = {
@@ -1384,7 +1384,7 @@ test("aura-infra: removal clears state", function()
   }
   stub.FireEvent("UNIT_AURA", "player", addInfo)
 
-  assert_true(OA.State.buffs.opportunity.up, "opportunity added successfully")
+  assert_true(Tuono.State.buffs.opportunity.up, "opportunity added successfully")
 
   -- Now remove it
   local removeInfo = {
@@ -1392,8 +1392,8 @@ test("aura-infra: removal clears state", function()
   }
   stub.FireEvent("UNIT_AURA", "player", removeInfo)
 
-  assert_false(OA.State.buffs.opportunity.up, "opportunity.up cleared on removal")
-  assert_eq(OA.State.buffs.opportunity.expires, 0, "opportunity.expires reset to 0 on removal")
+  assert_false(Tuono.State.buffs.opportunity.up, "opportunity.up cleared on removal")
+  assert_eq(Tuono.State.buffs.opportunity.expires, 0, "opportunity.expires reset to 0 on removal")
 end)
 
 -- AURA TEST 4: isFullUpdate rebuilds via tier 2
@@ -1401,11 +1401,11 @@ test("aura-infra: isFullUpdate rebuilds via tier 2 bootstrap", function()
   -- Self-sufficient: an earlier test nils C_UnitAuras to exercise the legacy path;
   -- tier 2 is a C_UnitAuras query, so restore the real stub table before asserting.
   _G.C_UnitAuras = stub.C_UnitAuras or _G.C_UnitAuras
-  OA.State.inCombat = false
+  Tuono.State.inCombat = false
 
-  OA.State.buffs.adrenalineRush.up = false
-  OA.State.buffs.adrenalineRush.expires = 0
-  OA.State.buffs.degraded = false
+  Tuono.State.buffs.adrenalineRush.up = false
+  Tuono.State.buffs.adrenalineRush.expires = 0
+  Tuono.State.buffs.degraded = false
 
   stub.state.buffs.adrenalineRush = true
   stub.state.buffs.adrenalineRushExpires = stub.state.time + 30
@@ -1416,12 +1416,12 @@ test("aura-infra: isFullUpdate rebuilds via tier 2 bootstrap", function()
 
   stub.FireEvent("UNIT_AURA", "player", updateInfo)
 
-  assert_true(OA.State.buffs.adrenalineRush.up, "adrenalineRush restored after isFullUpdate bootstrap")
+  assert_true(Tuono.State.buffs.adrenalineRush.up, "adrenalineRush restored after isFullUpdate bootstrap")
 end)
 
 -- AURA TEST 5: All-secret + no cast → degraded=true and no error
 test("aura-infra: all-secret auras without cast → degraded=true", function()
-  OA.State.buffs.degraded = false
+  Tuono.State.buffs.degraded = false
 
   -- Advance time beyond correlation window (0.8s) to ensure any prior cast is out of window
   stub.Tick(1.0)
@@ -1439,14 +1439,14 @@ test("aura-infra: all-secret auras without cast → degraded=true", function()
 
   stub.FireEvent("UNIT_AURA", "player", updateInfo)
 
-  assert_true(OA.State.buffs.degraded, "degraded=true when secret aura has no correlation")
+  assert_true(Tuono.State.buffs.degraded, "degraded=true when secret aura has no correlation")
   assert_true(true, "no error thrown with degraded secret aura")
 end)
 
 -- AURA TEST 6: Full tick green under stub combatSecrets mode
 test("aura-infra: full tick under combatSecrets mode without error", function()
   stub.state.combatSecrets = true
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
 
   -- Fire realistic combat events
   stub.FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", "combat-cast-1", 13750)
@@ -1461,14 +1461,14 @@ test("aura-infra: full tick under combatSecrets mode without error", function()
     }
   })
 
-  OA.Assist.Update()
-  OA.State.RefreshFast()
-  local r = OA.Engine.Evaluate()
-  OA.Display.Render(r)
+  Tuono.Assist.Update()
+  Tuono.State.RefreshFast()
+  local r = Tuono.Engine.Evaluate()
+  Tuono.Display.Render(r)
 
   -- Verify full tick completed without error
-  assert_true(OA.State.buffs.adrenalineRush.up or OA.State.buffs.degraded, "AR tracked or degraded flag set")
-  assert_false(_G.issecretvalue(OA.State.energy), "State.energy not a secret value")
+  assert_true(Tuono.State.buffs.adrenalineRush.up or Tuono.State.buffs.degraded, "AR tracked or degraded flag set")
+  assert_false(_G.issecretvalue(Tuono.State.energy), "State.energy not a secret value")
 
   stub.state.combatSecrets = false
 end)
@@ -1478,64 +1478,64 @@ end)
 -- P0 Fix Test 1: User-saved values survive ADDON_LOADED + PLAYER_LOGIN reload cycle
 test("v1-core: saved user settings survive reload (P0 bite-proof)", function()
   -- Simulate a user setting custom values and reloading
-  -- Set OA.db to have custom values BEFORE firing reload events
-  OA.db.display.scale = 1.7
-  OA.db.show.cds = false
-  OA.db.aoeMode = true
-  _G.OutlawAssistDB = OA.db
+  -- Set Tuono.db to have custom values BEFORE firing reload events
+  Tuono.db.display.scale = 1.7
+  Tuono.db.show.cds = false
+  Tuono.db.aoeMode = true
+  _G.TuonoDB = Tuono.db
 
-  -- Now fire ADDON_LOADED which calls deepMerge(OutlawAssistDB or {}, OA.defaults)
+  -- Now fire ADDON_LOADED which calls deepMerge(TuonoDB or {}, Tuono.defaults)
   -- BUG: deepMerge currently overwrites with defaults
   -- FIX: deepMerge should only fill missing keys
-  stub.FireEvent("ADDON_LOADED", "OutlawAssist")
+  stub.FireEvent("ADDON_LOADED", "Tuono")
   stub.FireEvent("PLAYER_LOGIN")
 
   -- After fix, user's custom values should survive
-  assert_eq(OA.db.display.scale, 1.7, "saved scale 1.7 survives reload (not overwritten by default 1.0)")
-  assert_eq(OA.db.show.cds, false, "saved cds=false survives reload (not overwritten by default true)")
-  assert_eq(OA.db.aoeMode, true, "saved aoeMode=true survives reload (not overwritten by default false)")
+  assert_eq(Tuono.db.display.scale, 1.7, "saved scale 1.7 survives reload (not overwritten by default 1.0)")
+  assert_eq(Tuono.db.show.cds, false, "saved cds=false survives reload (not overwritten by default true)")
+  assert_eq(Tuono.db.aoeMode, true, "saved aoeMode=true survives reload (not overwritten by default false)")
 end)
 
 -- === v1-outlaw tests ===
 
 -- P0 TEST 1: AR does NOT pin OOC - opener wins instead
 test("P0-1: AR does not pin before opener (OOC+unstealthed)", function()
-  OA.State.inCombat = false
+  Tuono.State.inCombat = false
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.comboPoints = 0
-  OA.State.cooldowns.adrenalineRush.ready = true  -- AR is ready
+  Tuono.State.stealthed = false
+  Tuono.State.comboPoints = 0
+  Tuono.State.cooldowns.adrenalineRush.ready = true  -- AR is ready
 
-  OA.Assist.Update()
-  OA.State.RefreshFast()
+  Tuono.Assist.Update()
+  Tuono.State.RefreshFast()
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
   assert_true(#r.queue > 0, "queue has entries")
   -- Position 1 must be Stealth (opener), NOT AR
-  assert_eq(r.queue[1].spellID, OA.SpellIDs.stealth, "Stealth opener pins at position 1 OOC, beating AR")
+  assert_eq(r.queue[1].spellID, Tuono.SpellIDs.stealth, "Stealth opener pins at position 1 OOC, beating AR")
   assert_eq(r.queue[1].kind, "opener", "Stealth entry is kind=opener")
 end)
 
 -- P0 TEST 2: Ambush recommended when stealthed
 test("P0-2: Ambush recommended when stealthed", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = true  -- RefreshFast reads IsStealthed(), so drive the source
-  OA.State.stealthed = true
+  Tuono.State.stealthed = true
 
-  OA.Assist.Update()
-  OA.State.RefreshFast()
+  Tuono.Assist.Update()
+  Tuono.State.RefreshFast()
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
   assert_true(#r.queue > 0, "queue has entries")
   -- First entry should be Ambush when stealthed
-  assert_eq(r.queue[1].spellID, OA.SpellIDs.ambush, "Ambush pins at position 1 when stealthed")
+  assert_eq(r.queue[1].spellID, Tuono.SpellIDs.ambush, "Ambush pins at position 1 when stealthed")
   assert_eq(r.queue[1].kind, "opener", "Ambush entry is kind=opener")
 end)
 
 -- P0 TEST 3: ar_energy_management rule removed
 test("P0-3: ar_energy_management rule deleted", function()
   local found = false
-  for _, rule in ipairs(OA.Rules or {}) do
+  for _, rule in ipairs(Tuono.Rules or {}) do
     if rule.name == "ar_energy_management" then
       found = true
       break
@@ -1546,22 +1546,22 @@ end)
 
 -- P0 TEST 4: No queue entry has spellID whose cooldown is not ready (ghost icon guard)
 test("P0-4: No queue entry for spell whose cooldown is not ready (ghost icon guard)", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.buffs.adrenalineRush.up = true  -- AR is UP
-  OA.State.cooldowns.adrenalineRush.ready = false  -- AR is NOT READY (on cooldown)
-  OA.State.comboPoints = 2
+  Tuono.State.stealthed = false
+  Tuono.State.buffs.adrenalineRush.up = true  -- AR is UP
+  Tuono.State.cooldowns.adrenalineRush.ready = false  -- AR is NOT READY (on cooldown)
+  Tuono.State.comboPoints = 2
 
-  OA.Assist.Update()
-  OA.State.RefreshFast()
+  Tuono.Assist.Update()
+  Tuono.State.RefreshFast()
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
   -- No entry should have spellID=13750 (AR) when AR buff is up (cooldown not ready)
   for _, entry in ipairs(r.queue) do
     if entry.spellID == 13750 and entry.kind == "cooldown" then
       -- If AR is in queue, its cooldown MUST be ready
-      assert_true(OA.State.cooldowns.adrenalineRush.ready,
+      assert_true(Tuono.State.cooldowns.adrenalineRush.ready,
         "AR cooldown entry in queue but cooldown not ready - this is the ghost icon bug")
     end
   end
@@ -1570,20 +1570,20 @@ end)
 
 -- ADDITIONAL TEST 1: Opportunity buff ID centralized
 test("Additional-1: Opportunity buff ID in SpellIDs", function()
-  assert_true(OA.SpellIDs.opportunity ~= nil, "opportunity defined in SpellIDs")
-  assert_eq(OA.SpellIDs.opportunity, 195627, "opportunity ID is 195627")
+  assert_true(Tuono.SpellIDs.opportunity ~= nil, "opportunity defined in SpellIDs")
+  assert_eq(Tuono.SpellIDs.opportunity, 195627, "opportunity ID is 195627")
 end)
 
 -- ADDITIONAL TEST 2: Ambush spell ID centralized
 test("Additional-2: Ambush spell ID in SpellIDs", function()
-  assert_true(OA.SpellIDs.ambush ~= nil, "ambush defined in SpellIDs")
-  assert_eq(OA.SpellIDs.ambush, 8676, "ambush ID is 8676")
+  assert_true(Tuono.SpellIDs.ambush ~= nil, "ambush defined in SpellIDs")
+  assert_eq(Tuono.SpellIDs.ambush, 8676, "ambush ID is 8676")
 end)
 
 -- ADDITIONAL TEST 3: Ambush rule exists and fires when stealthed
 test("Additional-3: Ambush rule exists", function()
   local found = false
-  for _, rule in ipairs(OA.Rules or {}) do
+  for _, rule in ipairs(Tuono.Rules or {}) do
     if rule.name == "opener_ambush" then
       found = true
       break
@@ -1595,9 +1595,9 @@ end)
 -- ADDITIONAL TEST 4: RtB degraded flag set when legacy fallback used
 test("Additional-4: RtB legacy fallback marks degraded", function()
   -- Set initial state with no modern RtB
-  OA.State.buffs.rtb.stage = 0
-  OA.State.buffs.rtb.expires = 0
-  OA.State.buffs.degraded = false
+  Tuono.State.buffs.rtb.stage = 0
+  Tuono.State.buffs.rtb.expires = 0
+  Tuono.State.buffs.degraded = false
 
   -- Simulate a legacy RTB buff name in the aura list (requires stub support)
   -- This is tested via integration: legacy scan only runs when stage=0
@@ -1621,23 +1621,23 @@ test("live-queue: position 1 always tracks live GetNextCastSpell every tick", fu
     return spell
   end
 
-  OA.State.inCombat = true
-  OA.State.stealthed = false
+  Tuono.State.inCombat = true
+  Tuono.State.stealthed = false
 
   -- v1.2 DESIGN CHANGE: Blizzard's value was proven STATIC in live combat (52 samples,
   -- 0 changes), so it is no longer the queue source. Position 1 is OUR prediction; we
   -- only still poll Blizzard to record agreement. What must hold now: the polled value
   -- is tracked, and position 1 is a real actionable entry regardless of what they say.
-  OA.Assist.Update()
-  local r1 = OA.Engine.Evaluate()
-  assert_eq(OA.Assist.nextSpellID, 193315, "assist value polled at first tick")
+  Tuono.Assist.Update()
+  local r1 = Tuono.Engine.Evaluate()
+  assert_eq(Tuono.Assist.nextSpellID, 193315, "assist value polled at first tick")
   assert_true(r1.queue[1] ~= nil and r1.queue[1].spellID ~= nil, "position 1 actionable")
 
-  OA.Assist.Update()
-  assert_eq(OA.Assist.nextSpellID, 1234, "assist value re-polled (no caching)")
+  Tuono.Assist.Update()
+  assert_eq(Tuono.Assist.nextSpellID, 1234, "assist value re-polled (no caching)")
 
-  OA.Assist.Update()
-  assert_eq(OA.Assist.nextSpellID, 5678, "assist value re-polled again")
+  Tuono.Assist.Update()
+  assert_eq(Tuono.Assist.nextSpellID, 5678, "assist value re-polled again")
 
   -- Restore to default
   _G.C_AssistedCombat.GetNextCastSpell = function(b) return 193315 end
@@ -1645,13 +1645,13 @@ end)
 
 -- LIVE QUEUE TEST 2: Positions 2+ contain ONLY rule-derived entries, not static rotation
 test("live-queue: positions 2+ contain no entries from static rotation list", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.comboPoints = 2  -- AR PIN at low CP
+  Tuono.State.stealthed = false
+  Tuono.State.comboPoints = 2  -- AR PIN at low CP
 
-  OA.Assist.Update()
-  local r = OA.Engine.Evaluate()
+  Tuono.Assist.Update()
+  local r = Tuono.Engine.Evaluate()
 
   -- v1.2: position 1 comes from OUR simulation, never from Blizzard's static list.
   assert_true(r.queue[1] ~= nil, "queue has a position 1")
@@ -1668,23 +1668,23 @@ end)
 
 -- LIVE QUEUE TEST 3: Queue does not pad with static rotation entries
 test("live-queue: queue does not pad with static rotation entries", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.comboPoints = 4  -- Mid-range CP (no PIN)
-  OA.State.buffs.adrenalineRush.up = false
-  OA.State.buffs.opportunity.up = false
-  OA.State.trinkets[13].ready = false
-  OA.State.trinkets[14].ready = false
-  OA.State.buffs.rtb.stage = 3  -- RtB up (no stage-0 rule fire)
-  OA.State.cooldowns.adrenalineRush.ready = false
-  OA.State.cooldowns.bladeRush.ready = false
-  OA.State.cooldowns.preparation.ready = false
-  OA.db.aoeMode = false
-  OA.Assist.aoeDetected = false
+  Tuono.State.stealthed = false
+  Tuono.State.comboPoints = 4  -- Mid-range CP (no PIN)
+  Tuono.State.buffs.adrenalineRush.up = false
+  Tuono.State.buffs.opportunity.up = false
+  Tuono.State.trinkets[13].ready = false
+  Tuono.State.trinkets[14].ready = false
+  Tuono.State.buffs.rtb.stage = 3  -- RtB up (no stage-0 rule fire)
+  Tuono.State.cooldowns.adrenalineRush.ready = false
+  Tuono.State.cooldowns.bladeRush.ready = false
+  Tuono.State.cooldowns.preparation.ready = false
+  Tuono.db.aoeMode = false
+  Tuono.Assist.aoeDetected = false
 
-  OA.Assist.Update()
-  local r = OA.Engine.Evaluate()
+  Tuono.Assist.Update()
+  local r = Tuono.Engine.Evaluate()
 
   -- Old behavior would pad with all static rotation entries (4+).
   -- New behavior should have only position 1 + any rule-derived entries.
@@ -1700,7 +1700,7 @@ test("live-queue: queue does not pad with static rotation entries", function()
   -- A COOLDOWN-BEARING ability must not repeat back to back -- that is the signature of
   -- a simulation that never starts cooldowns. A zero-cooldown builder repeating is
   -- CORRECT and expected ("Sinister Strike x4" at low combo points).
-  local ABIL = OA.Rotation and OA.Rotation.ABILITIES or {}
+  local ABIL = Tuono.Rotation and Tuono.Rotation.ABILITIES or {}
   for i = 2, #r.queue do
     local id = r.queue[i].spellID
     if id and r.queue[i].kind ~= "trinket" and ABIL[id] and (ABIL[id].cd or 0) > 0 then
@@ -1719,20 +1719,20 @@ test("live-queue: aoeDetected still detects blade flurry from rotationSet", func
     return {193315, 271877, 13877, 315341}  -- Includes Blade Flurry (13877)
   end
 
-  OA.Assist.Update()
+  Tuono.Assist.Update()
 
-  assert_true(OA.Assist.aoeDetected, "aoeDetected=true when Blade Flurry in rotationSet")
-  assert_true(OA.Assist.rotationSet[13877], "Blade Flurry in rotationSet")
+  assert_true(Tuono.Assist.aoeDetected, "aoeDetected=true when Blade Flurry in rotationSet")
+  assert_true(Tuono.Assist.rotationSet[13877], "Blade Flurry in rotationSet")
 
   -- Rotation excludes Blade Flurry
   _G.C_AssistedCombat.GetRotationSpells = function()
     return {193315, 271877, 315341}  -- No Blade Flurry
   end
 
-  OA.Assist.Update()
+  Tuono.Assist.Update()
 
-  assert_false(OA.Assist.aoeDetected, "aoeDetected=false when Blade Flurry NOT in rotationSet")
-  assert_false(OA.Assist.rotationSet[13877], "Blade Flurry not in rotationSet")
+  assert_false(Tuono.Assist.aoeDetected, "aoeDetected=false when Blade Flurry NOT in rotationSet")
+  assert_false(Tuono.Assist.rotationSet[13877], "Blade Flurry not in rotationSet")
 
   -- Restore default
   _G.C_AssistedCombat.GetRotationSpells = function() return {193315, 271877, 315341, 13877} end
@@ -1741,43 +1741,43 @@ end)
 -- LIVE QUEUE TEST 5: lastChangeAt updates when position 1 changes
 test("live-queue: lastChangeAt timestamp updates when position 1 changes", function()
   -- Reset to ensure clean state
-  OA.Assist.nextSpellID = nil
-  OA.Assist.lastChangeAt = 0
+  Tuono.Assist.nextSpellID = nil
+  Tuono.Assist.lastChangeAt = 0
 
   -- First Update: position 1 changes from nil to 193315
   _G.C_AssistedCombat.GetNextCastSpell = function() return 193315 end
-  OA.Assist.Update()
-  local firstChangeTime = OA.Assist.lastChangeAt
+  Tuono.Assist.Update()
+  local firstChangeTime = Tuono.Assist.lastChangeAt
 
   -- Verify it was recorded (should be a number >= 0)
   assert_true(type(firstChangeTime) == "number", "lastChangeAt is a number after first change")
 
   -- Position 1 stays same
-  OA.Assist.Update()
-  assert_eq(OA.Assist.lastChangeAt, firstChangeTime, "lastChangeAt unchanged when position 1 stable")
+  Tuono.Assist.Update()
+  assert_eq(Tuono.Assist.lastChangeAt, firstChangeTime, "lastChangeAt unchanged when position 1 stable")
 
   -- Position 1 changes to different spell
   _G.C_AssistedCombat.GetNextCastSpell = function() return 1234 end
-  OA.Assist.Update()
-  local secondChangeTime = OA.Assist.lastChangeAt
+  Tuono.Assist.Update()
+  local secondChangeTime = Tuono.Assist.lastChangeAt
 
   assert_true(type(secondChangeTime) == "number", "lastChangeAt updated to a number")
   assert_true(secondChangeTime >= firstChangeTime, "lastChangeAt does not decrease when position 1 changes")
 
   -- Restore default
   _G.C_AssistedCombat.GetNextCastSpell = function() return 193315 end
-  OA.Assist.nextSpellID = nil
-  OA.Assist.lastChangeAt = 0
+  Tuono.Assist.nextSpellID = nil
+  Tuono.Assist.lastChangeAt = 0
 end)
 
 -- === v1.1.0 FAIL-CLOSED COOLDOWN TESTS ===
 
 -- TEST: Secret cooldowns do NOT produce queue entries (regression test for user bug #1)
 test("v1.1.0: secret cooldown fails closed - not queued", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.comboPoints = 2
+  Tuono.State.stealthed = false
+  Tuono.State.comboPoints = 2
 
   -- Inject a secret cooldown for Adrenaline Rush
   local secretStartTime = stub.makeSecret(100)
@@ -1785,49 +1785,49 @@ test("v1.1.0: secret cooldown fails closed - not queued", function()
 
   local originalGetSpellCooldown = _G.C_Spell and _G.C_Spell.GetSpellCooldown
   _G.C_Spell.GetSpellCooldown = function(spellID)
-    if spellID == OA.SpellIDs.adrenalineRush then
+    if spellID == Tuono.SpellIDs.adrenalineRush then
       return { startTime = secretStartTime, duration = secretDuration }
     end
     return { startTime = 0, duration = 0 }
   end
 
-  OA.State.RefreshFast()
-  local r = OA.Engine.Evaluate()
+  Tuono.State.RefreshFast()
+  local r = Tuono.Engine.Evaluate()
 
   -- AR should NOT be in the queue (unknown cooldown fails closed)
   local foundAR = false
   for _, entry in ipairs(r.queue) do
-    if entry.spellID == OA.SpellIDs.adrenalineRush then
+    if entry.spellID == Tuono.SpellIDs.adrenalineRush then
       foundAR = true
       break
     end
   end
 
   assert_false(foundAR, "secret cooldown AR NOT queued (fail-closed)")
-  assert_false(OA.State.cooldowns.adrenalineRush.known, "cooldown marked as unknown")
-  assert_false(OA.State.cooldowns.adrenalineRush.ready, "unknown cooldown marked as not ready")
+  assert_false(Tuono.State.cooldowns.adrenalineRush.known, "cooldown marked as unknown")
+  assert_false(Tuono.State.cooldowns.adrenalineRush.ready, "unknown cooldown marked as not ready")
 
   _G.C_Spell.GetSpellCooldown = originalGetSpellCooldown
 end)
 
 -- TEST: On-cooldown abilities are never queued
 test("v1.1.0: on-cooldown abilities not queued (remaining > 0)", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.comboPoints = 2
+  Tuono.State.stealthed = false
+  Tuono.State.comboPoints = 2
 
   -- Set AR cooldown to remaining 15 seconds (not ready)
-  OA.State.cooldowns.adrenalineRush.known = true
-  OA.State.cooldowns.adrenalineRush.ready = false
-  OA.State.cooldowns.adrenalineRush.remaining = 15
+  Tuono.State.cooldowns.adrenalineRush.known = true
+  Tuono.State.cooldowns.adrenalineRush.ready = false
+  Tuono.State.cooldowns.adrenalineRush.remaining = 15
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
 
   -- AR should NOT be in queue
   local foundAR = false
   for _, entry in ipairs(r.queue) do
-    if entry.spellID == OA.SpellIDs.adrenalineRush then
+    if entry.spellID == Tuono.SpellIDs.adrenalineRush then
       foundAR = true
       break
     end
@@ -1838,18 +1838,18 @@ end)
 
 -- TEST: Position 1 from Blizzard is never filtered
 test("v1.1.0: position 1 from Blizzard allowed through even if cooldown unknown", function()
-  OA.State.inCombat = true
-  OA.State.stealthed = false
+  Tuono.State.inCombat = true
+  Tuono.State.stealthed = false
 
   -- Position 1 from Blizzard (via Assist.nextSpellID)
-  _G.C_AssistedCombat.GetNextCastSpell = function() return OA.SpellIDs.adrenalineRush end
-  OA.Assist.Update()
+  _G.C_AssistedCombat.GetNextCastSpell = function() return Tuono.SpellIDs.adrenalineRush end
+  Tuono.Assist.Update()
 
   -- Make the cooldown unknown (secret)
-  OA.State.cooldowns.adrenalineRush.known = false
-  OA.State.cooldowns.adrenalineRush.ready = false
+  Tuono.State.cooldowns.adrenalineRush.known = false
+  Tuono.State.cooldowns.adrenalineRush.ready = false
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
 
   -- v1.2: Blizzard no longer owns position 1 (its value is static in live combat).
   -- What must still hold: an unknown cooldown never produces a NORMAL queue entry --
@@ -1857,7 +1857,7 @@ test("v1.1.0: position 1 from Blizzard allowed through even if cooldown unknown"
   -- Blizzard's value may only appear as an explicitly-labelled static fallback.
   assert_true(#r.queue > 0, "queue still has entries")
   for _, entry in ipairs(r.queue) do
-    if entry.spellID == OA.SpellIDs.adrenalineRush then
+    if entry.spellID == Tuono.SpellIDs.adrenalineRush then
       assert_true(entry.source == "blizzard" or entry.confidence == "static-fallback",
         "AR with unknown cooldown only allowed as a labelled fallback, never as our own pick")
     end
@@ -1866,11 +1866,11 @@ end)
 
 -- TEST: Bar renders out-of-combat (persistent)
 test("v1.1.0: bar persistent - renders out-of-combat", function()
-  OA.State.inCombat = false
-  OA.db.show.ooc = true
+  Tuono.State.inCombat = false
+  Tuono.db.show.ooc = true
 
-  if OA.Display and OA.Display.Init then
-    OA.Display.Init()
+  if Tuono.Display and Tuono.Display.Init then
+    Tuono.Display.Init()
   end
 
   local result = {
@@ -1878,33 +1878,33 @@ test("v1.1.0: bar persistent - renders out-of-combat", function()
     advisories = {}
   }
 
-  OA.Display.Render(result)
+  Tuono.Display.Render(result)
 
-  local anchor = OA.Display.anchor
+  local anchor = Tuono.Display.anchor
   assert_true(anchor and anchor:IsShown(), "bar shown out-of-combat with show.ooc=true")
 end)
 
 -- TEST: Icons receive cooldown timer values
 test("v1.1.0: icons display cooldown timers", function()
-  OA.State.cooldowns.adrenalineRush.known = true
-  OA.State.cooldowns.adrenalineRush.ready = false
-  OA.State.cooldowns.adrenalineRush.remaining = 12.5
+  Tuono.State.cooldowns.adrenalineRush.known = true
+  Tuono.State.cooldowns.adrenalineRush.ready = false
+  Tuono.State.cooldowns.adrenalineRush.remaining = 12.5
 
-  if OA.Display and OA.Display.Init then
-    OA.Display.Init()
+  if Tuono.Display and Tuono.Display.Init then
+    Tuono.Display.Init()
   end
 
   local result = {
     queue = {
       {spellID = 193315, kind = "rotation", source = "blizzard"},
-      {spellID = OA.SpellIDs.adrenalineRush, kind = "cooldown", source = "rule"}
+      {spellID = Tuono.SpellIDs.adrenalineRush, kind = "cooldown", source = "rule"}
     },
     advisories = {}
   }
 
-  OA.Display.Render(result)
+  Tuono.Display.Render(result)
 
-  local anchor = OA.Display.anchor
+  local anchor = Tuono.Display.anchor
   if anchor and anchor.icons[2] then
     -- Icon 2 should have cooldownText updated (if we could inspect it)
     assert_true(anchor.icons[2].cooldownText ~= nil, "cooldown timer text element exists")
@@ -1913,32 +1913,32 @@ end)
 
 -- TEST: Queue re-evaluates on consecutive ticks with changing state
 test("v1.1.0: continuous recalculation - queue changes between ticks", function()
-  OA.State.inCombat = true
-  OA.State.stealthed = false
+  Tuono.State.inCombat = true
+  Tuono.State.stealthed = false
 
   -- Tick 1: AR on cooldown
-  OA.State.cooldowns.adrenalineRush.known = true
-  OA.State.cooldowns.adrenalineRush.ready = false
-  OA.State.cooldowns.adrenalineRush.remaining = 5
-  OA.State.comboPoints = 2
+  Tuono.State.cooldowns.adrenalineRush.known = true
+  Tuono.State.cooldowns.adrenalineRush.ready = false
+  Tuono.State.cooldowns.adrenalineRush.remaining = 5
+  Tuono.State.comboPoints = 2
 
-  local r1 = OA.Engine.Evaluate()
+  local r1 = Tuono.Engine.Evaluate()
   local hasARinTick1 = false
   for _, entry in ipairs(r1.queue) do
-    if entry.spellID == OA.SpellIDs.adrenalineRush and entry.kind == "cooldown" then
+    if entry.spellID == Tuono.SpellIDs.adrenalineRush and entry.kind == "cooldown" then
       hasARinTick1 = true
       break
     end
   end
 
   -- Tick 2: AR becomes ready
-  OA.State.cooldowns.adrenalineRush.ready = true
-  OA.State.cooldowns.adrenalineRush.remaining = 0
+  Tuono.State.cooldowns.adrenalineRush.ready = true
+  Tuono.State.cooldowns.adrenalineRush.remaining = 0
 
-  local r2 = OA.Engine.Evaluate()
+  local r2 = Tuono.Engine.Evaluate()
   local hasARinTick2 = false
   for _, entry in ipairs(r2.queue) do
-    if entry.spellID == OA.SpellIDs.adrenalineRush and entry.kind == "cooldown" then
+    if entry.spellID == Tuono.SpellIDs.adrenalineRush and entry.kind == "cooldown" then
       hasARinTick2 = true
       break
     end
@@ -1950,10 +1950,10 @@ end)
 
 -- TEST: Trinket cooldowns respect fail-closed logic
 test("v1.1.0: trinket cooldowns fail closed - unknown trinket not ready", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.buffs.adrenalineRush.up = true
+  Tuono.State.stealthed = false
+  Tuono.State.buffs.adrenalineRush.up = true
 
   -- Inject a secret trinket cooldown
   local secretStartTime = stub.makeSecret(100)
@@ -1968,11 +1968,11 @@ test("v1.1.0: trinket cooldowns fail closed - unknown trinket not ready", functi
   end
 
   -- Manually set trinket state to simulate unknown cooldown
-  OA.State.trinkets[13].itemID = 999
-  OA.State.trinkets[13].ready = false  -- Fail-closed from secret values
-  OA.State.trinkets[13].onUse = true
+  Tuono.State.trinkets[13].itemID = 999
+  Tuono.State.trinkets[13].ready = false  -- Fail-closed from secret values
+  Tuono.State.trinkets[13].onUse = true
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
 
   -- Trinket should NOT be queued (unknown cooldown)
   local foundTrinket = false
@@ -1999,41 +1999,41 @@ test("v1.1.0: keybind cache retries nil results (doesn't poison)", function()
     advisories = {}
   }
 
-  if OA.Display and OA.Display.Init then
-    OA.Display.Init()
+  if Tuono.Display and Tuono.Display.Init then
+    Tuono.Display.Init()
   end
 
-  OA.Display.Render(result)
+  Tuono.Display.Render(result)
 
   assert_true(true, "display render completed without cache poison crash")
 end)
 
 -- TEST: Engine-level castability filter (belt-and-braces)
 test("v1.1.0: engine filter removes non-position-1 entries with unknown cooldowns", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.comboPoints = 2
+  Tuono.State.stealthed = false
+  Tuono.State.comboPoints = 2
 
   -- Set AR as position 1 from Blizzard (should survive filter)
-  _G.C_AssistedCombat.GetNextCastSpell = function() return OA.SpellIDs.adrenalineRush end
-  OA.Assist.Update()
+  _G.C_AssistedCombat.GetNextCastSpell = function() return Tuono.SpellIDs.adrenalineRush end
+  Tuono.Assist.Update()
 
   -- Set AR cooldown to unknown
-  OA.State.cooldowns.adrenalineRush.known = false
-  OA.State.cooldowns.adrenalineRush.ready = false
+  Tuono.State.cooldowns.adrenalineRush.known = false
+  Tuono.State.cooldowns.adrenalineRush.ready = false
 
   -- Also add BR as a rule-generated entry (should be filtered)
-  OA.State.cooldowns.bladeRush.known = false
-  OA.State.cooldowns.bladeRush.ready = false
+  Tuono.State.cooldowns.bladeRush.known = false
+  Tuono.State.cooldowns.bladeRush.ready = false
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
 
   -- v1.2: the filter's real job -- an ability whose cooldown we cannot confirm is NEVER
   -- presented as our own recommendation. (Fail-open here is what put Adrenaline Rush on
   -- the bar while it was on cooldown in live play.)
   for _, entry in ipairs(r.queue) do
-    if entry.spellID == OA.SpellIDs.bladeRush or entry.spellID == OA.SpellIDs.adrenalineRush then
+    if entry.spellID == Tuono.SpellIDs.bladeRush or entry.spellID == Tuono.SpellIDs.adrenalineRush then
       assert_true(entry.source == "blizzard" or entry.confidence == "static-fallback",
         "unknown-cooldown ability only ever appears as a labelled fallback")
     end
@@ -2044,24 +2044,24 @@ end)
 
 -- TEST: Unknown spell is not queued (talent-gated spell missing)
 test("v1.1.0: talent-gated spell not known - filtered from queue", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.cooldowns.bladeRush.ready = true
-  OA.State.knownUnavailable = false
+  Tuono.State.stealthed = false
+  Tuono.State.cooldowns.bladeRush.ready = true
+  Tuono.State.knownUnavailable = false
 
   -- Stub: Blade Rush is NOT known
-  OA.State.knownSpells[OA.SpellIDs.bladeRush] = false
+  Tuono.State.knownSpells[Tuono.SpellIDs.bladeRush] = false
   -- But cooldown is ready
-  OA.State.cooldowns.bladeRush.known = true
-  OA.State.cooldowns.bladeRush.ready = true
+  Tuono.State.cooldowns.bladeRush.known = true
+  Tuono.State.cooldowns.bladeRush.ready = true
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
 
   -- BR should NOT be in queue (not known, even though ready)
   local foundBR = false
   for _, entry in ipairs(r.queue) do
-    if entry.spellID == OA.SpellIDs.bladeRush then
+    if entry.spellID == Tuono.SpellIDs.bladeRush then
       foundBR = true
       break
     end
@@ -2072,24 +2072,24 @@ end)
 
 -- TEST: Known spell IS queued (talent acquired)
 test("v1.1.0: talent-gated spell known - queued when ready", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.cooldowns.bladeRush.ready = true
-  OA.State.knownUnavailable = false
+  Tuono.State.stealthed = false
+  Tuono.State.cooldowns.bladeRush.ready = true
+  Tuono.State.knownUnavailable = false
 
   -- Stub: Blade Rush IS known
-  OA.State.knownSpells[OA.SpellIDs.bladeRush] = true
+  Tuono.State.knownSpells[Tuono.SpellIDs.bladeRush] = true
   -- Cooldown is ready
-  OA.State.cooldowns.bladeRush.known = true
-  OA.State.cooldowns.bladeRush.ready = true
+  Tuono.State.cooldowns.bladeRush.known = true
+  Tuono.State.cooldowns.bladeRush.ready = true
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
 
   -- BR should be in queue
   local foundBR = false
   for _, entry in ipairs(r.queue) do
-    if entry.spellID == OA.SpellIDs.bladeRush then
+    if entry.spellID == Tuono.SpellIDs.bladeRush then
       foundBR = true
       break
     end
@@ -2100,23 +2100,23 @@ end)
 
 -- TEST: Position 1 from Blizzard allowed through even if not known
 test("v1.1.0: position 1 from Blizzard allowed even if spell unknown", function()
-  OA.State.inCombat = true
-  OA.State.stealthed = false
+  Tuono.State.inCombat = true
+  Tuono.State.stealthed = false
 
   -- Position 1 from Blizzard is Blade Rush
-  _G.C_AssistedCombat.GetNextCastSpell = function() return OA.SpellIDs.bladeRush end
-  OA.Assist.Update()
+  _G.C_AssistedCombat.GetNextCastSpell = function() return Tuono.SpellIDs.bladeRush end
+  Tuono.Assist.Update()
 
   -- But spell is not known (talent not taken)
-  OA.State.knownUnavailable = false
-  OA.State.knownSpells[OA.SpellIDs.bladeRush] = false
+  Tuono.State.knownUnavailable = false
+  Tuono.State.knownSpells[Tuono.SpellIDs.bladeRush] = false
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
 
   -- v1.2: an untalented ability must never be OUR pick. The user is levelling and does
   -- not have every talent, so this is the common case, not an edge case.
   for _, entry in ipairs(r.queue) do
-    if entry.spellID == OA.SpellIDs.bladeRush then
+    if entry.spellID == Tuono.SpellIDs.bladeRush then
       assert_true(entry.source == "blizzard" or entry.confidence == "static-fallback",
         "untalented ability only ever appears as a labelled fallback")
     end
@@ -2125,21 +2125,21 @@ end)
 
 -- TEST: Known API unavailable - fail-open (all spells allowed)
 test("v1.1.0: known API unavailable - fail-open", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.cooldowns.bladeRush.ready = true
-  OA.State.knownUnavailable = true  -- API unavailable
+  Tuono.State.stealthed = false
+  Tuono.State.cooldowns.bladeRush.ready = true
+  Tuono.State.knownUnavailable = true  -- API unavailable
 
   -- Even though knownSpells says unknown, fail-open allows it through
-  OA.State.knownSpells[OA.SpellIDs.bladeRush] = false
+  Tuono.State.knownSpells[Tuono.SpellIDs.bladeRush] = false
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
 
   -- BR should be in queue (fail-open when API unavailable)
   local foundBR = false
   for _, entry in ipairs(r.queue) do
-    if entry.spellID == OA.SpellIDs.bladeRush then
+    if entry.spellID == Tuono.SpellIDs.bladeRush then
       foundBR = true
       break
     end
@@ -2150,16 +2150,16 @@ end)
 
 -- TEST: Talent change event rebuilds known spells
 test("v1.1.0: talent change event rebuilds known spells cache", function()
-  OA.State.inCombat = false
-  OA.State.knownUnavailable = false
+  Tuono.State.inCombat = false
+  Tuono.State.knownUnavailable = false
 
   -- Initial: BR is not known
-  OA.State.knownSpells[OA.SpellIDs.bladeRush] = false
+  Tuono.State.knownSpells[Tuono.SpellIDs.bladeRush] = false
 
   -- Simulate talent being learned (fire talent change event)
   -- We can't directly test the event, but we can verify the refresh function works
   local mockIsSpellKnown = function(spellID)
-    if spellID == OA.SpellIDs.bladeRush then
+    if spellID == Tuono.SpellIDs.bladeRush then
       return true  -- Now it's known
     end
     return false
@@ -2169,17 +2169,17 @@ test("v1.1.0: talent change event rebuilds known spells cache", function()
   _G.IsPlayerSpell = mockIsSpellKnown
 
   -- Call refresh manually (simulating talent change event)
-  OA.safe(function()
+  Tuono.safe(function()
     -- We'll manually rebuild for this test
-    wipe(OA.State.knownSpells)
-    for name, spellID in pairs(OA.SpellIDs or {}) do
+    wipe(Tuono.State.knownSpells)
+    for name, spellID in pairs(Tuono.SpellIDs or {}) do
       if spellID then
-        OA.State.knownSpells[spellID] = mockIsSpellKnown(spellID)
+        Tuono.State.knownSpells[spellID] = mockIsSpellKnown(spellID)
       end
     end
   end)
 
-  assert_true(OA.State.knownSpells[OA.SpellIDs.bladeRush], "BR now known after talent change")
+  assert_true(Tuono.State.knownSpells[Tuono.SpellIDs.bladeRush], "BR now known after talent change")
 
   _G.IsPlayerSpell = originalIsPlayerSpell
 end)
@@ -2219,8 +2219,8 @@ end)
 
 -- TEST: Proc probe detects delta events
 test("proc probe: UNIT_AURA delta event tracking", function()
-  OA.State.buffs.rtb.stage = 0
-  OA.State.buffs.rtb.expires = 0
+  Tuono.State.buffs.rtb.stage = 0
+  Tuono.State.buffs.rtb.expires = 0
 
   -- Fire UNIT_AURA delta event with addedAuras
   local updateInfo = {
@@ -2235,7 +2235,7 @@ test("proc probe: UNIT_AURA delta event tracking", function()
 
   stub.FireEvent("UNIT_AURA", "player", updateInfo)
 
-  assert_true(OA.State.buffs.rtb.stage > 0, "buff state updated via delta event")
+  assert_true(Tuono.State.buffs.rtb.stage > 0, "buff state updated via delta event")
 end)
 
 -- TEST: Proc probe verdict logic - DIRECT (query-by-ID works)
@@ -2275,7 +2275,7 @@ test("proc probe: verdict=DELTA-ONLY when query fails but delta events tracked",
 
   stub.FireEvent("UNIT_AURA", "player", updateInfo)
 
-  assert_true(OA.State.buffs.opportunity.up, "delta tracking updates state even when query fails")
+  assert_true(Tuono.State.buffs.opportunity.up, "delta tracking updates state even when query fails")
 end)
 
 -- TEST: Proc probe tracks accessor values
@@ -2306,7 +2306,7 @@ end)
 
 -- TEST: Proc probe detects ASSISTED events
 test("proc probe: ASSISTED event firing (registration)", function()
-  assert_true(OA.eventHandlers ~= nil, "event handlers table exists")
+  assert_true(Tuono.eventHandlers ~= nil, "event handlers table exists")
   -- We can't test actual firing without full integration, but we verify the handler structure
   assert_true(true, "ASSISTED event infrastructure ready")
 end)
@@ -2341,26 +2341,26 @@ end)
 
 -- Test: Rotation.Predict exists and is callable
 test("rotation simulator: Predict function exists", function()
-  assert_true(OA.Rotation ~= nil, "OA.Rotation module exists")
-  assert_true(type(OA.Rotation.Predict) == "function", "OA.Rotation.Predict is a function")
+  assert_true(Tuono.Rotation ~= nil, "Tuono.Rotation module exists")
+  assert_true(type(Tuono.Rotation.Predict) == "function", "Tuono.Rotation.Predict is a function")
 end)
 
 -- Test: Predict with full energy and ready cooldowns
 test("rotation simulator: predict returns array at full energy", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.energy = 100
-  OA.State.energyMax = 100
-  OA.State.comboPoints = 0
-  OA.State.comboPointsMax = 6
-  OA.State.buffs.rtb.stage = 0
-  OA.State.buffs.adrenalineRush.up = false
-  OA.State.cooldowns.adrenalineRush.ready = true
-  OA.State.cooldowns.bladeRush.ready = true
-  OA.State.cooldowns.preparation.ready = false
+  Tuono.State.stealthed = false
+  Tuono.State.energy = 100
+  Tuono.State.energyMax = 100
+  Tuono.State.comboPoints = 0
+  Tuono.State.comboPointsMax = 6
+  Tuono.State.buffs.rtb.stage = 0
+  Tuono.State.buffs.adrenalineRush.up = false
+  Tuono.State.cooldowns.adrenalineRush.ready = true
+  Tuono.State.cooldowns.bladeRush.ready = true
+  Tuono.State.cooldowns.preparation.ready = false
 
-  local pred = OA.Rotation.Predict(OA.State, 4)
+  local pred = Tuono.Rotation.Predict(Tuono.State, 4)
   assert_true(pred ~= nil, "Predict returns a result")
   assert_true(type(pred) == "table", "Predict result is a table")
   assert_true(#pred > 0, "Predict returns at least one step")
@@ -2372,37 +2372,37 @@ test("rotation simulator: degraded aura data still predicts (lower confidence)",
   -- Midnight hides aura data there -- so the bar fell back to Blizzard's frozen pick and
   -- the first icon never changed in live play. Energy/CP/cooldowns remain readable and
   -- drive most of the priority list, so predict anyway and mark confidence down.
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.energy = 100
-  OA.State.energyMax = 100
-  OA.State.comboPoints = 3
-  OA.State.comboPointsMax = 6
-  OA.State.buffs.degraded = true
+  Tuono.State.stealthed = false
+  Tuono.State.energy = 100
+  Tuono.State.energyMax = 100
+  Tuono.State.comboPoints = 3
+  Tuono.State.comboPointsMax = 6
+  Tuono.State.buffs.degraded = true
 
-  local pred = OA.Rotation.Predict(OA.State, 3)
+  local pred = Tuono.Rotation.Predict(Tuono.State, 3)
   assert_true(pred ~= nil, "prediction still produced while degraded")
   assert_true(#pred > 0, "degraded prediction is non-empty")
   assert_true(pred[1].confidence ~= "high", "degraded prediction is not high confidence")
 
-  OA.State.buffs.degraded = false
+  Tuono.State.buffs.degraded = false
 end)
 
 -- Test: Predict entries have required fields
 test("rotation simulator: predict entries have spellID, confidence, reason", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.energy = 100
-  OA.State.energyMax = 100
-  OA.State.comboPoints = 0
-  OA.State.buffs.rtb.stage = 0
-  OA.State.buffs.adrenalineRush.up = false
-  OA.State.cooldowns.adrenalineRush.ready = true
-  OA.State.cooldowns.bladeRush.ready = true
+  Tuono.State.stealthed = false
+  Tuono.State.energy = 100
+  Tuono.State.energyMax = 100
+  Tuono.State.comboPoints = 0
+  Tuono.State.buffs.rtb.stage = 0
+  Tuono.State.buffs.adrenalineRush.up = false
+  Tuono.State.cooldowns.adrenalineRush.ready = true
+  Tuono.State.cooldowns.bladeRush.ready = true
 
-  local pred = OA.Rotation.Predict(OA.State, 4)
+  local pred = Tuono.Rotation.Predict(Tuono.State, 4)
   assert_true(pred ~= nil, "Predict returns result")
 
   for i, entry in ipairs(pred) do
@@ -2414,19 +2414,19 @@ end)
 
 -- Test: Confidence is high for steps 1-3
 test("rotation simulator: confidence high for steps 1-3", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.buffs.degraded = false  -- "high" requires readable aura data
-  OA.State.energy = 100
-  OA.State.energyMax = 100
-  OA.State.comboPoints = 0
-  OA.State.buffs.rtb.stage = 0
-  OA.State.buffs.adrenalineRush.up = false
-  OA.State.cooldowns.adrenalineRush.ready = true
-  OA.State.cooldowns.bladeRush.ready = true
+  Tuono.State.stealthed = false
+  Tuono.State.buffs.degraded = false  -- "high" requires readable aura data
+  Tuono.State.energy = 100
+  Tuono.State.energyMax = 100
+  Tuono.State.comboPoints = 0
+  Tuono.State.buffs.rtb.stage = 0
+  Tuono.State.buffs.adrenalineRush.up = false
+  Tuono.State.cooldowns.adrenalineRush.ready = true
+  Tuono.State.cooldowns.bladeRush.ready = true
 
-  local pred = OA.Rotation.Predict(OA.State, 4)
+  local pred = Tuono.Rotation.Predict(Tuono.State, 4)
 
   for i = 1, math.min(3, #pred) do
     assert_eq(pred[i].confidence, "high", "step " .. i .. " has high confidence")
@@ -2435,18 +2435,18 @@ end)
 
 -- Test: Confidence is low for step 4+
 test("rotation simulator: confidence low for step 4+", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.energy = 100
-  OA.State.energyMax = 100
-  OA.State.comboPoints = 0
-  OA.State.buffs.rtb.stage = 0
-  OA.State.buffs.adrenalineRush.up = false
-  OA.State.cooldowns.adrenalineRush.ready = true
-  OA.State.cooldowns.bladeRush.ready = true
+  Tuono.State.stealthed = false
+  Tuono.State.energy = 100
+  Tuono.State.energyMax = 100
+  Tuono.State.comboPoints = 0
+  Tuono.State.buffs.rtb.stage = 0
+  Tuono.State.buffs.adrenalineRush.up = false
+  Tuono.State.cooldowns.adrenalineRush.ready = true
+  Tuono.State.cooldowns.bladeRush.ready = true
 
-  local pred = OA.Rotation.Predict(OA.State, 8)
+  local pred = Tuono.Rotation.Predict(Tuono.State, 8)
 
   if #pred >= 4 then
     for i = 4, #pred do
@@ -2457,41 +2457,41 @@ end)
 
 -- Test: Energy is spent and regenerated correctly
 test("rotation simulator: energy spent and regenerated across steps", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.energy = 100
-  OA.State.energyMax = 100
-  OA.State.comboPoints = 0
-  OA.State.buffs.rtb.stage = 0
-  OA.State.buffs.adrenalineRush.up = false
-  OA.State.cooldowns.adrenalineRush.ready = true
-  OA.State.cooldowns.bladeRush.ready = true
-  OA.State.cooldowns.preparation.ready = false
+  Tuono.State.stealthed = false
+  Tuono.State.energy = 100
+  Tuono.State.energyMax = 100
+  Tuono.State.comboPoints = 0
+  Tuono.State.buffs.rtb.stage = 0
+  Tuono.State.buffs.adrenalineRush.up = false
+  Tuono.State.cooldowns.adrenalineRush.ready = true
+  Tuono.State.cooldowns.bladeRush.ready = true
+  Tuono.State.cooldowns.preparation.ready = false
 
-  local origEnergy = OA.State.energy
-  local pred = OA.Rotation.Predict(OA.State, 4)
+  local origEnergy = Tuono.State.energy
+  local pred = Tuono.Rotation.Predict(Tuono.State, 4)
 
   -- Real state should not change (prediction is non-destructive)
-  assert_eq(OA.State.energy, origEnergy, "real state energy unchanged after Predict")
+  assert_eq(Tuono.State.energy, origEnergy, "real state energy unchanged after Predict")
   assert_true(pred ~= nil, "prediction returned")
 end)
 
 -- Test: Combo points increase with builders
 test("rotation simulator: combo points generated by builders", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.energy = 100
-  OA.State.energyMax = 100
-  OA.State.comboPoints = 0
-  OA.State.comboPointsMax = 6
-  OA.State.buffs.rtb.stage = 0
-  OA.State.buffs.adrenalineRush.up = false
-  OA.State.cooldowns.adrenalineRush.ready = false
-  OA.State.cooldowns.bladeRush.ready = false
+  Tuono.State.stealthed = false
+  Tuono.State.energy = 100
+  Tuono.State.energyMax = 100
+  Tuono.State.comboPoints = 0
+  Tuono.State.comboPointsMax = 6
+  Tuono.State.buffs.rtb.stage = 0
+  Tuono.State.buffs.adrenalineRush.up = false
+  Tuono.State.cooldowns.adrenalineRush.ready = false
+  Tuono.State.cooldowns.bladeRush.ready = false
 
-  local pred = OA.Rotation.Predict(OA.State, 4)
+  local pred = Tuono.Rotation.Predict(Tuono.State, 4)
   assert_true(pred ~= nil, "prediction returned")
   -- Expect Sinister Strike as the first castable ability at step 1
   assert_true(#pred > 0, "at least one step predicted")
@@ -2499,68 +2499,68 @@ end)
 
 -- Test: Finisher applies Restless Blades CDR
 test("rotation simulator: finisher applies Restless Blades CDR", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.energy = 100
-  OA.State.energyMax = 100
-  OA.State.comboPoints = 6
-  OA.State.comboPointsMax = 6
-  OA.State.buffs.rtb.stage = 1  -- Stage 1, not the +30% stage
-  OA.State.buffs.adrenalineRush.up = false
-  OA.State.cooldowns.adrenalineRush.ready = false
-  OA.State.cooldowns.adrenalineRush.remaining = 100
-  OA.State.cooldowns.bladeRush.ready = false
-  OA.State.cooldowns.bladeRush.remaining = 30
-  OA.State.cooldowns.preparation.ready = false
+  Tuono.State.stealthed = false
+  Tuono.State.energy = 100
+  Tuono.State.energyMax = 100
+  Tuono.State.comboPoints = 6
+  Tuono.State.comboPointsMax = 6
+  Tuono.State.buffs.rtb.stage = 1  -- Stage 1, not the +30% stage
+  Tuono.State.buffs.adrenalineRush.up = false
+  Tuono.State.cooldowns.adrenalineRush.ready = false
+  Tuono.State.cooldowns.adrenalineRush.remaining = 100
+  Tuono.State.cooldowns.bladeRush.ready = false
+  Tuono.State.cooldowns.bladeRush.remaining = 30
+  Tuono.State.cooldowns.preparation.ready = false
   -- BtE has a real cooldown and the engine fails CLOSED on not-ready, so a finisher
   -- test must declare it ready; otherwise falling back to the builder is CORRECT.
-  OA.State.cooldowns.betweenTheEyes = { known = true, ready = true, remaining = 0 }
+  Tuono.State.cooldowns.betweenTheEyes = { known = true, ready = true, remaining = 0 }
   -- Self-sufficient talent state: earlier tests flip knownSpells entries to false.
-  OA.State.knownSpells = OA.State.knownSpells or {}
-  OA.State.knownSpells[OA.SpellIDs.betweenTheEyes] = true
+  Tuono.State.knownSpells = Tuono.State.knownSpells or {}
+  Tuono.State.knownSpells[Tuono.SpellIDs.betweenTheEyes] = true
 
-  local pred = OA.Rotation.Predict(OA.State, 2)
+  local pred = Tuono.Rotation.Predict(Tuono.State, 2)
   assert_true(pred ~= nil, "prediction returned with high CP")
   assert_true(#pred > 0, "finisher predicted")
   -- Between the Eyes should be predicted as the first action at 6 CP
-  assert_eq(pred[1].spellID, OA.SpellIDs.betweenTheEyes, "BtE finisher predicted at 6 CP")
+  assert_eq(pred[1].spellID, Tuono.SpellIDs.betweenTheEyes, "BtE finisher predicted at 6 CP")
 end)
 
 -- Test: Stage 3 RtB buff affects next prediction
 test("rotation simulator: stage 3 RtB buff affects next prediction", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.energy = 100
-  OA.State.energyMax = 100
-  OA.State.comboPoints = 0
-  OA.State.buffs.rtb.stage = 3
-  OA.State.buffs.adrenalineRush.up = false
-  OA.State.cooldowns.adrenalineRush.ready = true
-  OA.State.cooldowns.bladeRush.ready = true
+  Tuono.State.stealthed = false
+  Tuono.State.energy = 100
+  Tuono.State.energyMax = 100
+  Tuono.State.comboPoints = 0
+  Tuono.State.buffs.rtb.stage = 3
+  Tuono.State.buffs.adrenalineRush.up = false
+  Tuono.State.cooldowns.adrenalineRush.ready = true
+  Tuono.State.cooldowns.bladeRush.ready = true
 
-  local pred = OA.Rotation.Predict(OA.State, 4)
+  local pred = Tuono.Rotation.Predict(Tuono.State, 4)
   assert_true(pred ~= nil, "prediction returned at stage 3")
   assert_true(#pred > 0, "step predicted")
 end)
 
 -- Test: IntelligenceLayer wires predictions into queue
 test("rotation simulator: predictions wired into intelligence layer queue", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.energy = 100
-  OA.State.energyMax = 100
-  OA.State.comboPoints = 0
-  OA.State.buffs.rtb.stage = 0
-  OA.State.buffs.adrenalineRush.up = false
-  OA.State.cooldowns.adrenalineRush.ready = true
-  OA.State.cooldowns.bladeRush.ready = true
-  OA.Assist.Update()
-  OA.State.RefreshFast()
+  Tuono.State.stealthed = false
+  Tuono.State.energy = 100
+  Tuono.State.energyMax = 100
+  Tuono.State.comboPoints = 0
+  Tuono.State.buffs.rtb.stage = 0
+  Tuono.State.buffs.adrenalineRush.up = false
+  Tuono.State.cooldowns.adrenalineRush.ready = true
+  Tuono.State.cooldowns.bladeRush.ready = true
+  Tuono.Assist.Update()
+  Tuono.State.RefreshFast()
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
   assert_true(r.queue ~= nil, "queue exists in result")
   assert_true(#r.queue > 0, "queue has entries with Predict wired in")
 
@@ -2579,48 +2579,48 @@ end)
 
 -- TEST: CRITICAL — Assist unavailable → our predictions still returned (COORDINATOR FINDING)
 test("rotation simulator: Assist unavailable → predictions work standalone", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.energy = 100
-  OA.State.energyMax = 100
-  OA.State.comboPoints = 0
-  OA.State.buffs.rtb.stage = 0
-  OA.State.buffs.adrenalineRush.up = false
-  OA.State.cooldowns.adrenalineRush.ready = true
-  OA.State.cooldowns.bladeRush.ready = true
+  Tuono.State.stealthed = false
+  Tuono.State.energy = 100
+  Tuono.State.energyMax = 100
+  Tuono.State.comboPoints = 0
+  Tuono.State.buffs.rtb.stage = 0
+  Tuono.State.buffs.adrenalineRush.up = false
+  Tuono.State.cooldowns.adrenalineRush.ready = true
+  Tuono.State.cooldowns.bladeRush.ready = true
 
   local originalC_AssistedCombat = _G.C_AssistedCombat
   _G.C_AssistedCombat = nil
-  OA.Assist.Update()
-  OA.State.RefreshFast()
+  Tuono.Assist.Update()
+  Tuono.State.RefreshFast()
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
   assert_true(r.queue ~= nil, "queue exists when Assist unavailable")
   assert_true(#r.queue > 0, "queue populated from OUR predictions (Assist unavailable)")
-  assert_true(OA.Assist.available == false, "Assist is unavailable")
+  assert_true(Tuono.Assist.available == false, "Assist is unavailable")
 
   _G.C_AssistedCombat = originalC_AssistedCombat
 end)
 
 -- TEST: Static fallback behavior — empty prediction + Assist available → confidence="static-fallback"
 test("rotation simulator: empty prediction + Assist → static-fallback entry marked", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.energy = 0  -- Out of energy → likely no castable ability
-  OA.State.energyMax = 100
-  OA.State.comboPoints = 0
-  OA.State.buffs.rtb.stage = 0
-  OA.State.buffs.adrenalineRush.up = false
-  OA.State.cooldowns.adrenalineRush.ready = false
-  OA.State.cooldowns.adrenalineRush.remaining = 100
-  OA.State.cooldowns.bladeRush.ready = false
-  OA.State.cooldowns.bladeRush.remaining = 30
-  OA.Assist.Update()
-  OA.State.RefreshFast()
+  Tuono.State.stealthed = false
+  Tuono.State.energy = 0  -- Out of energy → likely no castable ability
+  Tuono.State.energyMax = 100
+  Tuono.State.comboPoints = 0
+  Tuono.State.buffs.rtb.stage = 0
+  Tuono.State.buffs.adrenalineRush.up = false
+  Tuono.State.cooldowns.adrenalineRush.ready = false
+  Tuono.State.cooldowns.adrenalineRush.remaining = 100
+  Tuono.State.cooldowns.bladeRush.ready = false
+  Tuono.State.cooldowns.bladeRush.remaining = 30
+  Tuono.Assist.Update()
+  Tuono.State.RefreshFast()
 
-  local r = OA.Engine.Evaluate()
+  local r = Tuono.Engine.Evaluate()
   assert_true(r.queue ~= nil, "queue exists")
 
   -- Prediction with no energy + all CDs down should be empty → fallback to Blizzard
@@ -2634,7 +2634,7 @@ test("rotation simulator: empty prediction + Assist → static-fallback entry ma
       end
     end
     if foundFallback then
-      assert_true(OA.Engine.assistStatic, "assistStatic flag set when static-fallback entry used")
+      assert_true(Tuono.Engine.assistStatic, "assistStatic flag set when static-fallback entry used")
     end
   end
 
@@ -2645,13 +2645,13 @@ end)
 
 -- TEST: Dispatch energy cost is 35 (critical for leveling loop)
 test("ability data: Dispatch energy cost = 35, not 25 (verified Wowhead 2026-08-01)", function()
-  local abilities = loadfile("OutlawAssist/Rotation.lua")
+  local abilities = loadfile("Tuono/Rotation.lua")
   if not abilities then error("Could not load Rotation.lua") end
-  local ok, err = pcall(abilities, _G.ADDON_NAME, OA)
+  local ok, err = pcall(abilities, _G.ADDON_NAME, Tuono)
   if not ok then error("Error loading Rotation.lua: " .. tostring(err)) end
 
   -- Dispatch spell ID = 2098
-  local dispatch_ability = OA.Rotation and OA.Rotation.ABILITIES and OA.Rotation.ABILITIES[OA.SpellIDs.dispatch]
+  local dispatch_ability = Tuono.Rotation and Tuono.Rotation.ABILITIES and Tuono.Rotation.ABILITIES[Tuono.SpellIDs.dispatch]
   if dispatch_ability then
     assert_eq(dispatch_ability.cost, 35, "Dispatch energy cost verified (Wowhead spell 2098)")
   end
@@ -2659,7 +2659,7 @@ end)
 
 -- TEST: Blade Rush cooldown is 60s (not 10s, off-by-6x bug)
 test("ability data: Blade Rush cooldown = 60s, not 10s (verified Wowhead 2026-08-01)", function()
-  local br_ability = OA.Rotation and OA.Rotation.ABILITIES and OA.Rotation.ABILITIES[OA.SpellIDs.bladeRush]
+  local br_ability = Tuono.Rotation and Tuono.Rotation.ABILITIES and Tuono.Rotation.ABILITIES[Tuono.SpellIDs.bladeRush]
   if br_ability then
     assert_eq(br_ability.cd, 60, "Blade Rush cooldown verified (Wowhead spell 271877)")
   end
@@ -2667,7 +2667,7 @@ end)
 
 -- TEST: Between the Eyes cooldown is 45s (not 30s, off-by-15s bug)
 test("ability data: Between the Eyes cooldown = 45s, not 30s (verified Wowhead 2026-08-01)", function()
-  local bte_ability = OA.Rotation and OA.Rotation.ABILITIES and OA.Rotation.ABILITIES[OA.SpellIDs.betweenTheEyes]
+  local bte_ability = Tuono.Rotation and Tuono.Rotation.ABILITIES and Tuono.Rotation.ABILITIES[Tuono.SpellIDs.betweenTheEyes]
   if bte_ability then
     assert_eq(bte_ability.cd, 45, "Between the Eyes cooldown verified (Wowhead spell 315341)")
   end
@@ -2675,7 +2675,7 @@ end)
 
 -- TEST: Killing Spree cooldown is 180s (not 30s, off-by-6x bug)
 test("ability data: Killing Spree cooldown = 180s, not 30s (verified Wowhead 2026-08-01)", function()
-  local ks_ability = OA.Rotation and OA.Rotation.ABILITIES and OA.Rotation.ABILITIES[OA.SpellIDs.killingSpree]
+  local ks_ability = Tuono.Rotation and Tuono.Rotation.ABILITIES and Tuono.Rotation.ABILITIES[Tuono.SpellIDs.killingSpree]
   if ks_ability then
     assert_eq(ks_ability.cd, 180, "Killing Spree cooldown verified (Wowhead spell 5374)")
   end
@@ -2683,7 +2683,7 @@ end)
 
 -- TEST: Killing Spree energy cost is 45 (not 25, off-by-20 bug)
 test("ability data: Killing Spree energy cost = 45, not 25 (verified Wowhead 2026-08-01)", function()
-  local ks_ability = OA.Rotation and OA.Rotation.ABILITIES and OA.Rotation.ABILITIES[OA.SpellIDs.killingSpree]
+  local ks_ability = Tuono.Rotation and Tuono.Rotation.ABILITIES and Tuono.Rotation.ABILITIES[Tuono.SpellIDs.killingSpree]
   if ks_ability then
     assert_eq(ks_ability.cost, 45, "Killing Spree energy cost verified (Wowhead spell 5374)")
   end
@@ -2691,7 +2691,7 @@ end)
 
 -- TEST: Blade Flurry energy cost is 15 (not 0, off-by-15 bug)
 test("ability data: Blade Flurry energy cost = 15, not 0 (verified Wowhead 2026-08-01)", function()
-  local bf_ability = OA.Rotation and OA.Rotation.ABILITIES and OA.Rotation.ABILITIES[OA.SpellIDs.bladeFlurry]
+  local bf_ability = Tuono.Rotation and Tuono.Rotation.ABILITIES and Tuono.Rotation.ABILITIES[Tuono.SpellIDs.bladeFlurry]
   if bf_ability then
     assert_eq(bf_ability.cost, 15, "Blade Flurry energy cost verified (Wowhead spell 13877)")
   end
@@ -2699,7 +2699,7 @@ end)
 
 -- TEST: Keep It Rolling cooldown is 360s (not 15s, off-by-24x bug)
 test("ability data: Keep It Rolling cooldown = 360s, not 15s (verified Wowhead 2026-08-01)", function()
-  local kir_ability = OA.Rotation and OA.Rotation.ABILITIES and OA.Rotation.ABILITIES[OA.SpellIDs.keepItRolling]
+  local kir_ability = Tuono.Rotation and Tuono.Rotation.ABILITIES and Tuono.Rotation.ABILITIES[Tuono.SpellIDs.keepItRolling]
   if kir_ability then
     assert_eq(kir_ability.cd, 360, "Keep It Rolling cooldown verified (Wowhead spell 333549)")
   end
@@ -2710,8 +2710,8 @@ test("ability data: No placeholder cooldowns (regression guard)", function()
   local abilities_ok = true
   local problems = {}
 
-  if OA.Rotation and OA.Rotation.ABILITIES then
-    for spell_id, ability in pairs(OA.Rotation.ABILITIES) do
+  if Tuono.Rotation and Tuono.Rotation.ABILITIES then
+    for spell_id, ability in pairs(Tuono.Rotation.ABILITIES) do
       -- Every ability should either have a real cooldown or explicitly be instant (cd=0 for off-GCD or non-cooldown)
       -- Dispatch (no CD), Sinister Strike (no CD), Ambush (no CD), Pistol Shot (no CD) are all instant.
       -- Check that we don't have obviously wrong placeholders (e.g., a GCD ability with cd=0 when it should have one)
@@ -2735,10 +2735,10 @@ end)
 
 -- TEST: Ambush rule exists at highest priority
 test("rotation rules: Ambush stealth-opener rule exists", function()
-  if OA.Rotation then
+  if Tuono.Rotation then
     -- The rule should be first in the PRIORITY_SINGLE list (or at least present)
     -- We can't directly inspect the priority list from here, but we can check that Ambush is in the ABILITIES table
-    local ambush_able = OA.Rotation.ABILITIES and OA.Rotation.ABILITIES[OA.SpellIDs.ambush]
+    local ambush_able = Tuono.Rotation.ABILITIES and Tuono.Rotation.ABILITIES[Tuono.SpellIDs.ambush]
     assert_true(ambush_able ~= nil, "Ambush ability is defined in ABILITIES table")
     if ambush_able then
       assert_eq(ambush_able.cost, 0, "Ambush is free (stealth-only)")
@@ -2751,16 +2751,16 @@ end)
 
 -- Display Test 1: High confidence renders at full opacity
 test("display-clarity: high confidence renders at full opacity", function()
-  OA.Display.Init()
+  Tuono.Display.Init()
   local result = {
     queue = {
       {spellID = 193315, kind = "rotation", source = "blizzard", confidence = "high", degraded = false}
     },
     advisories = {}
   }
-  OA.Display.Render(result)
+  Tuono.Display.Render(result)
 
-  local icon = OA.Display.anchor.icons[1]
+  local icon = Tuono.Display.anchor.icons[1]
   assert_true(icon ~= nil, "icon 1 exists")
   assert_true(icon:IsShown(), "icon 1 is visible")
 
@@ -2771,48 +2771,48 @@ end)
 
 -- Display Test 2: Medium confidence renders dimmed (~0.7)
 test("display-clarity: medium confidence renders slightly dimmed", function()
-  OA.Display.Init()
+  Tuono.Display.Init()
   local result = {
     queue = {
       {spellID = 193315, kind = "rotation", source = "blizzard", confidence = "medium", degraded = false}
     },
     advisories = {}
   }
-  OA.Display.Render(result)
+  Tuono.Display.Render(result)
 
-  local icon = OA.Display.anchor.icons[1]
+  local icon = Tuono.Display.anchor.icons[1]
   local alpha = icon:GetAlpha()
   assert_true(alpha >= 0.6 and alpha <= 0.8, "medium confidence icon has alpha ~0.7, got " .. tostring(alpha))
 end)
 
 -- Display Test 3: Low confidence renders clearly dimmed (~0.45)
 test("display-clarity: low confidence renders clearly dimmed", function()
-  OA.Display.Init()
+  Tuono.Display.Init()
   local result = {
     queue = {
       {spellID = 193315, kind = "rotation", source = "blizzard", confidence = "low", degraded = false}
     },
     advisories = {}
   }
-  OA.Display.Render(result)
+  Tuono.Display.Render(result)
 
-  local icon = OA.Display.anchor.icons[1]
+  local icon = Tuono.Display.anchor.icons[1]
   local alpha = icon:GetAlpha()
   assert_true(alpha >= 0.4 and alpha <= 0.55, "low confidence icon has alpha ~0.45, got " .. tostring(alpha))
 end)
 
 -- Display Test 4: Static-fallback renders distinctly dimmed and marked
 test("display-clarity: static-fallback renders distinctly dimmed with marker", function()
-  OA.Display.Init()
+  Tuono.Display.Init()
   local result = {
     queue = {
       {spellID = 193315, kind = "rotation", source = "blizzard", confidence = "static-fallback", degraded = false}
     },
     advisories = {}
   }
-  OA.Display.Render(result)
+  Tuono.Display.Render(result)
 
-  local icon = OA.Display.anchor.icons[1]
+  local icon = Tuono.Display.anchor.icons[1]
   local alpha = icon:GetAlpha()
   assert_true(alpha >= 0.25 and alpha <= 0.35, "static-fallback icon has alpha ~0.3, got " .. tostring(alpha))
 
@@ -2824,7 +2824,7 @@ end)
 
 -- Display Test 5: Position-1 gets distinct treatment (authority ring visible)
 test("display-clarity: position-1 gets distinct authority ring treatment", function()
-  OA.Display.Init()
+  Tuono.Display.Init()
   local result = {
     queue = {
       {spellID = 193315, kind = "rotation", source = "blizzard", confidence = "high", degraded = false},
@@ -2832,10 +2832,10 @@ test("display-clarity: position-1 gets distinct authority ring treatment", funct
     },
     advisories = {}
   }
-  OA.Display.Render(result)
+  Tuono.Display.Render(result)
 
-  local icon1 = OA.Display.anchor.icons[1]
-  local icon2 = OA.Display.anchor.icons[2]
+  local icon1 = Tuono.Display.anchor.icons[1]
+  local icon2 = Tuono.Display.anchor.icons[2]
 
   assert_true(icon1 ~= nil, "position 1 exists")
   assert_true(icon2 ~= nil, "position 2 exists")
@@ -2856,16 +2856,16 @@ end)
 
 -- Display Test 6: Degraded flag shows hazard overlay
 test("display-clarity: degraded entry shows hazard overlay", function()
-  OA.Display.Init()
+  Tuono.Display.Init()
   local result = {
     queue = {
       {spellID = 193315, kind = "rotation", source = "blizzard", confidence = "high", degraded = true}
     },
     advisories = {}
   }
-  OA.Display.Render(result)
+  Tuono.Display.Render(result)
 
-  local icon = OA.Display.anchor.icons[1]
+  local icon = Tuono.Display.anchor.icons[1]
   if icon.hazard then
     assert_true(icon.hazard:IsShown(), "degraded entry shows hazard overlay")
   end
@@ -2873,16 +2873,16 @@ end)
 
 -- Display Test 7: Degraded + low confidence together leaves icon visible
 test("display-clarity: degraded + low confidence icon remains above visibility floor", function()
-  OA.Display.Init()
+  Tuono.Display.Init()
   local result = {
     queue = {
       {spellID = 193315, kind = "rotation", source = "blizzard", confidence = "low", degraded = true}
     },
     advisories = {}
   }
-  OA.Display.Render(result)
+  Tuono.Display.Render(result)
 
-  local icon = OA.Display.anchor.icons[1]
+  local icon = Tuono.Display.anchor.icons[1]
   local alpha = icon:GetAlpha()
   -- Low confidence alone is ~0.45; degraded adds hazard overlay at 0.35.
   -- Icon alpha should still be ~0.45 so art is readable under hazard overlay.
@@ -2895,20 +2895,20 @@ end)
 
 -- Display Test 8: Empty queue renders without error
 test("display-clarity: empty queue renders without error", function()
-  OA.Display.Init()
+  Tuono.Display.Init()
   local result = {
     queue = {},
     advisories = {}
   }
   -- Should not error
-  OA.Display.Render(result)
+  Tuono.Display.Render(result)
   assert_true(true, "empty queue renders without error")
 end)
 
 -- Display Test 9: Dynamic strip resize based on actual entries
 test("display-clarity: dynamic strip resize wraps actual entries, not iconCount", function()
-  OA.db.display.iconCount = 8
-  OA.Display.Init()
+  Tuono.db.display.iconCount = 8
+  Tuono.Display.Init()
 
   -- Render with only 2 entries
   local result = {
@@ -2918,9 +2918,9 @@ test("display-clarity: dynamic strip resize wraps actual entries, not iconCount"
     },
     advisories = {}
   }
-  OA.Display.Render(result)
+  Tuono.Display.Render(result)
 
-  local anchor = OA.Display.anchor
+  local anchor = Tuono.Display.anchor
   local width, height = anchor:GetSize()
   -- With 2 entries: width = 6 + 50 + 1*(6+42) + 6 = 110
   assert_true(width >= 105 and width <= 115, "strip width wraps 2 entries (~110), got " .. tostring(width))
@@ -2932,7 +2932,7 @@ test("display-clarity: dynamic strip resize wraps actual entries, not iconCount"
     {spellID = 271877, kind = "rotation", source = "blizzard", confidence = "high", degraded = false},
     {spellID = 315341, kind = "rotation", source = "blizzard", confidence = "high", degraded = false}
   }
-  OA.Display.Render(result)
+  Tuono.Display.Render(result)
 
   local width2, _ = anchor:GetSize()
   -- With 4 entries: width = 6 + 50 + 3*(6+42) + 6 = 206
@@ -2942,16 +2942,16 @@ end)
 
 -- Display Test 10: Keybind text applies confidence alpha
 test("display-clarity: keybind text alpha follows confidence level", function()
-  OA.Display.Init()
+  Tuono.Display.Init()
   local result = {
     queue = {
       {spellID = 193315, kind = "rotation", source = "blizzard", confidence = "low", degraded = false}
     },
     advisories = {}
   }
-  OA.Display.Render(result)
+  Tuono.Display.Render(result)
 
-  local icon = OA.Display.anchor.icons[1]
+  local icon = Tuono.Display.anchor.icons[1]
   if icon.keyText then
     local keyAlpha = icon.keyText:GetAlpha()
     -- Low confidence should set keyText alpha to ~0.45
@@ -2966,65 +2966,65 @@ end)
 -- Rush, a lingering Opportunity proc) otherwise wins the priority walk and the test
 -- fails for a reason that has nothing to do with what it is testing.
 local function decisionsBaseline()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.buffs.degraded = false
-  OA.State.buffs.opportunity.up = false
-  OA.State.buffs.adrenalineRush.up = false
-  OA.State.buffs.rtb.stage = 2
-  OA.State.buffs.rtb.expires = 999
-  OA.State.energy = 100
-  OA.State.energyMax = 100
-  OA.State.comboPointsMax = 6
-  OA.State.enemyCount = 1
-  OA.db.aoeMode = false
-  OA.Assist.aoeDetected = false
+  Tuono.State.stealthed = false
+  Tuono.State.buffs.degraded = false
+  Tuono.State.buffs.opportunity.up = false
+  Tuono.State.buffs.adrenalineRush.up = false
+  Tuono.State.buffs.rtb.stage = 2
+  Tuono.State.buffs.rtb.expires = 999
+  Tuono.State.energy = 100
+  Tuono.State.energyMax = 100
+  Tuono.State.comboPointsMax = 6
+  Tuono.State.enemyCount = 1
+  Tuono.db.aoeMode = false
+  Tuono.Assist.aoeDetected = false
   -- Silence only abilities that actually HAVE a cooldown. Marking a zero-cooldown
   -- ability (Dispatch, Sinister Strike, Pistol Shot, Ambush) as not-ready describes a
   -- state the game cannot produce, and would make a test assert against fiction.
   for _, k in ipairs({"adrenalineRush", "bladeRush", "preparation", "betweenTheEyes",
                       "killingSpree", "rollTheBones", "keepItRolling", "bladeFlurry"}) do
-    OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+    Tuono.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
   end
   for _, k in ipairs({"dispatch", "sinisterStrike", "pistolShot", "ambush"}) do
-    OA.State.cooldowns[k] = { known = true, ready = true, remaining = 0 }
+    Tuono.State.cooldowns[k] = { known = true, ready = true, remaining = 0 }
   end
   -- Talent flags are global and earlier tests flip them to false; a filtered-out rule
   -- looks exactly like a rule that declined to fire, so reset them explicitly.
-  OA.State.knownSpells = OA.State.knownSpells or {}
-  for _, id in pairs(OA.SpellIDs) do
-    if type(id) == "number" then OA.State.knownSpells[id] = true end
+  Tuono.State.knownSpells = Tuono.State.knownSpells or {}
+  for _, id in pairs(Tuono.SpellIDs) do
+    if type(id) == "number" then Tuono.State.knownSpells[id] = true end
   end
-  OA.State.knownUnavailable = false
+  Tuono.State.knownUnavailable = false
 end
 
 
 -- TEST: CP Pooling at 5 CP when BtE is coming back up soon (within 1.5s)
 test("decisions: CP pooling — SS at 5 CP if BtE will be ready within ~1 GCD", function()
   decisionsBaseline()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.energy = 50  -- Enough for SS
-  OA.State.energyMax = 100
-  OA.State.comboPoints = 5
-  OA.State.comboPointsMax = 6
-  OA.State.buffs.rtb.stage = 3
-  OA.State.buffs.adrenalineRush.up = false
-  OA.State.cooldowns.betweenTheEyes.ready = false
-  OA.State.cooldowns.betweenTheEyes.remaining = 0.8  -- Coming back soon
-  OA.State.cooldowns.killingSpree.ready = false
-  OA.State.cooldowns.killingSpree.remaining = 100  -- Not coming back soon
-  OA.State.cooldowns.dispatch.ready = true
+  Tuono.State.stealthed = false
+  Tuono.State.energy = 50  -- Enough for SS
+  Tuono.State.energyMax = 100
+  Tuono.State.comboPoints = 5
+  Tuono.State.comboPointsMax = 6
+  Tuono.State.buffs.rtb.stage = 3
+  Tuono.State.buffs.adrenalineRush.up = false
+  Tuono.State.cooldowns.betweenTheEyes.ready = false
+  Tuono.State.cooldowns.betweenTheEyes.remaining = 0.8  -- Coming back soon
+  Tuono.State.cooldowns.killingSpree.ready = false
+  Tuono.State.cooldowns.killingSpree.remaining = 100  -- Not coming back soon
+  Tuono.State.cooldowns.dispatch.ready = true
 
-  local pred = OA.Rotation.Predict(OA.State, 2)
+  local pred = Tuono.Rotation.Predict(Tuono.State, 2)
   assert_true(pred ~= nil, "prediction returned")
   -- At 5 CP with BtE coming back in 0.8s, should recommend SS (pool) not Dispatch
   if #pred > 0 then
     local firstAbility = pred[1].spellID
     -- Should prefer SS for pooling when finisher is coming back up
-    assert_true(firstAbility == OA.SpellIDs.sinisterStrike or firstAbility == OA.SpellIDs.dispatch,
+    assert_true(firstAbility == Tuono.SpellIDs.sinisterStrike or firstAbility == Tuono.SpellIDs.dispatch,
       "first ability is SS (pooling) or Dispatch (fallback)")
   end
 end)
@@ -3032,83 +3032,83 @@ end)
 -- TEST: Dispatch at 5 CP when BOTH BtE and KS are on long cooldowns
 test("decisions: Dispatch fallback — cast at 6 CP when both 6-CP finishers unavailable", function()
   decisionsBaseline()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.energy = 50
-  OA.State.energyMax = 100
-  OA.State.comboPoints = 6
-  OA.State.comboPointsMax = 6
-  OA.State.buffs.rtb.stage = 2
-  OA.State.buffs.adrenalineRush.up = false
-  OA.State.cooldowns.betweenTheEyes.ready = false
-  OA.State.cooldowns.betweenTheEyes.remaining = 30  -- Long cooldown
-  OA.State.cooldowns.killingSpree.ready = false
-  OA.State.cooldowns.killingSpree.remaining = 120  -- Very long cooldown
+  Tuono.State.stealthed = false
+  Tuono.State.energy = 50
+  Tuono.State.energyMax = 100
+  Tuono.State.comboPoints = 6
+  Tuono.State.comboPointsMax = 6
+  Tuono.State.buffs.rtb.stage = 2
+  Tuono.State.buffs.adrenalineRush.up = false
+  Tuono.State.cooldowns.betweenTheEyes.ready = false
+  Tuono.State.cooldowns.betweenTheEyes.remaining = 30  -- Long cooldown
+  Tuono.State.cooldowns.killingSpree.ready = false
+  Tuono.State.cooldowns.killingSpree.remaining = 120  -- Very long cooldown
 
-  local pred = OA.Rotation.Predict(OA.State, 1)
+  local pred = Tuono.Rotation.Predict(Tuono.State, 1)
   assert_true(pred ~= nil, "prediction returned with both finishers down")
   if #pred > 0 then
     -- With both 6-CP finishers on cooldown, should recommend Dispatch at 6 CP
-    assert_eq(pred[1].spellID, OA.SpellIDs.dispatch, "recommends Dispatch when finishers unavailable")
+    assert_eq(pred[1].spellID, Tuono.SpellIDs.dispatch, "recommends Dispatch when finishers unavailable")
   end
 end)
 
 -- TEST: Preparation reset cooldown rule
 test("decisions: Preparation reset — fires when AR/BtE/BR down", function()
   decisionsBaseline()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.energy = 80
-  OA.State.energyMax = 100
-  OA.State.comboPoints = 2
-  OA.State.comboPointsMax = 6
-  OA.State.buffs.rtb.stage = 3
-  OA.State.buffs.adrenalineRush.up = false
-  OA.State.cooldowns.preparation.ready = true
-  OA.State.cooldowns.adrenalineRush.ready = false
-  OA.State.cooldowns.adrenalineRush.remaining = 60  -- AR down
-  OA.State.cooldowns.betweenTheEyes.ready = true
+  Tuono.State.stealthed = false
+  Tuono.State.energy = 80
+  Tuono.State.energyMax = 100
+  Tuono.State.comboPoints = 2
+  Tuono.State.comboPointsMax = 6
+  Tuono.State.buffs.rtb.stage = 3
+  Tuono.State.buffs.adrenalineRush.up = false
+  Tuono.State.cooldowns.preparation.ready = true
+  Tuono.State.cooldowns.adrenalineRush.ready = false
+  Tuono.State.cooldowns.adrenalineRush.remaining = 60  -- AR down
+  Tuono.State.cooldowns.betweenTheEyes.ready = true
   -- NOTE: Blade Rush is deliberately left on cooldown. Its rule outranks Preparation,
   -- so making it ready would (correctly) win the priority walk and this test would be
   -- asserting against the wrong decision.
 
-  local pred = OA.Rotation.Predict(OA.State, 1)
+  local pred = Tuono.Rotation.Predict(Tuono.State, 1)
   assert_true(pred ~= nil, "prediction returned with Prep up and AR down")
   if #pred > 0 then
     -- When AR is on cooldown and Prep is ready, should recommend Prep
-    assert_eq(pred[1].spellID, OA.SpellIDs.preparation, "recommends Preparation to reset AR")
+    assert_eq(pred[1].spellID, Tuono.SpellIDs.preparation, "recommends Preparation to reset AR")
   end
 end)
 
 -- TEST: Opportunity buff is cleared after virtual Pistol Shot
 test("decisions: Opportunity buff cleared after PS — no double-cast in simulation", function()
   decisionsBaseline()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.energy = 100
-  OA.State.energyMax = 100
-  OA.State.comboPoints = 0
-  OA.State.comboPointsMax = 6
-  OA.State.buffs.rtb.stage = 0
-  OA.State.buffs.adrenalineRush.up = false
-  OA.State.buffs.opportunity.up = true  -- Opportunity proc active
-  OA.State.cooldowns.adrenalineRush.ready = false
-  OA.State.cooldowns.adrenalineRush.remaining = 50
-  OA.State.cooldowns.betweenTheEyes.ready = false
-  OA.State.cooldowns.betweenTheEyes.remaining = 30
-  OA.State.cooldowns.killingSpree.ready = false
-  OA.State.cooldowns.killingSpree.remaining = 100
+  Tuono.State.stealthed = false
+  Tuono.State.energy = 100
+  Tuono.State.energyMax = 100
+  Tuono.State.comboPoints = 0
+  Tuono.State.comboPointsMax = 6
+  Tuono.State.buffs.rtb.stage = 0
+  Tuono.State.buffs.adrenalineRush.up = false
+  Tuono.State.buffs.opportunity.up = true  -- Opportunity proc active
+  Tuono.State.cooldowns.adrenalineRush.ready = false
+  Tuono.State.cooldowns.adrenalineRush.remaining = 50
+  Tuono.State.cooldowns.betweenTheEyes.ready = false
+  Tuono.State.cooldowns.betweenTheEyes.remaining = 30
+  Tuono.State.cooldowns.killingSpree.ready = false
+  Tuono.State.cooldowns.killingSpree.remaining = 100
 
-  local pred = OA.Rotation.Predict(OA.State, 4)
+  local pred = Tuono.Rotation.Predict(Tuono.State, 4)
   assert_true(pred ~= nil, "prediction returned with Opportunity up")
 
   -- Count how many Pistol Shots are in the prediction
   local psCount = 0
   for _, entry in ipairs(pred) do
-    if entry.spellID == OA.SpellIDs.pistolShot then
+    if entry.spellID == Tuono.SpellIDs.pistolShot then
       psCount = psCount + 1
     end
   end
@@ -3120,63 +3120,63 @@ end)
 -- TEST: Leveling build (only SS + Dispatch) yields sane sequence
 test("decisions: leveling build — SS + Dispatch loop at low level", function()
   decisionsBaseline()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.energy = 100
-  OA.State.energyMax = 100
-  OA.State.comboPoints = 0
-  OA.State.comboPointsMax = 6
-  OA.State.buffs.rtb.stage = 0
-  OA.State.buffs.adrenalineRush.up = false
-  OA.State.cooldowns.dispatch.ready = true
+  Tuono.State.stealthed = false
+  Tuono.State.energy = 100
+  Tuono.State.energyMax = 100
+  Tuono.State.comboPoints = 0
+  Tuono.State.comboPointsMax = 6
+  Tuono.State.buffs.rtb.stage = 0
+  Tuono.State.buffs.adrenalineRush.up = false
+  Tuono.State.cooldowns.dispatch.ready = true
 
   -- Simulate limited spell knowledge: SS and Dispatch only (no BtE, KS, AR, BR, RtB, KIR)
-  OA.State.knownSpells = {
-    [OA.SpellIDs.sinisterStrike] = true,
-    [OA.SpellIDs.dispatch] = true,
-    [OA.SpellIDs.betweenTheEyes] = false,  -- Not learned yet
-    [OA.SpellIDs.killingSpree] = false,
-    [OA.SpellIDs.adrenalineRush] = false,
-    [OA.SpellIDs.bladeRush] = false,
-    [OA.SpellIDs.rollTheBones] = false,
-    [OA.SpellIDs.keepItRolling] = false,
-    [OA.SpellIDs.preparation] = false,
-    [OA.SpellIDs.bladeFlurry] = false,
-    [OA.SpellIDs.ambush] = false
+  Tuono.State.knownSpells = {
+    [Tuono.SpellIDs.sinisterStrike] = true,
+    [Tuono.SpellIDs.dispatch] = true,
+    [Tuono.SpellIDs.betweenTheEyes] = false,  -- Not learned yet
+    [Tuono.SpellIDs.killingSpree] = false,
+    [Tuono.SpellIDs.adrenalineRush] = false,
+    [Tuono.SpellIDs.bladeRush] = false,
+    [Tuono.SpellIDs.rollTheBones] = false,
+    [Tuono.SpellIDs.keepItRolling] = false,
+    [Tuono.SpellIDs.preparation] = false,
+    [Tuono.SpellIDs.bladeFlurry] = false,
+    [Tuono.SpellIDs.ambush] = false
   }
 
   -- Start at 6 CP so Dispatch can fire (takes 6 SS to reach 6 CP)
-  OA.State.comboPoints = 6
-  local pred = OA.Rotation.Predict(OA.State, 1)
+  Tuono.State.comboPoints = 6
+  local pred = Tuono.Rotation.Predict(Tuono.State, 1)
   assert_true(pred ~= nil, "prediction returned for leveling build")
   assert_true(#pred > 0, "prediction is not empty for leveling build at 6 CP")
 
   -- At 6 CP with only SS and Dispatch learned, should recommend Dispatch (6+ CP rule)
-  assert_eq(pred[1].spellID, OA.SpellIDs.dispatch, "leveling sequence uses Dispatch at 6 CP")
+  assert_eq(pred[1].spellID, Tuono.SpellIDs.dispatch, "leveling sequence uses Dispatch at 6 CP")
 end)
 
 -- TEST: Dispatch at 6 CP when finishers available (should prefer finisher)
 test("decisions: Dispatch at 6 CP — only when both BtE/KS unavailable", function()
   decisionsBaseline()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.energy = 50
-  OA.State.energyMax = 100
-  OA.State.comboPoints = 6
-  OA.State.comboPointsMax = 6
-  OA.State.buffs.rtb.stage = 3
-  OA.State.buffs.adrenalineRush.up = false
-  OA.State.cooldowns.betweenTheEyes.ready = true  -- BtE is ready
-  OA.State.cooldowns.killingSpree.ready = false
-  OA.State.cooldowns.killingSpree.remaining = 100
+  Tuono.State.stealthed = false
+  Tuono.State.energy = 50
+  Tuono.State.energyMax = 100
+  Tuono.State.comboPoints = 6
+  Tuono.State.comboPointsMax = 6
+  Tuono.State.buffs.rtb.stage = 3
+  Tuono.State.buffs.adrenalineRush.up = false
+  Tuono.State.cooldowns.betweenTheEyes.ready = true  -- BtE is ready
+  Tuono.State.cooldowns.killingSpree.ready = false
+  Tuono.State.cooldowns.killingSpree.remaining = 100
 
-  local pred = OA.Rotation.Predict(OA.State, 1)
+  local pred = Tuono.Rotation.Predict(Tuono.State, 1)
   assert_true(pred ~= nil, "prediction returned with finisher ready")
   if #pred > 0 then
     -- Should prefer BtE over Dispatch when at 6 CP and BtE is ready
-    assert_eq(pred[1].spellID, OA.SpellIDs.betweenTheEyes, "prefers BtE over Dispatch at 6 CP")
+    assert_eq(pred[1].spellID, Tuono.SpellIDs.betweenTheEyes, "prefers BtE over Dispatch at 6 CP")
   end
 end)
 
@@ -3185,7 +3185,7 @@ local barBehaviorTests = loadfile("tests/bar_behavior.lua")
 if barBehaviorTests then
   local runTests = barBehaviorTests()
   if runTests and type(runTests) == "function" then
-    runTests(OA, stub, assert_eq, assert_true, assert_false, test)
+    runTests(Tuono, stub, assert_eq, assert_true, assert_false, test)
   end
 end
 
@@ -3195,43 +3195,43 @@ end
 -- expert-audit P0s cannot silently return. Each message names the in-game symptom.
 
 local function p0Baseline()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.buffs.degraded = false
-  OA.State.buffs.opportunity.up = false
-  OA.State.buffs.adrenalineRush.up = false
-  OA.State.buffs.rtb.stage = 2
-  OA.State.buffs.rtb.expires = 999
-  OA.State.energy, OA.State.energyMax = 100, 100
-  OA.State.comboPointsMax = 6
-  OA.State.enemyCount = 1
-  OA.db.aoeMode = false
-  OA.Assist.aoeDetected = false
-  OA.State.knownSpells = OA.State.knownSpells or {}
-  for _, id in pairs(OA.SpellIDs) do
-    if type(id) == "number" then OA.State.knownSpells[id] = true end
+  Tuono.State.stealthed = false
+  Tuono.State.buffs.degraded = false
+  Tuono.State.buffs.opportunity.up = false
+  Tuono.State.buffs.adrenalineRush.up = false
+  Tuono.State.buffs.rtb.stage = 2
+  Tuono.State.buffs.rtb.expires = 999
+  Tuono.State.energy, Tuono.State.energyMax = 100, 100
+  Tuono.State.comboPointsMax = 6
+  Tuono.State.enemyCount = 1
+  Tuono.db.aoeMode = false
+  Tuono.Assist.aoeDetected = false
+  Tuono.State.knownSpells = Tuono.State.knownSpells or {}
+  for _, id in pairs(Tuono.SpellIDs) do
+    if type(id) == "number" then Tuono.State.knownSpells[id] = true end
   end
-  OA.State.knownUnavailable = false
+  Tuono.State.knownUnavailable = false
   for _, k in ipairs({"adrenalineRush","bladeRush","preparation","betweenTheEyes",
                       "killingSpree","rollTheBones","keepItRolling","bladeFlurry"}) do
-    OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+    Tuono.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
   end
   for _, k in ipairs({"dispatch","sinisterStrike","pistolShot","ambush"}) do
-    OA.State.cooldowns[k] = { known = true, ready = true, remaining = 0 }
+    Tuono.State.cooldowns[k] = { known = true, ready = true, remaining = 0 }
   end
 end
 
 test("p0: stealth opener appears ONCE, not four times", function()
   p0Baseline()
   stub.state.stealthed = true  -- RefreshFast reads IsStealthed(), so drive the source
-  OA.State.stealthed = true
-  OA.State.comboPoints = 0
-  local pred = OA.Rotation.Predict(OA.State, 4)
+  Tuono.State.stealthed = true
+  Tuono.State.comboPoints = 0
+  local pred = Tuono.Rotation.Predict(Tuono.State, 4)
   assert_true(pred ~= nil and #pred > 1, "stealth prediction has multiple steps")
   local ambushCount = 0
   for _, step in ipairs(pred) do
-    if step.spellID == OA.SpellIDs.ambush then ambushCount = ambushCount + 1 end
+    if step.spellID == Tuono.SpellIDs.ambush then ambushCount = ambushCount + 1 end
   end
   assert_true(ambushCount <= 1,
     "bar would show Ambush " .. ambushCount .. "x - a one-press opener repeated across the bar")
@@ -3239,31 +3239,31 @@ end)
 
 test("p0: at max combo points the finisher is position 1, not buried behind cooldowns", function()
   p0Baseline()
-  OA.State.comboPoints = 6
-  OA.State.cooldowns.betweenTheEyes = { known = true, ready = true, remaining = 0 }
-  local pred = OA.Rotation.Predict(OA.State, 4)
+  Tuono.State.comboPoints = 6
+  Tuono.State.cooldowns.betweenTheEyes = { known = true, ready = true, remaining = 0 }
+  local pred = Tuono.Rotation.Predict(Tuono.State, 4)
   assert_true(pred ~= nil and #pred > 0, "prediction produced at max CP")
   local first = pred[1].spellID
-  assert_true(first == OA.SpellIDs.betweenTheEyes or first == OA.SpellIDs.dispatch,
+  assert_true(first == Tuono.SpellIDs.betweenTheEyes or first == Tuono.SpellIDs.dispatch,
     "bar would stall at max CP without spending (position 1 was " .. tostring(first) .. ")")
 end)
 
 test("p0: levelling build (SS + Dispatch) spends at 6 CP", function()
   p0Baseline()
-  for _, id in pairs(OA.SpellIDs) do
-    if type(id) == "number" then OA.State.knownSpells[id] = false end
+  for _, id in pairs(Tuono.SpellIDs) do
+    if type(id) == "number" then Tuono.State.knownSpells[id] = false end
   end
-  OA.State.knownSpells[OA.SpellIDs.sinisterStrike] = true
-  OA.State.knownSpells[OA.SpellIDs.dispatch] = true
-  OA.State.comboPoints = 6
-  local r = OA.Engine.Evaluate()
+  Tuono.State.knownSpells[Tuono.SpellIDs.sinisterStrike] = true
+  Tuono.State.knownSpells[Tuono.SpellIDs.dispatch] = true
+  Tuono.State.comboPoints = 6
+  local r = Tuono.Engine.Evaluate()
   assert_true(#r.queue > 0, "levelling queue is non-empty")
-  assert_eq(r.queue[1].spellID, OA.SpellIDs.dispatch,
+  assert_eq(r.queue[1].spellID, Tuono.SpellIDs.dispatch,
     "levelling bar told the player to spend Dispatch at 6 CP")
 end)
 
 test("p0: Killing Spree is not modelled as a combo-point spender", function()
-  local ks = OA.Rotation.ABILITIES and OA.Rotation.ABILITIES[OA.SpellIDs.killingSpree]
+  local ks = Tuono.Rotation.ABILITIES and Tuono.Rotation.ABILITIES[Tuono.SpellIDs.killingSpree]
   assert_true(ks ~= nil, "Killing Spree present in ability table")
   local spend = ks.cpSpend
   assert_true(spend == 0 or spend == false or spend == nil,
@@ -3273,9 +3273,9 @@ end)
 -- === highlight tests ===
 
 test("highlight: module initializes without error", function()
-  assert_true(OA.Highlight ~= nil, "Highlight module exists")
-  assert_true(OA.Highlight.Init ~= nil, "Highlight.Init exists")
-  assert_true(OA.Highlight.Update ~= nil, "Highlight.Update exists")
+  assert_true(Tuono.Highlight ~= nil, "Highlight module exists")
+  assert_true(Tuono.Highlight.Init ~= nil, "Highlight.Init exists")
+  assert_true(Tuono.Highlight.Update ~= nil, "Highlight.Update exists")
 end)
 
 test("highlight: stub action button frames in globals", function()
@@ -3305,12 +3305,12 @@ test("highlight: stub action button frames in globals", function()
 end)
 
 test("highlight: resolves spellID to correct action button", function()
-  stub.FireEvent("ADDON_LOADED", "OutlawAssist")
+  stub.FireEvent("ADDON_LOADED", "Tuono")
   stub.FireEvent("PLAYER_LOGIN")
 
   -- Ensure highlight is enabled
-  OA.db.highlight = OA.db.highlight or {}
-  OA.db.highlight.enabled = true
+  Tuono.db.highlight = Tuono.db.highlight or {}
+  Tuono.db.highlight.enabled = true
 
   -- Mock GetActionInfo to return a spell in slot 2
   local testSpellID = 12345
@@ -3328,7 +3328,7 @@ test("highlight: resolves spellID to correct action button", function()
       { spellID = testSpellID, kind = "rotation", confidence = "high" }
     }
   }
-  OA.Highlight.Update(result)
+  Tuono.Highlight.Update(result)
 
   -- Verify the button frame was targeted (we'd check the glow state)
   -- For now, just verify no error occurred
@@ -3338,8 +3338,8 @@ test("highlight: resolves spellID to correct action button", function()
 end)
 
 test("highlight: exactly one button glows at a time", function()
-  OA.db.highlight = OA.db.highlight or {}
-  OA.db.highlight.enabled = true
+  Tuono.db.highlight = Tuono.db.highlight or {}
+  Tuono.db.highlight.enabled = true
 
   local spellID1 = 11111
   local spellID2 = 22222
@@ -3350,7 +3350,7 @@ test("highlight: exactly one button glows at a time", function()
       { spellID = spellID1, kind = "rotation", confidence = "high" }
     }
   }
-  OA.Highlight.Update(result1)
+  Tuono.Highlight.Update(result1)
 
   -- Second recommendation (should clear first)
   local result2 = {
@@ -3358,30 +3358,30 @@ test("highlight: exactly one button glows at a time", function()
       { spellID = spellID2, kind = "rotation", confidence = "high" }
     }
   }
-  OA.Highlight.Update(result2)
+  Tuono.Highlight.Update(result2)
 
   -- Verify no error and cache was updated
   assert_true(true, "Updated twice without error")
 end)
 
 test("highlight: clears on disabled toggle", function()
-  OA.db.highlight.enabled = true
+  Tuono.db.highlight.enabled = true
   local result = {
     queue = {
       { spellID = 33333, kind = "rotation", confidence = "high" }
     }
   }
-  OA.Highlight.Update(result)
+  Tuono.Highlight.Update(result)
 
   -- Disable and update
-  OA.db.highlight.enabled = false
-  OA.Highlight.Update(result)
+  Tuono.db.highlight.enabled = false
+  Tuono.Highlight.Update(result)
 
   assert_true(true, "Toggle disable completed without error")
 end)
 
 test("highlight: handles missing spell on action bar", function()
-  OA.db.highlight.enabled = true
+  Tuono.db.highlight.enabled = true
 
   -- Mock GetActionInfo to return nothing
   local oldGetActionInfo = _G.GetActionInfo
@@ -3396,22 +3396,22 @@ test("highlight: handles missing spell on action bar", function()
   }
 
   -- Should not error even if spell is not on any action bar
-  OA.Highlight.Update(result)
+  Tuono.Highlight.Update(result)
   assert_true(true, "Handled missing action bar spell without error")
 
   _G.GetActionInfo = oldGetActionInfo
 end)
 
 test("highlight: config defaults include highlight settings", function()
-  assert_true(OA.db.highlight ~= nil, "highlight key in db")
-  assert_true(OA.db.highlight.enabled ~= nil, "highlight.enabled exists")
-  assert_true(OA.db.highlight.combatOnly ~= nil, "highlight.combatOnly exists")
+  assert_true(Tuono.db.highlight ~= nil, "highlight key in db")
+  assert_true(Tuono.db.highlight.enabled ~= nil, "highlight.enabled exists")
+  assert_true(Tuono.db.highlight.combatOnly ~= nil, "highlight.combatOnly exists")
 end)
 
 test("highlight: debug output function exists", function()
-  assert_true(OA.Highlight.AppendDebugOutput ~= nil, "AppendDebugOutput function exists")
+  assert_true(Tuono.Highlight.AppendDebugOutput ~= nil, "AppendDebugOutput function exists")
   -- Call it without error
-  OA.Highlight.AppendDebugOutput()
+  Tuono.Highlight.AppendDebugOutput()
   assert_true(true, "AppendDebugOutput executed without error")
 end)
 
@@ -3419,20 +3419,20 @@ end)
 test("pipeline: a Display error does not disable Highlight (stage isolation)", function()
   -- Regression: Render and Highlight.Update shared one pcall, so a bad SetText in
   -- Render aborted the tick and the action-bar glow silently never ran.
-  local realRender = OA.Display.Render
+  local realRender = Tuono.Display.Render
   local highlightRan = false
-  local realHL = OA.Highlight and OA.Highlight.Update
-  OA.Display.Render = function() error("simulated render failure") end
-  if OA.Highlight then
-    OA.Highlight.Update = function() highlightRan = true end
+  local realHL = Tuono.Highlight and Tuono.Highlight.Update
+  Tuono.Display.Render = function() error("simulated render failure") end
+  if Tuono.Highlight then
+    Tuono.Highlight.Update = function() highlightRan = true end
   end
 
-  for _, h in ipairs(OA.updateHandlers or {}) do
-    OA.safe(h.fn)
+  for _, h in ipairs(Tuono.updateHandlers or {}) do
+    Tuono.safe(h.fn)
   end
 
-  OA.Display.Render = realRender
-  if OA.Highlight then OA.Highlight.Update = realHL end
+  Tuono.Display.Render = realRender
+  if Tuono.Highlight then Tuono.Highlight.Update = realHL end
   assert_true(highlightRan,
     "Highlight did not run after a Display error - one broken stage disables the rest")
 end)
@@ -3440,13 +3440,13 @@ end)
 test("keybind cache miss returns nil, never the sentinel table", function()
   -- Regression: `(cached == MISS) and nil or cached` returns the sentinel in Lua,
   -- which reached SetText and threw "bad argument #1 to SetText".
-  if OA.Display and OA.Display.GetKeybindTextForTest then
-    local v = OA.Display.GetKeybindTextForTest(999999)
+  if Tuono.Display and Tuono.Display.GetKeybindTextForTest then
+    local v = Tuono.Display.GetKeybindTextForTest(999999)
     assert_true(v == nil or type(v) == "string",
       "keybind lookup returned a " .. type(v) .. " - SetText would throw")
   else
     -- fall back to exercising it through a render with an unbound spell
-    local ok = pcall(OA.Display.Render, { queue = { { spellID = 999999, kind = "rotation",
+    local ok = pcall(Tuono.Display.Render, { queue = { { spellID = 999999, kind = "rotation",
       source = "test", confidence = "high", isSequence = true } }, advisories = {} })
     assert_true(ok, "render threw on an unbound spell (sentinel leaked into SetText)")
   end
@@ -3457,12 +3457,12 @@ test("stealth clears when IsStealthed() goes false (Ambush must not pin forever)
   -- Regression: stealth was derived from the aura scan, which goes blind in combat, so
   -- the flag never cleared and Ambush stayed pinned at position 1 permanently.
   stub.state.stealthed = true
-  OA.State.RefreshFast()
-  assert_true(OA.State.stealthed, "stealth detected while stealthed")
+  Tuono.State.RefreshFast()
+  assert_true(Tuono.State.stealthed, "stealth detected while stealthed")
 
   stub.state.stealthed = false
-  OA.State.RefreshFast()
-  assert_false(OA.State.stealthed,
+  Tuono.State.RefreshFast()
+  assert_false(Tuono.State.stealthed,
     "stealth stayed true after leaving stealth - the opener would pin to the bar forever")
 end)
 
@@ -3470,14 +3470,14 @@ end)
 test("a failed cast forces an immediate re-evaluate (out of range recovery)", function()
   -- Regression: with no UNIT_SPELLCAST_FAILED handler an out-of-range cast changed
   -- nothing, so the bar kept glowing the same unusable button indefinitely.
-  local handlers = OA.eventHandlers and OA.eventHandlers["UNIT_SPELLCAST_FAILED"]
+  local handlers = Tuono.eventHandlers and Tuono.eventHandlers["UNIT_SPELLCAST_FAILED"]
   assert_true(handlers ~= nil and #handlers > 0,
     "UNIT_SPELLCAST_FAILED is not registered - a failed cast would never refresh the bar")
   local ran = false
-  local realRequest = OA.RequestImmediateUpdate
-  OA.RequestImmediateUpdate = function() ran = true end
+  local realRequest = Tuono.RequestImmediateUpdate
+  Tuono.RequestImmediateUpdate = function() ran = true end
   for _, fn in ipairs(handlers) do fn("UNIT_SPELLCAST_FAILED", "player") end
-  OA.RequestImmediateUpdate = realRequest
+  Tuono.RequestImmediateUpdate = realRequest
   assert_true(ran, "failed cast did not request an immediate update")
 end)
 
@@ -3488,43 +3488,43 @@ end)
 -- The stub hardcoded 6, so 166 tests never saw it.
 test("bar is never empty at max combo points, for any comboPointsMax 4..7", function()
   for _, mx in ipairs({4, 5, 6, 7}) do
-    OA.State.inCombat = true
+    Tuono.State.inCombat = true
     stub.state.stealthed = false
-    OA.State.stealthed = false
-    OA.State.buffs.degraded = false
-    OA.State.buffs.opportunity.up = false
-    OA.State.buffs.opportunity.stacks = 0
-    OA.State.buffs.adrenalineRush.up = false
-    OA.State.buffs.rtb.stage = 2
-    OA.State.energy, OA.State.energyMax = 100, 100
-    OA.State.comboPointsMax = mx
-    OA.State.comboPoints = mx
-    OA.State.knownSpells = OA.State.knownSpells or {}
-    for _, id in pairs(OA.SpellIDs) do
-      if type(id) == "number" then OA.State.knownSpells[id] = true end
+    Tuono.State.stealthed = false
+    Tuono.State.buffs.degraded = false
+    Tuono.State.buffs.opportunity.up = false
+    Tuono.State.buffs.opportunity.stacks = 0
+    Tuono.State.buffs.adrenalineRush.up = false
+    Tuono.State.buffs.rtb.stage = 2
+    Tuono.State.energy, Tuono.State.energyMax = 100, 100
+    Tuono.State.comboPointsMax = mx
+    Tuono.State.comboPoints = mx
+    Tuono.State.knownSpells = Tuono.State.knownSpells or {}
+    for _, id in pairs(Tuono.SpellIDs) do
+      if type(id) == "number" then Tuono.State.knownSpells[id] = true end
     end
-    OA.State.knownUnavailable = false
+    Tuono.State.knownUnavailable = false
     for _, k in ipairs({"adrenalineRush","bladeRush","preparation","killingSpree",
                         "rollTheBones","keepItRolling","bladeFlurry"}) do
-      OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+      Tuono.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
     end
     for _, k in ipairs({"betweenTheEyes","dispatch","sinisterStrike","pistolShot","ambush"}) do
-      OA.State.cooldowns[k] = { known = true, ready = true, remaining = 0 }
+      Tuono.State.cooldowns[k] = { known = true, ready = true, remaining = 0 }
     end
 
-    local pred = OA.Rotation.Predict(OA.State, 4)
+    local pred = Tuono.Rotation.Predict(Tuono.State, 4)
     assert_true(pred ~= nil and #pred > 0,
       "sequence EMPTY at max CP with comboPointsMax=" .. mx ..
       " - the bar would freeze on Blizzard's static pick with no glow")
     local spendsCP = false
     for _, step in ipairs(pred) do
-      local ab = OA.Rotation.ABILITIES and OA.Rotation.ABILITIES[step.spellID]
+      local ab = Tuono.Rotation.ABILITIES and Tuono.Rotation.ABILITIES[step.spellID]
       if ab and ab.cpSpend and ab.cpSpend ~= 0 and ab.cpSpend ~= false then spendsCP = true end
     end
     assert_true(spendsCP,
       "no finisher reachable at max CP with comboPointsMax=" .. mx .. " - combo points would cap forever")
   end
-  OA.State.comboPointsMax = 5
+  Tuono.State.comboPointsMax = 5
 end)
 
 print("")
@@ -3534,345 +3534,345 @@ print(passCount .. "/" .. testCount .. " tests passed")
 
 -- TEST: Rule 1 fires at stage 0
 test("spec-priority: rule 1 (RtB) fires at stage 0", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.buffs.rtb.stage = 0
-  OA.State.energy = 100
-  OA.State.comboPoints = 0
-  OA.State.knownSpells[OA.SpellIDs.rollTheBones] = true
-  OA.State.cooldowns.rollTheBones = { known = true, ready = true, remaining = 0 }
-  OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+  Tuono.State.stealthed = false
+  Tuono.State.buffs.rtb.stage = 0
+  Tuono.State.energy = 100
+  Tuono.State.comboPoints = 0
+  Tuono.State.knownSpells[Tuono.SpellIDs.rollTheBones] = true
+  Tuono.State.cooldowns.rollTheBones = { known = true, ready = true, remaining = 0 }
+  Tuono.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
   for _, k in ipairs({"adrenalineRush","bladeRush","preparation","betweenTheEyes",
                       "killingSpree","keepItRolling","bladeFlurry","ambush","dispatch","pistolShot"}) do
-    OA.State.knownSpells[OA.SpellIDs[k]] = false
-    OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+    Tuono.State.knownSpells[Tuono.SpellIDs[k]] = false
+    Tuono.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
   end
-  local p = OA.Rotation.Predict(OA.State, 1)
+  local p = Tuono.Rotation.Predict(Tuono.State, 1)
   assert_true(#p > 0, "prediction returned")
-  assert_eq(p[1].spellID, OA.SpellIDs.rollTheBones, "RtB fires at stage 0")
+  assert_eq(p[1].spellID, Tuono.SpellIDs.rollTheBones, "RtB fires at stage 0")
 end)
 
 -- TEST: Rule 2 (KIR) fires at stage 2
 test("spec-priority: rule 2 (KIR) fires at stage 2", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.buffs.rtb.stage = 2
-  OA.State.energy = 100
-  OA.State.comboPoints = 0
-  OA.State.knownSpells[OA.SpellIDs.keepItRolling] = true
-  OA.State.knownSpells[OA.SpellIDs.rollTheBones] = true
-  OA.State.cooldowns.keepItRolling = { known = true, ready = true, remaining = 0 }
-  OA.State.cooldowns.rollTheBones = { known = true, ready = false, remaining = 30 }
-  OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+  Tuono.State.stealthed = false
+  Tuono.State.buffs.rtb.stage = 2
+  Tuono.State.energy = 100
+  Tuono.State.comboPoints = 0
+  Tuono.State.knownSpells[Tuono.SpellIDs.keepItRolling] = true
+  Tuono.State.knownSpells[Tuono.SpellIDs.rollTheBones] = true
+  Tuono.State.cooldowns.keepItRolling = { known = true, ready = true, remaining = 0 }
+  Tuono.State.cooldowns.rollTheBones = { known = true, ready = false, remaining = 30 }
+  Tuono.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
   for _, k in ipairs({"adrenalineRush","bladeRush","preparation","betweenTheEyes",
                       "killingSpree","bladeFlurry","ambush","dispatch","pistolShot"}) do
-    OA.State.knownSpells[OA.SpellIDs[k]] = false
-    OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+    Tuono.State.knownSpells[Tuono.SpellIDs[k]] = false
+    Tuono.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
   end
-  local p = OA.Rotation.Predict(OA.State, 1)
+  local p = Tuono.Rotation.Predict(Tuono.State, 1)
   assert_true(#p > 0, "prediction returned")
-  assert_eq(p[1].spellID, OA.SpellIDs.keepItRolling, "KIR fires at stage 2")
+  assert_eq(p[1].spellID, Tuono.SpellIDs.keepItRolling, "KIR fires at stage 2")
 end)
 
 -- TEST: Rule 3 (AR) fires at low CP (<=2)
 test("spec-priority: rule 3 (AR) fires at low CP", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.buffs.rtb.stage = 0
-  OA.State.energy = 100
-  OA.State.comboPoints = 2
-  OA.State.knownSpells[OA.SpellIDs.adrenalineRush] = true
-  OA.State.knownSpells[OA.SpellIDs.sinisterStrike] = true
-  OA.State.cooldowns.adrenalineRush = { known = true, ready = true, remaining = 0 }
-  OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+  Tuono.State.stealthed = false
+  Tuono.State.buffs.rtb.stage = 0
+  Tuono.State.energy = 100
+  Tuono.State.comboPoints = 2
+  Tuono.State.knownSpells[Tuono.SpellIDs.adrenalineRush] = true
+  Tuono.State.knownSpells[Tuono.SpellIDs.sinisterStrike] = true
+  Tuono.State.cooldowns.adrenalineRush = { known = true, ready = true, remaining = 0 }
+  Tuono.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
   for _, k in ipairs({"bladeRush","preparation","betweenTheEyes","killingSpree",
                       "rollTheBones","keepItRolling","bladeFlurry","ambush","dispatch","pistolShot"}) do
-    OA.State.knownSpells[OA.SpellIDs[k]] = false
-    OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+    Tuono.State.knownSpells[Tuono.SpellIDs[k]] = false
+    Tuono.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
   end
-  local p = OA.Rotation.Predict(OA.State, 1)
+  local p = Tuono.Rotation.Predict(Tuono.State, 1)
   assert_true(#p > 0, "prediction returned")
-  assert_eq(p[1].spellID, OA.SpellIDs.adrenalineRush, "AR fires at low CP")
+  assert_eq(p[1].spellID, Tuono.SpellIDs.adrenalineRush, "AR fires at low CP")
 end)
 
 -- TEST: Rule 4 (Blade Rush) fires on cooldown
 test("spec-priority: rule 4 (Blade Rush) fires on cooldown", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.buffs.rtb.stage = 0
-  OA.State.energy = 100
-  OA.State.comboPoints = 4
-  OA.State.knownSpells[OA.SpellIDs.bladeRush] = true
-  OA.State.knownSpells[OA.SpellIDs.sinisterStrike] = true
-  OA.State.cooldowns.bladeRush = { known = true, ready = true, remaining = 0 }
-  OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+  Tuono.State.stealthed = false
+  Tuono.State.buffs.rtb.stage = 0
+  Tuono.State.energy = 100
+  Tuono.State.comboPoints = 4
+  Tuono.State.knownSpells[Tuono.SpellIDs.bladeRush] = true
+  Tuono.State.knownSpells[Tuono.SpellIDs.sinisterStrike] = true
+  Tuono.State.cooldowns.bladeRush = { known = true, ready = true, remaining = 0 }
+  Tuono.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
   for _, k in ipairs({"adrenalineRush","preparation","betweenTheEyes","killingSpree",
                       "rollTheBones","keepItRolling","bladeFlurry","ambush","dispatch","pistolShot"}) do
-    OA.State.knownSpells[OA.SpellIDs[k]] = false
-    OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+    Tuono.State.knownSpells[Tuono.SpellIDs[k]] = false
+    Tuono.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
   end
-  local p = OA.Rotation.Predict(OA.State, 1)
+  local p = Tuono.Rotation.Predict(Tuono.State, 1)
   assert_true(#p > 0, "prediction returned")
-  assert_eq(p[1].spellID, OA.SpellIDs.bladeRush, "Blade Rush fires on cooldown")
+  assert_eq(p[1].spellID, Tuono.SpellIDs.bladeRush, "Blade Rush fires on cooldown")
 end)
 
 -- TEST: Rule 5 (BtE) fires at 6+ CP
 test("spec-priority: rule 5 (BtE) fires at 6+ CP", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.buffs.rtb.stage = 0
-  OA.State.energy = 100
-  OA.State.comboPoints = 6
-  OA.State.knownSpells[OA.SpellIDs.betweenTheEyes] = true
-  OA.State.knownSpells[OA.SpellIDs.sinisterStrike] = true
-  OA.State.cooldowns.betweenTheEyes = { known = true, ready = true, remaining = 0 }
-  OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+  Tuono.State.stealthed = false
+  Tuono.State.buffs.rtb.stage = 0
+  Tuono.State.energy = 100
+  Tuono.State.comboPoints = 6
+  Tuono.State.knownSpells[Tuono.SpellIDs.betweenTheEyes] = true
+  Tuono.State.knownSpells[Tuono.SpellIDs.sinisterStrike] = true
+  Tuono.State.cooldowns.betweenTheEyes = { known = true, ready = true, remaining = 0 }
+  Tuono.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
   for _, k in ipairs({"adrenalineRush","bladeRush","preparation","killingSpree",
                       "rollTheBones","keepItRolling","bladeFlurry","ambush","dispatch","pistolShot"}) do
-    OA.State.knownSpells[OA.SpellIDs[k]] = false
-    OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+    Tuono.State.knownSpells[Tuono.SpellIDs[k]] = false
+    Tuono.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
   end
-  local p = OA.Rotation.Predict(OA.State, 1)
+  local p = Tuono.Rotation.Predict(Tuono.State, 1)
   assert_true(#p > 0, "prediction returned")
-  assert_eq(p[1].spellID, OA.SpellIDs.betweenTheEyes, "BtE fires at 6+ CP")
+  assert_eq(p[1].spellID, Tuono.SpellIDs.betweenTheEyes, "BtE fires at 6+ CP")
 end)
 
 -- TEST: Rule 6 (Preparation) fires when reset targets are down
 test("spec-priority: rule 6 (Preparation) fires when AR down", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.buffs.rtb.stage = 0
-  OA.State.energy = 100
-  OA.State.comboPoints = 0
-  OA.State.knownSpells[OA.SpellIDs.preparation] = true
-  OA.State.knownSpells[OA.SpellIDs.sinisterStrike] = true
-  OA.State.cooldowns.preparation = { known = true, ready = true, remaining = 0 }
-  OA.State.cooldowns.adrenalineRush = { known = true, ready = false, remaining = 20 }
-  OA.State.cooldowns.bladeRush = { known = true, ready = false, remaining = 20 }
-  OA.State.cooldowns.betweenTheEyes = { known = true, ready = false, remaining = 20 }
-  OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+  Tuono.State.stealthed = false
+  Tuono.State.buffs.rtb.stage = 0
+  Tuono.State.energy = 100
+  Tuono.State.comboPoints = 0
+  Tuono.State.knownSpells[Tuono.SpellIDs.preparation] = true
+  Tuono.State.knownSpells[Tuono.SpellIDs.sinisterStrike] = true
+  Tuono.State.cooldowns.preparation = { known = true, ready = true, remaining = 0 }
+  Tuono.State.cooldowns.adrenalineRush = { known = true, ready = false, remaining = 20 }
+  Tuono.State.cooldowns.bladeRush = { known = true, ready = false, remaining = 20 }
+  Tuono.State.cooldowns.betweenTheEyes = { known = true, ready = false, remaining = 20 }
+  Tuono.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
   for _, k in ipairs({"adrenalineRush","bladeRush","betweenTheEyes","killingSpree",
                       "rollTheBones","keepItRolling","bladeFlurry","ambush","dispatch","pistolShot"}) do
-    OA.State.knownSpells[OA.SpellIDs[k]] = false
+    Tuono.State.knownSpells[Tuono.SpellIDs[k]] = false
   end
-  local p = OA.Rotation.Predict(OA.State, 1)
+  local p = Tuono.Rotation.Predict(Tuono.State, 1)
   assert_true(#p > 0, "prediction returned")
-  assert_eq(p[1].spellID, OA.SpellIDs.preparation, "Preparation fires when targets down")
+  assert_eq(p[1].spellID, Tuono.SpellIDs.preparation, "Preparation fires when targets down")
 end)
 
 -- TEST: Rule 7 (Killing Spree) fires at 6+ CP
 test("spec-priority: rule 7 (Killing Spree) fires at 6+ CP", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.buffs.rtb.stage = 0
-  OA.State.energy = 100
-  OA.State.comboPoints = 6
-  OA.State.knownSpells[OA.SpellIDs.killingSpree] = true
-  OA.State.knownSpells[OA.SpellIDs.sinisterStrike] = true
-  OA.State.cooldowns.killingSpree = { known = true, ready = true, remaining = 0 }
-  OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
-  OA.State.cooldowns.betweenTheEyes = { known = true, ready = false, remaining = 20 }
+  Tuono.State.stealthed = false
+  Tuono.State.buffs.rtb.stage = 0
+  Tuono.State.energy = 100
+  Tuono.State.comboPoints = 6
+  Tuono.State.knownSpells[Tuono.SpellIDs.killingSpree] = true
+  Tuono.State.knownSpells[Tuono.SpellIDs.sinisterStrike] = true
+  Tuono.State.cooldowns.killingSpree = { known = true, ready = true, remaining = 0 }
+  Tuono.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+  Tuono.State.cooldowns.betweenTheEyes = { known = true, ready = false, remaining = 20 }
   for _, k in ipairs({"adrenalineRush","bladeRush","preparation","rollTheBones",
                       "keepItRolling","bladeFlurry","ambush","dispatch","pistolShot"}) do
-    OA.State.knownSpells[OA.SpellIDs[k]] = false
-    OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+    Tuono.State.knownSpells[Tuono.SpellIDs[k]] = false
+    Tuono.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
   end
-  local p = OA.Rotation.Predict(OA.State, 1)
+  local p = Tuono.Rotation.Predict(Tuono.State, 1)
   assert_true(#p > 0, "prediction returned")
-  assert_eq(p[1].spellID, OA.SpellIDs.killingSpree, "Killing Spree fires at 6+ CP")
+  assert_eq(p[1].spellID, Tuono.SpellIDs.killingSpree, "Killing Spree fires at 6+ CP")
 end)
 
 -- TEST: Rule 8 (Dispatch) fires at 6+ CP when finishers unavailable
 test("spec-priority: rule 8 (Dispatch) fires at 6+ CP finisher unavailable", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.buffs.rtb.stage = 0
-  OA.State.energy = 100
-  OA.State.comboPoints = 6
-  OA.State.knownSpells[OA.SpellIDs.dispatch] = true
-  OA.State.knownSpells[OA.SpellIDs.sinisterStrike] = true
-  OA.State.cooldowns.dispatch = { known = true, ready = true, remaining = 0 }
-  OA.State.cooldowns.betweenTheEyes = { known = true, ready = false, remaining = 20 }
-  OA.State.cooldowns.killingSpree = { known = true, ready = false, remaining = 20 }
-  OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+  Tuono.State.stealthed = false
+  Tuono.State.buffs.rtb.stage = 0
+  Tuono.State.energy = 100
+  Tuono.State.comboPoints = 6
+  Tuono.State.knownSpells[Tuono.SpellIDs.dispatch] = true
+  Tuono.State.knownSpells[Tuono.SpellIDs.sinisterStrike] = true
+  Tuono.State.cooldowns.dispatch = { known = true, ready = true, remaining = 0 }
+  Tuono.State.cooldowns.betweenTheEyes = { known = true, ready = false, remaining = 20 }
+  Tuono.State.cooldowns.killingSpree = { known = true, ready = false, remaining = 20 }
+  Tuono.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
   for _, k in ipairs({"adrenalineRush","bladeRush","preparation","rollTheBones",
                       "keepItRolling","bladeFlurry","ambush","pistolShot"}) do
-    OA.State.knownSpells[OA.SpellIDs[k]] = false
-    OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+    Tuono.State.knownSpells[Tuono.SpellIDs[k]] = false
+    Tuono.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
   end
-  local p = OA.Rotation.Predict(OA.State, 1)
+  local p = Tuono.Rotation.Predict(Tuono.State, 1)
   assert_true(#p > 0, "prediction returned")
-  assert_eq(p[1].spellID, OA.SpellIDs.dispatch, "Dispatch fires at 6+ CP when finishers unavailable")
+  assert_eq(p[1].spellID, Tuono.SpellIDs.dispatch, "Dispatch fires at 6+ CP when finishers unavailable")
 end)
 
 -- TEST: Rule 9 (Pistol Shot) fires with 6+ Opportunity stacks at any CP
 test("spec-priority: rule 9 (PS) fires with 6+ stacks at any CP", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.buffs.rtb.stage = 0
-  OA.State.buffs.opportunity.up = true
-  OA.State.buffs.opportunity.stacks = 6
-  OA.State.energy = 100
-  OA.State.comboPoints = 3
-  OA.State.knownSpells[OA.SpellIDs.pistolShot] = true
-  OA.State.knownSpells[OA.SpellIDs.sinisterStrike] = true
-  OA.State.cooldowns.pistolShot = { known = true, ready = true, remaining = 0 }
-  OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+  Tuono.State.stealthed = false
+  Tuono.State.buffs.rtb.stage = 0
+  Tuono.State.buffs.opportunity.up = true
+  Tuono.State.buffs.opportunity.stacks = 6
+  Tuono.State.energy = 100
+  Tuono.State.comboPoints = 3
+  Tuono.State.knownSpells[Tuono.SpellIDs.pistolShot] = true
+  Tuono.State.knownSpells[Tuono.SpellIDs.sinisterStrike] = true
+  Tuono.State.cooldowns.pistolShot = { known = true, ready = true, remaining = 0 }
+  Tuono.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
   for _, k in ipairs({"adrenalineRush","bladeRush","preparation","betweenTheEyes","killingSpree",
                       "rollTheBones","keepItRolling","bladeFlurry","ambush","dispatch"}) do
-    OA.State.knownSpells[OA.SpellIDs[k]] = false
-    OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+    Tuono.State.knownSpells[Tuono.SpellIDs[k]] = false
+    Tuono.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
   end
-  local p = OA.Rotation.Predict(OA.State, 1)
+  local p = Tuono.Rotation.Predict(Tuono.State, 1)
   assert_true(#p > 0, "prediction returned")
-  assert_eq(p[1].spellID, OA.SpellIDs.pistolShot, "PS fires with 6+ stacks")
+  assert_eq(p[1].spellID, Tuono.SpellIDs.pistolShot, "PS fires with 6+ stacks")
 end)
 
 -- TEST: Rule 9 (Pistol Shot) fires with 3-5 stacks only at 1-3 CP
 test("spec-priority: rule 9 (PS) fires with 3-5 stacks only at 1-3 CP", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.buffs.rtb.stage = 0
-  OA.State.buffs.opportunity.up = true
-  OA.State.buffs.opportunity.stacks = 3
-  OA.State.energy = 100
-  OA.State.comboPoints = 2
-  OA.State.knownSpells[OA.SpellIDs.pistolShot] = true
-  OA.State.knownSpells[OA.SpellIDs.sinisterStrike] = true
-  OA.State.cooldowns.pistolShot = { known = true, ready = true, remaining = 0 }
-  OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+  Tuono.State.stealthed = false
+  Tuono.State.buffs.rtb.stage = 0
+  Tuono.State.buffs.opportunity.up = true
+  Tuono.State.buffs.opportunity.stacks = 3
+  Tuono.State.energy = 100
+  Tuono.State.comboPoints = 2
+  Tuono.State.knownSpells[Tuono.SpellIDs.pistolShot] = true
+  Tuono.State.knownSpells[Tuono.SpellIDs.sinisterStrike] = true
+  Tuono.State.cooldowns.pistolShot = { known = true, ready = true, remaining = 0 }
+  Tuono.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
   for _, k in ipairs({"adrenalineRush","bladeRush","preparation","betweenTheEyes","killingSpree",
                       "rollTheBones","keepItRolling","bladeFlurry","ambush","dispatch"}) do
-    OA.State.knownSpells[OA.SpellIDs[k]] = false
-    OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+    Tuono.State.knownSpells[Tuono.SpellIDs[k]] = false
+    Tuono.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
   end
-  local p = OA.Rotation.Predict(OA.State, 1)
+  local p = Tuono.Rotation.Predict(Tuono.State, 1)
   assert_true(#p > 0, "prediction returned")
-  assert_eq(p[1].spellID, OA.SpellIDs.pistolShot, "PS fires with 3 stacks at 2 CP")
+  assert_eq(p[1].spellID, Tuono.SpellIDs.pistolShot, "PS fires with 3 stacks at 2 CP")
 end)
 
 -- TEST: Rule 9 (Pistol Shot) does NOT fire with 3-5 stacks at 4+ CP
 test("spec-priority: rule 9 (PS) does NOT fire with 3-5 stacks at 4+ CP", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.buffs.rtb.stage = 0
-  OA.State.buffs.opportunity.up = true
-  OA.State.buffs.opportunity.stacks = 3
-  OA.State.energy = 100
-  OA.State.comboPoints = 4
-  OA.State.knownSpells[OA.SpellIDs.pistolShot] = true
-  OA.State.knownSpells[OA.SpellIDs.sinisterStrike] = true
-  OA.State.cooldowns.pistolShot = { known = true, ready = true, remaining = 0 }
-  OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+  Tuono.State.stealthed = false
+  Tuono.State.buffs.rtb.stage = 0
+  Tuono.State.buffs.opportunity.up = true
+  Tuono.State.buffs.opportunity.stacks = 3
+  Tuono.State.energy = 100
+  Tuono.State.comboPoints = 4
+  Tuono.State.knownSpells[Tuono.SpellIDs.pistolShot] = true
+  Tuono.State.knownSpells[Tuono.SpellIDs.sinisterStrike] = true
+  Tuono.State.cooldowns.pistolShot = { known = true, ready = true, remaining = 0 }
+  Tuono.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
   for _, k in ipairs({"adrenalineRush","bladeRush","preparation","betweenTheEyes","killingSpree",
                       "rollTheBones","keepItRolling","bladeFlurry","ambush","dispatch"}) do
-    OA.State.knownSpells[OA.SpellIDs[k]] = false
-    OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+    Tuono.State.knownSpells[Tuono.SpellIDs[k]] = false
+    Tuono.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
   end
-  local p = OA.Rotation.Predict(OA.State, 1)
+  local p = Tuono.Rotation.Predict(Tuono.State, 1)
   assert_true(#p > 0, "prediction returned")
-  assert_eq(p[1].spellID, OA.SpellIDs.sinisterStrike, "PS does NOT fire with 3 stacks at 4 CP, SS used instead")
+  assert_eq(p[1].spellID, Tuono.SpellIDs.sinisterStrike, "PS does NOT fire with 3 stacks at 4 CP, SS used instead")
 end)
 
 -- TEST: Rule 10 (Sinister Strike) fires as default builder
 test("spec-priority: rule 10 (SS) fires as default builder", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.buffs.rtb.stage = 0
-  OA.State.energy = 100
-  OA.State.comboPoints = 2
-  OA.State.knownSpells[OA.SpellIDs.sinisterStrike] = true
-  OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+  Tuono.State.stealthed = false
+  Tuono.State.buffs.rtb.stage = 0
+  Tuono.State.energy = 100
+  Tuono.State.comboPoints = 2
+  Tuono.State.knownSpells[Tuono.SpellIDs.sinisterStrike] = true
+  Tuono.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
   for _, k in ipairs({"adrenalineRush","bladeRush","preparation","betweenTheEyes","killingSpree",
                       "rollTheBones","keepItRolling","bladeFlurry","ambush","dispatch","pistolShot"}) do
-    OA.State.knownSpells[OA.SpellIDs[k]] = false
-    OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+    Tuono.State.knownSpells[Tuono.SpellIDs[k]] = false
+    Tuono.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
   end
-  local p = OA.Rotation.Predict(OA.State, 1)
+  local p = Tuono.Rotation.Predict(Tuono.State, 1)
   assert_true(#p > 0, "prediction returned")
-  assert_eq(p[1].spellID, OA.SpellIDs.sinisterStrike, "SS fires as default builder")
+  assert_eq(p[1].spellID, Tuono.SpellIDs.sinisterStrike, "SS fires as default builder")
 end)
 
 -- TEST: Blade Flurry fires at low CP with 2+ enemies
 test("spec-priority: Blade Flurry fires at low CP with 2+ enemies", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.buffs.rtb.stage = 0
-  OA.State.energy = 100
-  OA.State.comboPoints = 1
-  OA.State.enemyCount = 2
-  OA.State.knownSpells[OA.SpellIDs.bladeFlurry] = true
-  OA.State.knownSpells[OA.SpellIDs.sinisterStrike] = true
-  OA.State.cooldowns.bladeFlurry = { known = true, ready = true, remaining = 0 }
-  OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+  Tuono.State.stealthed = false
+  Tuono.State.buffs.rtb.stage = 0
+  Tuono.State.energy = 100
+  Tuono.State.comboPoints = 1
+  Tuono.State.enemyCount = 2
+  Tuono.State.knownSpells[Tuono.SpellIDs.bladeFlurry] = true
+  Tuono.State.knownSpells[Tuono.SpellIDs.sinisterStrike] = true
+  Tuono.State.cooldowns.bladeFlurry = { known = true, ready = true, remaining = 0 }
+  Tuono.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
   for _, k in ipairs({"adrenalineRush","bladeRush","preparation","betweenTheEyes","killingSpree",
                       "rollTheBones","keepItRolling","ambush","dispatch","pistolShot"}) do
-    OA.State.knownSpells[OA.SpellIDs[k]] = false
-    OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+    Tuono.State.knownSpells[Tuono.SpellIDs[k]] = false
+    Tuono.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
   end
-  local p = OA.Rotation.Predict(OA.State, 1)
+  local p = Tuono.Rotation.Predict(Tuono.State, 1)
   assert_true(#p > 0, "prediction returned")
-  assert_eq(p[1].spellID, OA.SpellIDs.bladeFlurry, "BF fires at 1 CP with 2+ enemies")
+  assert_eq(p[1].spellID, Tuono.SpellIDs.bladeFlurry, "BF fires at 1 CP with 2+ enemies")
 end)
 
 -- TEST: Blade Flurry does NOT fire at 3+ CP even with 2+ enemies
 test("spec-priority: Blade Flurry does NOT fire at 3+ CP", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.buffs.rtb.stage = 0
-  OA.State.energy = 100
-  OA.State.comboPoints = 3
-  OA.State.enemyCount = 2
-  OA.State.knownSpells[OA.SpellIDs.bladeFlurry] = true
-  OA.State.knownSpells[OA.SpellIDs.sinisterStrike] = true
-  OA.State.cooldowns.bladeFlurry = { known = true, ready = true, remaining = 0 }
-  OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+  Tuono.State.stealthed = false
+  Tuono.State.buffs.rtb.stage = 0
+  Tuono.State.energy = 100
+  Tuono.State.comboPoints = 3
+  Tuono.State.enemyCount = 2
+  Tuono.State.knownSpells[Tuono.SpellIDs.bladeFlurry] = true
+  Tuono.State.knownSpells[Tuono.SpellIDs.sinisterStrike] = true
+  Tuono.State.cooldowns.bladeFlurry = { known = true, ready = true, remaining = 0 }
+  Tuono.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
   for _, k in ipairs({"adrenalineRush","bladeRush","preparation","betweenTheEyes","killingSpree",
                       "rollTheBones","keepItRolling","ambush","dispatch","pistolShot"}) do
-    OA.State.knownSpells[OA.SpellIDs[k]] = false
-    OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+    Tuono.State.knownSpells[Tuono.SpellIDs[k]] = false
+    Tuono.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
   end
-  local p = OA.Rotation.Predict(OA.State, 1)
+  local p = Tuono.Rotation.Predict(Tuono.State, 1)
   assert_true(#p > 0, "prediction returned")
-  assert_eq(p[1].spellID, OA.SpellIDs.sinisterStrike, "BF does NOT fire at 3 CP, SS used instead")
+  assert_eq(p[1].spellID, Tuono.SpellIDs.sinisterStrike, "BF does NOT fire at 3 CP, SS used instead")
 end)
 
 -- TEST: Rule ordering - rule N+1 doesn't fire if rule N fires
 test("spec-priority: rule ordering (RtB before KIR)", function()
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.State.buffs.rtb.stage = 0  -- RtB fires at stage < 2
-  OA.State.energy = 100
-  OA.State.comboPoints = 0
-  OA.State.knownSpells[OA.SpellIDs.rollTheBones] = true
-  OA.State.knownSpells[OA.SpellIDs.keepItRolling] = true
-  OA.State.cooldowns.rollTheBones = { known = true, ready = true, remaining = 0 }
-  OA.State.cooldowns.keepItRolling = { known = true, ready = true, remaining = 0 }
-  OA.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
+  Tuono.State.stealthed = false
+  Tuono.State.buffs.rtb.stage = 0  -- RtB fires at stage < 2
+  Tuono.State.energy = 100
+  Tuono.State.comboPoints = 0
+  Tuono.State.knownSpells[Tuono.SpellIDs.rollTheBones] = true
+  Tuono.State.knownSpells[Tuono.SpellIDs.keepItRolling] = true
+  Tuono.State.cooldowns.rollTheBones = { known = true, ready = true, remaining = 0 }
+  Tuono.State.cooldowns.keepItRolling = { known = true, ready = true, remaining = 0 }
+  Tuono.State.cooldowns.sinisterStrike = { known = true, ready = true, remaining = 0 }
   for _, k in ipairs({"adrenalineRush","bladeRush","preparation","betweenTheEyes","killingSpree",
                       "bladeFlurry","ambush","dispatch","pistolShot"}) do
-    OA.State.knownSpells[OA.SpellIDs[k]] = false
-    OA.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+    Tuono.State.knownSpells[Tuono.SpellIDs[k]] = false
+    Tuono.State.cooldowns[k] = { known = true, ready = false, remaining = 60 }
   end
-  local p = OA.Rotation.Predict(OA.State, 1)
+  local p = Tuono.Rotation.Predict(Tuono.State, 1)
   assert_true(#p > 0, "prediction returned")
   -- RtB (rule 1) should fire before KIR (rule 2)
-  assert_eq(p[1].spellID, OA.SpellIDs.rollTheBones, "RtB (rule 1) fires before KIR (rule 2)")
+  assert_eq(p[1].spellID, Tuono.SpellIDs.rollTheBones, "RtB (rule 1) fires before KIR (rule 2)")
 end)
 
 -- === state-transition tests ===
@@ -3914,7 +3914,7 @@ end
 test("state-transition: keybind follows the same spellID across a stealth swap", function()
   resetActionBarStub()
   makeButtonFrameStub("ActionButton1")
-  OA.db.display.iconCount = 4
+  Tuono.db.display.iconCount = 4
 
   -- Stealth-only ability, placed ONLY on the stealth bonus-bar slot (bonusBarOffset 1,
   -- button 1 => 1 + (NUM_ACTIONBAR_PAGES + 1 - 1) * NUM_ACTIONBAR_BUTTONS = 73).
@@ -3923,17 +3923,17 @@ test("state-transition: keybind follows the same spellID across a stealth swap",
   stub.state.bonusBarOffset = 0  -- not stealthed yet
 
   local result = { queue = { { spellID = testSpellID, kind = "rotation", source = "test" } } }
-  OA.Display.Render(result)
-  assert_false(OA.Display.anchor.icons[1].keyText.visible,
+  Tuono.Display.Render(result)
+  assert_false(Tuono.Display.anchor.icons[1].keyText.visible,
     "not stealthed: a spell that ONLY exists on the stealth bonus-bar slot must not resolve to a live ACTIONBUTTON keybind")
 
   -- Enter stealth and fire the registered invalidation event.
   stub.state.bonusBarOffset = 1
   stub.FireEvent("UPDATE_STEALTH")
-  OA.Display.Render(result)
-  assert_true(OA.Display.anchor.icons[1].keyText.visible,
+  Tuono.Display.Render(result)
+  assert_true(Tuono.Display.anchor.icons[1].keyText.visible,
     "stealthed: the same spellID now resolves once its slot is button 1's CURRENT slot")
-  assert_eq(OA.Display.anchor.icons[1].keyText.text, "1",
+  assert_eq(Tuono.Display.anchor.icons[1].keyText.text, "1",
     "resolved keybind matches ACTIONBUTTON1's binding once the bonus-bar slot is the CURRENT main-bar slot 1")
 
   resetActionBarStub()
@@ -3943,22 +3943,22 @@ end)
 test("state-transition: highlight glow follows the same spellID across a stealth swap", function()
   resetActionBarStub()
   makeButtonFrameStub("ActionButton1")
-  OA.db.highlight = OA.db.highlight or {}
-  OA.db.highlight.enabled = true
+  Tuono.db.highlight = Tuono.db.highlight or {}
+  Tuono.db.highlight.enabled = true
 
   local testSpellID = 555002
   stub.state.actionSlots = { [73] = { "spell", testSpellID } }
   stub.state.bonusBarOffset = 0
 
   local result = { queue = { { spellID = testSpellID, kind = "rotation", source = "test" } } }
-  OA.Highlight.Update(result)
+  Tuono.Highlight.Update(result)
 
   local function captureDebugField(pattern)
     local captured = {}
-    local originalPrint = OA.print
-    OA.print = function(msg) table.insert(captured, tostring(msg)) end
-    OA.Highlight.AppendDebugOutput()
-    OA.print = originalPrint
+    local originalPrint = Tuono.print
+    Tuono.print = function(msg) table.insert(captured, tostring(msg)) end
+    Tuono.Highlight.AppendDebugOutput()
+    Tuono.print = originalPrint
     for _, line in ipairs(captured) do
       local m = line:match(pattern)
       if m then return m end
@@ -3974,42 +3974,42 @@ test("state-transition: highlight glow follows the same spellID across a stealth
   -- Without barDirty this would incorrectly cache-hit and never re-resolve.
   stub.state.bonusBarOffset = 1
   stub.FireEvent("UPDATE_STEALTH")
-  OA.Highlight.Update(result)
+  Tuono.Highlight.Update(result)
 
   local afterButton = captureDebugField("Button frame: (.+)")
   assert_eq(afterButton, "ActionButton1",
     "stealthed: the SAME spellID's glow now resolves to ActionButton1 (the CURRENT button 1)")
 
   resetActionBarStub()
-  OA.Highlight.Update({ queue = {} })
+  Tuono.Highlight.Update({ queue = {} })
 end)
 
 -- TEST 2: override ID resolves to its base, and base resolves to its active override.
 test("state-transition: override spell ID resolves to its base and back", function()
   resetActionBarStub()
-  local baseID = 8676     -- Ambush (OA.SpellIDs.ambush)
+  local baseID = 8676     -- Ambush (Tuono.SpellIDs.ambush)
   local overrideID = 900001
   stub.SetSpellOverride(baseID, overrideID)
 
-  assert_eq(OA.ResolveOverrideSpell(baseID), overrideID, "base -> override resolves to the active override")
-  assert_eq(OA.ResolveBaseSpell(overrideID), baseID, "override -> base resolves back to the base spell")
-  assert_eq(OA.ResolveBaseSpell(baseID), baseID, "a spell with no override resolves to itself")
-  assert_eq(OA.ResolveOverrideSpell(999999), 999999, "an unrelated spellID resolves to itself")
+  assert_eq(Tuono.ResolveOverrideSpell(baseID), overrideID, "base -> override resolves to the active override")
+  assert_eq(Tuono.ResolveBaseSpell(overrideID), baseID, "override -> base resolves back to the base spell")
+  assert_eq(Tuono.ResolveBaseSpell(baseID), baseID, "a spell with no override resolves to itself")
+  assert_eq(Tuono.ResolveOverrideSpell(999999), 999999, "an unrelated spellID resolves to itself")
 
-  assert_true(OA.SpellMatchesAction(baseID, overrideID), "SpellMatchesAction: base spellID matches its override sitting on a slot")
-  assert_true(OA.SpellMatchesAction(baseID, baseID), "SpellMatchesAction: a spell always matches itself")
-  assert_false(OA.SpellMatchesAction(baseID, 999999), "SpellMatchesAction: an unrelated action slot does not match")
+  assert_true(Tuono.SpellMatchesAction(baseID, overrideID), "SpellMatchesAction: base spellID matches its override sitting on a slot")
+  assert_true(Tuono.SpellMatchesAction(baseID, baseID), "SpellMatchesAction: a spell always matches itself")
+  assert_false(Tuono.SpellMatchesAction(baseID, 999999), "SpellMatchesAction: an unrelated action slot does not match")
 
   -- Behavioral proof: the override sits on the action bar (NOT the base ID), and
-  -- resolution still finds it because it's given the base ID (as OA.SpellIDs always
+  -- resolution still finds it because it's given the base ID (as Tuono.SpellIDs always
   -- holds), matching the "expects a base spell" contract of FindSpellActionButtons.
   stub.state.actionSlots = { [1] = { "spell", overrideID } }
   local result = { queue = { { spellID = baseID, kind = "rotation", source = "test" } } }
   makeButtonFrameStub("ActionButton1")
-  OA.db.display.iconCount = 4
+  Tuono.db.display.iconCount = 4
   stub.FireEvent("UPDATE_STEALTH")  -- force cache invalidation before resolving
-  OA.Display.Render(result)
-  assert_true(OA.Display.anchor.icons[1].keyText.visible,
+  Tuono.Display.Render(result)
+  assert_true(Tuono.Display.anchor.icons[1].keyText.visible,
     "base spellID resolves to its override's slot: keybind found even though the bar holds the OVERRIDE id, not the base")
 
   stub.ClearSpellOverrides()
@@ -4021,31 +4021,31 @@ end)
 -- overrides) so it exercises the real Assist/RefreshFast/Engine pipeline exactly
 -- like those, just asserting the NOT-stealthed side too.
 test("state-transition: Ambush recommended only while stealthed", function()
-  OA.State.inCombat = false
+  Tuono.State.inCombat = false
   stub.state.stealthed = false
-  OA.State.stealthed = false
-  OA.Assist.Update()
-  OA.State.RefreshFast()
+  Tuono.State.stealthed = false
+  Tuono.Assist.Update()
+  Tuono.State.RefreshFast()
 
-  local rNotStealthed = OA.Engine.Evaluate()
+  local rNotStealthed = Tuono.Engine.Evaluate()
   local ambushFoundNotStealthed = false
   for _, entry in ipairs(rNotStealthed.queue or {}) do
-    if entry.spellID == OA.SpellIDs.ambush then ambushFoundNotStealthed = true end
+    if entry.spellID == Tuono.SpellIDs.ambush then ambushFoundNotStealthed = true end
   end
   assert_false(ambushFoundNotStealthed, "Ambush is NOT recommended anywhere in the queue while not stealthed")
 
-  OA.State.inCombat = true
+  Tuono.State.inCombat = true
   stub.state.stealthed = true
-  OA.State.stealthed = true
-  OA.Assist.Update()
-  OA.State.RefreshFast()
+  Tuono.State.stealthed = true
+  Tuono.Assist.Update()
+  Tuono.State.RefreshFast()
 
-  local rStealthed = OA.Engine.Evaluate()
+  local rStealthed = Tuono.Engine.Evaluate()
   assert_true(#rStealthed.queue > 0, "queue has entries while stealthed")
-  assert_eq(rStealthed.queue[1].spellID, OA.SpellIDs.ambush, "Ambush pins at position 1 when stealthed")
+  assert_eq(rStealthed.queue[1].spellID, Tuono.SpellIDs.ambush, "Ambush pins at position 1 when stealthed")
 
   stub.state.stealthed = false
-  OA.State.stealthed = false
+  Tuono.State.stealthed = false
 end)
 
 -- TEST 4: every registered cache-invalidation event actually invalidates the keybind
@@ -4056,7 +4056,7 @@ test("state-transition: every registered event invalidates the keybind cache", f
                     "ACTIONBAR_SLOT_CHANGED", "SPELLS_CHANGED", "UPDATE_BINDINGS",
                     "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED" }
   makeButtonFrameStub("ActionButton1")
-  OA.db.display.iconCount = 4
+  Tuono.db.display.iconCount = 4
 
   for idx, eventName in ipairs(events) do
     local testSpellID = 555100 + idx
@@ -4064,25 +4064,25 @@ test("state-transition: every registered event invalidates the keybind cache", f
     stub.state.bonusBarOffset = 0
 
     local result = { queue = { { spellID = testSpellID, kind = "rotation", source = "test" } } }
-    OA.Display.Render(result)
-    assert_false(OA.Display.anchor.icons[1].keyText.visible,
+    Tuono.Display.Render(result)
+    assert_false(Tuono.Display.anchor.icons[1].keyText.visible,
       eventName .. ": no keybind before the spell is placed on any slot")
 
     -- Place the spell on the always-current slot 1 WITHOUT firing an invalidation
     -- event yet: the stale cached miss must persist (proves the cache is real).
     stub.state.actionSlots[1] = { "spell", testSpellID }
-    OA.Display.Render(result)
-    assert_false(OA.Display.anchor.icons[1].keyText.visible,
+    Tuono.Display.Render(result)
+    assert_false(Tuono.Display.anchor.icons[1].keyText.visible,
       eventName .. ": stale cached miss persists until an invalidation event fires")
 
     stub.FireEvent(eventName)
-    OA.Display.Render(result)
-    assert_true(OA.Display.anchor.icons[1].keyText.visible,
+    Tuono.Display.Render(result)
+    assert_true(Tuono.Display.anchor.icons[1].keyText.visible,
       eventName .. ": keybind resolves once this event invalidates the cache")
   end
 
   resetActionBarStub()
-  OA.State.inCombat = false
+  Tuono.State.inCombat = false
 end)
 
 -- TEST 5: nothing errors when the recommended spell is on no action bar at all
@@ -4090,41 +4090,41 @@ end)
 test("state-transition: no error when spell is on no action bar at all", function()
   resetActionBarStub()
   stub.state.actionSlots = {}  -- nothing placed anywhere
-  OA.db.display.iconCount = 4
-  OA.db.highlight = OA.db.highlight or {}
-  OA.db.highlight.enabled = true
+  Tuono.db.display.iconCount = 4
+  Tuono.db.highlight = Tuono.db.highlight or {}
+  Tuono.db.highlight.enabled = true
 
   local result = { queue = { { spellID = 777777, kind = "rotation", source = "test" } } }
 
-  local okDisplay = pcall(OA.Display.Render, result)
+  local okDisplay = pcall(Tuono.Display.Render, result)
   assert_true(okDisplay, "Display.Render does not error when the spell is on no action bar")
-  assert_false(OA.Display.anchor.icons[1].keyText.visible, "keybind hidden (not found) rather than erroring")
+  assert_false(Tuono.Display.anchor.icons[1].keyText.visible, "keybind hidden (not found) rather than erroring")
 
-  local okHighlight = pcall(OA.Highlight.Update, result)
+  local okHighlight = pcall(Tuono.Highlight.Update, result)
   assert_true(okHighlight, "Highlight.Update does not error when the spell is on no action bar")
 
   resetActionBarStub()
-  OA.Highlight.Update({ queue = {} })
+  Tuono.Highlight.Update({ queue = {} })
 end)
 
--- TEST 6: regression coverage for the coordinator-reported OA.safe / forward-reference
+-- TEST 6: regression coverage for the coordinator-reported Tuono.safe / forward-reference
 -- fixes made alongside the state-transition work (same files, directly relevant).
-test("state-transition: OA.Rotation.SPELL_TO_CDKEY is populated (forward-reference fix)", function()
-  assert_true(type(OA.Rotation.SPELL_TO_CDKEY) == "table", "SPELL_TO_CDKEY is a table, not nil")
+test("state-transition: Tuono.Rotation.SPELL_TO_CDKEY is populated (forward-reference fix)", function()
+  assert_true(type(Tuono.Rotation.SPELL_TO_CDKEY) == "table", "SPELL_TO_CDKEY is a table, not nil")
   local count = 0
-  for _ in pairs(OA.Rotation.SPELL_TO_CDKEY) do count = count + 1 end
+  for _ in pairs(Tuono.Rotation.SPELL_TO_CDKEY) do count = count + 1 end
   assert_true(count > 0, "SPELL_TO_CDKEY is populated (was permanently nil before the export-order fix)")
-  assert_eq(OA.Rotation.SPELL_TO_CDKEY[OA.SpellIDs.ambush], "ambush", "SPELL_TO_CDKEY maps Ambush's spellID back to its cooldown key")
+  assert_eq(Tuono.Rotation.SPELL_TO_CDKEY[Tuono.SpellIDs.ambush], "ambush", "SPELL_TO_CDKEY maps Ambush's spellID back to its cooldown key")
 end)
 
-test("state-transition: modern C_ActionBar.FindSpellActionButtons path is actually used (OA.safe fix)", function()
+test("state-transition: modern C_ActionBar.FindSpellActionButtons path is actually used (Tuono.safe fix)", function()
   resetActionBarStub()
   makeButtonFrameStub("ActionButton1")
-  OA.db.display.iconCount = 4
+  Tuono.db.display.iconCount = 4
 
   -- The stub's C_ActionBar.FindSpellActionButtons only answers for 193315 (slot 1).
   -- Count how many times the 120-slot fallback (GetActionInfo) is invoked while
-  -- resolving that spell's keybind: with the OA.safe single-return fix, TIER 1
+  -- resolving that spell's keybind: with the Tuono.safe single-return fix, TIER 1
   -- succeeds and the fallback loop is never reached for this spellID.
   local fallbackCalls = 0
   local originalGetActionInfo = _G.GetActionInfo
@@ -4135,13 +4135,13 @@ test("state-transition: modern C_ActionBar.FindSpellActionButtons path is actual
 
   stub.FireEvent("UPDATE_STEALTH")  -- force cache invalidation
   local result = { queue = { { spellID = 193315, kind = "rotation", source = "test" } } }
-  OA.Display.Render(result)
+  Tuono.Display.Render(result)
 
   _G.GetActionInfo = originalGetActionInfo
 
-  assert_true(OA.Display.anchor.icons[1].keyText.visible, "keybind resolved for the spell covered by the modern API stub")
+  assert_true(Tuono.Display.anchor.icons[1].keyText.visible, "keybind resolved for the spell covered by the modern API stub")
   assert_eq(fallbackCalls, 0,
-    "GetActionInfo fallback was NOT called: the modern C_ActionBar.FindSpellActionButtons path resolved it directly (was dead before the OA.safe fix)")
+    "GetActionInfo fallback was NOT called: the modern C_ActionBar.FindSpellActionButtons path resolved it directly (was dead before the Tuono.safe fix)")
 
   resetActionBarStub()
 end)

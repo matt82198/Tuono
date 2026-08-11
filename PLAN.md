@@ -208,7 +208,7 @@
   - Show trinket tracker (yes/no)
   - Show RtB state + advisory (yes/no)
   - Show Opportunity timer (yes/no)
-- **One-command reset:** `/oa reset` restores defaults
+- **One-command reset:** `/tuono reset` restores defaults
 - **Persistence:** Saved variables (WoW standard)
 - **Advanced:** Profile import/export (future v2, not M5 scope)
 
@@ -309,7 +309,7 @@
 - Icons grey during GCD ✓
 - Cooldown spiral shows remaining time ✓
 - Drag-to-move, scale slider works ✓
-- `/oa hide ooc` toggle works ✓
+- `/tuono hide ooc` toggle works ✓
 - Matches HekiLight visual style (reference: screenshot from CurseForge)
 
 **Training-Dummy Protocol:** 
@@ -327,11 +327,11 @@
 **Deliverable:**
 - StateTracker caches all readable state (RtB, Opportunity, energy, CP, spell CDs, trinket CDs, tier set)
 - Event-driven updates (UNIT_AURA for own buffs, UNIT_POWER_UPDATE, SPELL_UPDATE_COOLDOWN, PLAYER_EQUIPMENT_CHANGED)
-- Debug panel (toggle via `/oa debug`) showing live state: "RtB stage: 2, AR CD: 15s, Energy: 67/100"
+- Debug panel (toggle via `/tuono debug`) showing live state: "RtB stage: 2, AR CD: 15s, Energy: 67/100"
 - Trinket caching pattern (out-of-combat load, in-combat compute)
 
 **Acceptance Criteria:**
-- `/oa debug` panel shows current RtB stage (0–4) ✓
+- `/tuono debug` panel shows current RtB stage (0–4) ✓
 - Opportunity stack count updates on UNIT_AURA after Sinister Strike ✓
 - Energy display updates per regen tick ✓
 - CP count accurate ✓
@@ -380,9 +380,9 @@
 **Deliverable:**
 - **RtB State Panel:** Displays current Roll the Bones stage (1–4) + remaining duration + "reroll advisory" glow if stage is suboptimal
 - **Opportunity Timer:** Overlay on primary rotation icon showing remaining duration (e.g., "5 sec")
-- **AoE Advisory:** When 2+ targets detected via threat-table composite signal, show Blade Flurry elevation in queue or as separate advisory; manual override via `/oa aoe`
+- **AoE Advisory:** When 2+ targets detected via threat-table composite signal, show Blade Flurry elevation in queue or as separate advisory; manual override via `/tuono aoe`
 - **IntelligenceLayer rules.lua:** Hardcoded Outlaw APL rules (20–50 rules) with source citations
-- **Secret Value Hardening:** Guard all API-derived state with OA.num()/OA.bool() to survive WoW Midnight secret values in combat
+- **Secret Value Hardening:** Guard all API-derived state with Tuono.num()/Tuono.bool() to survive WoW Midnight secret values in combat
 
 **Acceptance Criteria:**
 - RtB stage display shows correct stage (1–4) ✓
@@ -393,9 +393,9 @@
 - At least 20 rules loaded from `data/rules.lua` ✓
 - Each rule has source citation (SimC or guide link) ✓
 - Rules apply correctly (spot-check 3–5 rules manually during combat) ✓
-- All API returns coerced before arithmetic/comparison (OA.num guards) ✓
+- All API returns coerced before arithmetic/comparison (Tuono.num guards) ✓
 
-**Status Update (2026-08-01):** v0.3 shipped with unified rolling bar (kind-colored borders: cooldown orange, trinket purple, RtB gold, opener teal), per-icon keybind labels, `/oa icons <1-8>` support, reactive polling (fast in combat, event-forced on miscast/target-swap), threat-table AoE detection (2+ enemies, composite signal with `/oa aoe` manual override), and hardened aura tracking for Midnight secret values. **AoE detection is implemented but pending live confirmation in actual raid/dungeon AoE scenarios.** Feature increments delivered: (1) unified bar layout, (2) keybind labeling, (3) polling reactivity, (4) AoE composite detection, (5) aura hardening. Awaiting `/oa watch` data from live play to confirm threat-table accuracy.
+**Status Update (2026-08-01):** v0.3 shipped with unified rolling bar (kind-colored borders: cooldown orange, trinket purple, RtB gold, opener teal), per-icon keybind labels, `/tuono icons <1-8>` support, reactive polling (fast in combat, event-forced on miscast/target-swap), threat-table AoE detection (2+ enemies, composite signal with `/tuono aoe` manual override), and hardened aura tracking for Midnight secret values. **AoE detection is implemented but pending live confirmation in actual raid/dungeon AoE scenarios.** Feature increments delivered: (1) unified bar layout, (2) keybind labeling, (3) polling reactivity, (4) AoE composite detection, (5) aura hardening. Awaiting `/tuono watch` data from live play to confirm threat-table accuracy.
 
 **Training-Dummy Protocol:**
 - With multi-target dummy setup (if available), verify Blade Flurry advisory fires
@@ -419,7 +419,7 @@
 - `refresh_sim_data.sh` clones SimC, locates profiles ✓
 - Script generates Lua table skeleton with APL conditions ✓
 - Options panel toggles hide/show each layer ✓
-- `/oa reset` restores defaults ✓
+- `/tuono reset` restores defaults ✓
 - CurseForge upload successful (syntax check passed, tags applied) ✓
 - README complete (setup, usage, limitations, open questions) ✓
 - No frame hitches at 60 FPS (tested on potato PC @ 800x600) ✓
@@ -439,10 +439,10 @@
 **Milestone Completion:** M4 (COMPLETE). All core features shipped and validated.
 
 **Feature Increments:**
-1. **Unified Rolling Bar Layout** — Single icon strip (default 4, configurable 1–8 via `/oa icons`) with kind-colored borders replacing multi-row display; more compact, clearer visual hierarchy
+1. **Unified Rolling Bar Layout** — Single icon strip (default 4, configurable 1–8 via `/tuono icons`) with kind-colored borders replacing multi-row display; more compact, clearer visual hierarchy
 2. **Per-Icon Keybind Labels** — Keybind text overlay on each icon (top-right position) showing mapped hotkeys (S-1, C-2, etc.) for fast visual reference
 3. **Reactive Polling** — Smart update cadence: high-frequency frame polling during combat, event-forced recalculation on miscast/target-swap detection for minimal latency
-4. **Threat-Table AoE Detection** — Composite 2+ enemy detection via threat-count (primary signal), party-HP deltas (secondary), manual `/oa aoe` override (manual toggle)
+4. **Threat-Table AoE Detection** — Composite 2+ enemy detection via threat-count (primary signal), party-HP deltas (secondary), manual `/tuono aoe` override (manual toggle)
 5. **Aura Tracking Hardening** — All UNIT_AURA event payloads guarded against Midnight secret values; per-field `issecretvalue()` checks + graceful degradation when data unavailable
 
 **Next Scheduled Increment:** Aura-Delta Infrastructure (three-tier approach)
@@ -464,14 +464,14 @@
 WoW's TOC format supports comma-separated Interface lines for multi-version addon support (e.g., `## Interface: 120100, 50504, 38002`). An earlier detection mechanism assumed the Interface line would contain a single number. In v0.1.3, the detection code inadvertently failed when parsing a multi-version TOC, leading to a startup error that masked the true cause.
 
 **Root Cause:**
-The comma-list format is valid per the official WoW TOC specification (introduced in patch 10.2.7). However, OutlawAssist's focused scope (Midnight only) does not require multi-version support, and accidental adoption of the format would waste data and introduce ambiguity.
+The comma-list format is valid per the official WoW TOC specification (introduced in patch 10.2.7). However, Tuono's focused scope (Midnight only) does not require multi-version support, and accidental adoption of the format would waste data and introduce ambiguity.
 
 **Resolution:**
 v0.2.0 introduces **tests/toc_check.lua**, a deterministic TOC lint that runs before all other tests:
 1. **Assertion 1:** Exactly one `## Interface:` line exists in the TOC.
 2. **Assertion 2:** The Interface line contains a **single number** (no commas).
 3. **Assertion 3:** Every .lua file listed in the TOC exists on disk.
-4. **Assertion 4:** Every OutlawAssist/*.lua and data/*.lua file is listed in the TOC (no orphans).
+4. **Assertion 4:** Every Tuono/*.lua and data/*.lua file is listed in the TOC (no orphans).
 
 This lint is **fail-closed**: if any assertion fails, the test suite exits with code 1, and the addon is flagged as broken before any code loads.
 
@@ -529,10 +529,10 @@ This lint is **fail-closed**: if any assertion fails, the test suite exits with 
 - Poll `C_NamePlate.GetNamePlates()` every 0.25s in combat
 - For each nameplate, call `UnitThreatSituation("player", plate.namePlateUnitToken)`
 - Count plates with threat > 0 (hostile-engaged enemies)
-- Store count in `OA.State.enemyCount`
+- Store count in `Tuono.State.enemyCount`
 - Blade Flurry rule fires when `enemyCount >= 2 OR aoeMode OR aoeDetected`
 
-**Caveat:** Threat-table detection is pending in-game verification via `/oa apitest` probes to confirm legality and behavior under all combat conditions. Initial implementation complete; tests passing.
+**Caveat:** Threat-table detection is pending in-game verification via `/tuono apitest` probes to confirm legality and behavior under all combat conditions. Initial implementation complete; tests passing.
 
 **Impact:** Resolves M4 AoE advisory blocker. Feature ships in v0.3.0.
 
@@ -546,7 +546,7 @@ This lint is **fail-closed**: if any assertion fails, the test suite exits with 
 | **Will PLAYER_EQUIPMENT_CHANGED fire on trinket swap mid-combat?** | MEDIUM (affects trinket cache freshness) | Test in M0: Equip, swap trinket OOC, swap back in combat, verify event fires. If event fires in combat, M2 can refresh cache; if not, stale IDs acceptable (trinket slots don't change mid-pull in practice). |
 | **Are all rule conditions deterministically verifiable from readable state?** | MEDIUM (M4 correctness) | Verify each of 20+ rules in `data/rules.lua` can be evaluated using only StateTracker outputs. If a rule needs "enemy health %" or "remaining fight time", flag as `FUTURE` (needs different legal surface). |
 | **Patch 12.1+ buff API changes impact proc tracking?** | MEDIUM (Opportunity timer in M4) | Research: "Curse of Ula'tek (Patch 12.1) introduced API changes" (hekilight-analysis.md §7.7). Verify whether `UnitBuff("player", "Opportunity")` still works. If blocked, use fallback: cache `UNIT_SPELLCAST_SUCCEEDED` timestamp + 20s hardcoded (less precise but functional). |
-| **AoE detection accuracy in live raid/dungeon scenarios?** | MEDIUM (M4 validation) | Threat-table composite signal implemented; awaiting `/oa watch` data from live M+ and raid play to confirm threat-count + nameplate accuracy in varied pull sizes and pull-chains. Initial implementation complete; live confirmation ongoing. |
+| **AoE detection accuracy in live raid/dungeon scenarios?** | MEDIUM (M4 validation) | Threat-table composite signal implemented; awaiting `/tuono watch` data from live M+ and raid play to confirm threat-count + nameplate accuracy in varied pull sizes and pull-chains. Initial implementation complete; live confirmation ongoing. |
 
 ---
 

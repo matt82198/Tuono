@@ -1,4 +1,4 @@
-# OutlawAssist Test Suite
+# Tuono Test Suite
 
 ## How to Run
 
@@ -28,4 +28,4 @@ Runs 12 behavioral tests via a pure-Lua harness without requiring WoW or the gam
 
 Two module bugs were fixed to enable tests:
 1. `StateTracker.lua:47` — initialized `lastBuffScan = -1` to ensure buffs refresh on first RefreshFast() call
-2. `Display.lua:213` — fixed trinket lookup from `OA.State.trinkets[tostring(slot)]` to `OA.State.trinkets[slot]` (numeric keys)
+2. `Display.lua:213` — fixed trinket lookup from `Tuono.State.trinkets[tostring(slot)]` to `Tuono.State.trinkets[slot]` (numeric keys)
