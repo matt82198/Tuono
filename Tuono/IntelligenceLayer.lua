@@ -17,7 +17,7 @@ Tuono.Engine = Tuono.Engine or {}
 Tuono.Engine.stallCount = 0
 local STALL_THRESHOLD = 3
 
-Tuono.RegisterEvent("UNIT_SPELLCAST_SUCCEEDED", function(event, unit, castGUID, spellID)
+Tuono.RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player", function(event, unit, castGUID, spellID)
   if unit ~= "player" then return end
   local id = Tuono.readNum(spellID)
   if not id then return end

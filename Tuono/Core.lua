@@ -9,6 +9,9 @@ Tuono.errorCount = 0
 -- Module-local flag for forced immediate update (set by event handlers)
 local forceNext = false
 
+-- Floor on how far a forced update may jump the throttle. ~33Hz ceiling.
+local MIN_FORCED_GAP = 0.03
+
 local function deepMerge(target, source)
   if type(source) ~= "table" then
     return source
@@ -31,6 +34,27 @@ end
 function Tuono.RegisterEvent(event, fn)
   if not Tuono.eventHandlers[event] then
     Tuono.eventHandlers[event] = {}
+  end
+  -- Register on the FRAME every time rather than only when the handler table is new.
+  -- RegisterEvent is idempotent on the frame, and the old guard meant anything that
+  -- inserted into eventHandlers directly (ApiTest did) permanently prevented the event
+  -- from ever being registered for the rest of the session.
+  Tuono.frame:RegisterEvent(event)
+  table.insert(Tuono.eventHandlers[event], fn)
+end
+
+-- UNIT events fire for EVERY unit in your group and every nameplate. Registering them
+-- broadly means UNIT_AURA alone dispatches thousands of times a second in a raid pull,
+-- each one allocating a vararg and running a pcall per handler, only to be discarded by
+-- a `unit == "player"` check inside the handler. RegisterUnitEvent filters in the
+-- engine, before any of that.
+function Tuono.RegisterUnitEvent(event, unit, fn)
+  if not Tuono.eventHandlers[event] then
+    Tuono.eventHandlers[event] = {}
+  end
+  if Tuono.frame.RegisterUnitEvent then
+    Tuono.frame:RegisterUnitEvent(event, unit or "player")
+  else
     Tuono.frame:RegisterEvent(event)
   end
   table.insert(Tuono.eventHandlers[event], fn)
@@ -167,10 +191,24 @@ Tuono.frame:SetScript("OnUpdate", function(self, elapsed)
     end
 
     handler.elapsed = handler.elapsed + elapsed
-    -- Run immediately if forceNext, or on throttle timer
-    if forceNext or handler.elapsed >= dynamicInterval then
+
+    -- forceNext used to BYPASS the throttle entirely. Several events set it -- and
+    -- SPELL_UPDATE_COOLDOWN alone fires many times per GCD in real combat -- so in a
+    -- busy pull the "0.1s throttle" was really running at frame rate. The advertised
+    -- 10Hz was fiction.
+    --
+    -- Now an event can only pull the next tick FORWARD, never produce an unbounded
+    -- one. Worst case is ~30Hz instead of 144Hz on a fast machine.
+    if forceNext then
+      handler.elapsed = math.max(handler.elapsed, dynamicInterval - MIN_FORCED_GAP)
+    end
+
+    if handler.elapsed >= dynamicInterval then
       Tuono.safe(handler.fn)
-      handler.elapsed = 0
+      -- Carry the overshoot instead of discarding it, so the effective period is the
+      -- nominal one rather than nominal-plus-a-frame, drifting with frame time.
+      handler.elapsed = handler.elapsed - dynamicInterval
+      if handler.elapsed > dynamicInterval then handler.elapsed = 0 end
     end
   end
 
@@ -250,7 +288,7 @@ Tuono.RegisterEvent("PLAYER_LOGIN", function()
 
   -- Register event-forced re-evaluate triggers
   -- UNIT_SPELLCAST_SUCCEEDED: detect if player cast what was recommended or deviated
-  Tuono.RegisterEvent("UNIT_SPELLCAST_SUCCEEDED", function(event, unit, ...)
+  Tuono.RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player", function(event, unit, ...)
     if unit == "player" then
       Tuono.RequestImmediateUpdate()
     end
@@ -260,19 +298,19 @@ Tuono.RegisterEvent("PLAYER_LOGIN", function()
   -- A cast that FAILS (out of range, line of sight, moving, not facing) must force a
   -- re-evaluate. Without this the bar keeps glowing the same unusable button forever --
   -- and a levelling rogue is out of melee range constantly while questing and kiting.
-  Tuono.RegisterEvent("UNIT_SPELLCAST_FAILED", function(event, unit, ...)
+  Tuono.RegisterUnitEvent("UNIT_SPELLCAST_FAILED", "player", function(event, unit, ...)
     if unit == "player" then
       Tuono.RequestImmediateUpdate()
     end
   end)
 
-  Tuono.RegisterEvent("UNIT_SPELLCAST_FAILED_QUIET", function(event, unit, ...)
+  Tuono.RegisterUnitEvent("UNIT_SPELLCAST_FAILED_QUIET", "player", function(event, unit, ...)
     if unit == "player" then
       Tuono.RequestImmediateUpdate()
     end
   end)
 
-  Tuono.RegisterEvent("UNIT_SPELLCAST_INTERRUPTED", function(event, unit, ...)
+  Tuono.RegisterUnitEvent("UNIT_SPELLCAST_INTERRUPTED", "player", function(event, unit, ...)
     if unit == "player" then
       Tuono.RequestImmediateUpdate()
     end

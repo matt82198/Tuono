@@ -136,7 +136,7 @@ local function GetKeybindText(spellID)
 	-- whole modern path was permanently dead -- every lookup fell through to the
 	-- 120-slot scan below. pcall directly instead.
 	if C_ActionBar and C_ActionBar.FindSpellActionButtons then
-		local ok, buttons = pcall(function() return C_ActionBar.FindSpellActionButtons(spellID) end)
+		local ok, buttons = pcall(C_ActionBar.FindSpellActionButtons, spellID)
 		if ok and buttons and #buttons > 0 then
 			local slot = buttons[1]
 			local bindingName = bindingNameForSlot(slot)

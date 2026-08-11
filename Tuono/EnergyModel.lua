@@ -199,6 +199,41 @@ local function energyCostOf(spellID)
 	return cost
 end
 
+-- Only spells that actually COST energy can constrain the bracket. Iterating the whole
+-- profile meant calling IsSpellUsable on Stealth and the Opportunity buff every tick --
+-- 14 calls where 8 would do, and the extras can never contribute a bound. Computed once
+-- per profile activation.
+local costingSpells = nil
+
+local function costingSpellList()
+	if costingSpells then return costingSpells end
+	costingSpells = {}
+	local profile = Tuono.Profiles and Tuono.Profiles.Active()
+	if not profile then return costingSpells end
+	for _, spellID in pairs(profile.spells or {}) do
+		if energyCostOf(spellID) then table.insert(costingSpells, spellID) end
+	end
+	table.sort(costingSpells)
+	return costingSpells
+end
+
+if Tuono.Profiles then
+	Tuono.Profiles.OnActivate(function()
+		costingSpells = nil
+		-- Talents change spell costs, and this cache is keyed by spellID with no
+		-- lifecycle of its own, so it has to go too.
+		for k in pairs(bracketCostCache) do bracketCostCache[k] = nil end
+	end)
+end
+
+-- Same invalidation on anything that can retalent or restat the character.
+for _, evt in ipairs({ "TRAIT_CONFIG_UPDATED", "SPELLS_CHANGED", "PLAYER_SPECIALIZATION_CHANGED" }) do
+	Tuono.RegisterEvent(evt, function()
+		costingSpells = nil
+		for k in pairs(bracketCostCache) do bracketCostCache[k] = nil end
+	end)
+end
+
 -- Returns lower, upper (either may be nil when no ability constrains that side).
 function Tuono.Energy.Bracket()
 	if not (C_Spell and C_Spell.IsSpellUsable) then return nil, nil end
@@ -207,7 +242,7 @@ function Tuono.Energy.Bracket()
 
 	local lower, upper = nil, nil
 
-	for _, spellID in pairs(profile.spells or {}) do
+	for _, spellID in ipairs(costingSpellList()) do
 		local cost = energyCostOf(spellID)
 		if cost then
 			local ok, usable, insufficient = pcall(C_Spell.IsSpellUsable, spellID)
@@ -227,10 +262,39 @@ function Tuono.Energy.Bracket()
 	return lower, upper
 end
 
+-- Usability only changes when a resource crosses a cost threshold or a cooldown turns
+-- over, and WoW fires events for exactly that. Polling every ability every tick was
+-- pure waste: ~14 API calls at 10Hz to re-derive a value that mostly did not move.
+--
+-- Event-driven, with a slow safety poll so a missed event degrades accuracy rather
+-- than correctness. The floor is well below the timescale energy moves on (~12/sec,
+-- so 0.25s is ~3 energy of staleness -- inside the bracket's own resolution anyway).
+local BRACKET_MIN_INTERVAL = 0.25
+local bracketDueAt = 0
+
+local function markBracketDue()
+	bracketDueAt = 0
+end
+
+for _, evt in ipairs({ "SPELL_UPDATE_USABLE", "ACTIONBAR_UPDATE_USABLE", "SPELL_UPDATE_COOLDOWN" }) do
+	Tuono.RegisterEvent(evt, markBracketDue)
+end
+Tuono.RegisterUnitEvent("UNIT_POWER_UPDATE", "player", markBracketDue)
+
 -- Fold the bracket into the running estimate. Only ever CLAMPS -- it never invents a
 -- value, so a spec whose abilities do not span the range degrades to plain dead
 -- reckoning rather than to nonsense.
+-- Scheduling lives at the CALL SITE, not in here. ApplyBracket is also the "correct me
+-- now" entry point (diagnostics, tests, a forced resync), and a function that silently
+-- does nothing depending on a hidden clock is a trap for every caller that is not the
+-- tick loop.
+function Tuono.Energy.BracketIsDue()
+	return GetTime() >= bracketDueAt
+end
+
 function Tuono.Energy.ApplyBracket()
+	bracketDueAt = GetTime() + BRACKET_MIN_INTERVAL
+
 	local lower, upper = Tuono.Energy.Bracket()
 	if lower == nil and upper == nil then return false end
 
@@ -428,7 +492,12 @@ function Tuono.Energy.Advance()
 	-- START the model when energy has never once been directly readable -- which is the
 	-- normal case in Midnight, where UnitPower is secret unconditionally. Without it,
 	-- a player who logs in mid-combat would have no seed and stay "unknown" forever.
-	pcall(Tuono.Energy.ApplyBracket)
+	-- Throttled here rather than inside ApplyBracket: this is the only caller that wants
+	-- rate limiting. Usability is event-driven (SPELL_UPDATE_USABLE et al reset the
+	-- timer), so this is a safety poll, not the primary trigger.
+	if Tuono.Energy.BracketIsDue() then
+		pcall(Tuono.Energy.ApplyBracket)
+	end
 
 	pcall(Tuono.Energy.ObserveAssist)
 end
@@ -474,7 +543,7 @@ function Tuono.Energy.Get()
 	return E.value, true, (stale and "stale" or E.confidence)
 end
 
-Tuono.RegisterEvent("UNIT_SPELLCAST_SUCCEEDED", function(event, unit, castGUID, spellID)
+Tuono.RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player", function(event, unit, castGUID, spellID)
 	if unit ~= "player" then return end
 	local id, known = Tuono.readNum(spellID)
 	if known and id then

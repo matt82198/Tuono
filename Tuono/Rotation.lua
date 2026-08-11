@@ -158,24 +158,84 @@ Tuono.RuleHelpers = {
 -- Simulation internals
 -- ---------------------------------------------------------------------------
 
+-- ============================================================================
+-- SIMULATION SCRATCH STATE
+-- ============================================================================
+-- This was a full recursive deep copy of Tuono.State on EVERY Predict, i.e. every tick:
+-- ~18 tables and ~150 field copies, including knownSpells (40+ entries) and rtb.names,
+-- neither of which the simulation ever mutates. At 10Hz that is thousands of table
+-- allocations a second, all of it garbage.
+--
+-- Predict only ever WRITES a small, fixed set of fields. Everything else it merely
+-- reads, and can read straight off the live state. So keep one persistent scratch
+-- table and reset the mutable fields in place -- zero allocation in steady state.
+--
+-- The read-only fields are assigned by reference deliberately: the simulation must not
+-- write to them, and if a future rule does, that is a bug worth surfacing rather than
+-- hiding behind a defensive copy.
+local scratch = {
+	cooldowns = {},
+	buffs = { rtb = {}, opportunity = {}, adrenalineRush = {} },
+}
+
 local function deepCopyState(state)
-	local copy = {}
-	for k, v in pairs(state) do
-		if type(v) == "table" then
-			copy[k] = {}
-			for k2, v2 in pairs(v) do
-				if type(v2) == "table" then
-					copy[k][k2] = {}
-					for k3, v3 in pairs(v2) do copy[k][k2][k3] = v3 end
-				else
-					copy[k][k2] = v2
-				end
-			end
-		else
-			copy[k] = v
-		end
+	local S = scratch
+
+	-- Scalars the simulation mutates.
+	S.energy = state.energy
+	S.energyMax = state.energyMax
+	S.energyKnown = state.energyKnown
+	S.energySource = state.energySource
+	S.comboPoints = state.comboPoints
+	S.comboPointsMax = state.comboPointsMax
+	S.comboPointsKnown = state.comboPointsKnown
+	S.stealthed = state.stealthed
+	S.enemyCount = state.enemyCount
+	S.enemyCountKnown = state.enemyCountKnown
+	S.inCombat = state.inCombat
+
+	-- Read-only passthrough: never written by the simulation.
+	S.knownSpells = state.knownSpells
+	S.knownUnavailable = state.knownUnavailable
+	S.tier = state.tier
+	S.trinkets = state.trinkets
+
+	-- Cooldowns ARE mutated (pooling decrements them, finishers apply CDR), so each
+	-- entry needs its own scratch row -- but the rows are reused, not reallocated.
+	local srcCD = state.cooldowns or {}
+	for key, cd in pairs(srcCD) do
+		local row = S.cooldowns[key]
+		if not row then row = {} S.cooldowns[key] = row end
+		row.known = cd.known
+		row.ready = cd.ready
+		row.remaining = cd.remaining
+		row.remainingKnown = cd.remainingKnown
 	end
-	return copy
+	-- Drop scratch rows for cooldowns the live state no longer tracks (profile swap),
+	-- otherwise a stale row would answer for an ability this spec does not have.
+	for key in pairs(S.cooldowns) do
+		if srcCD[key] == nil then S.cooldowns[key] = nil end
+	end
+
+	local srcBuffs = state.buffs or {}
+	S.buffs.degraded = srcBuffs.degraded
+
+	local rtb = srcBuffs.rtb or {}
+	S.buffs.rtb.stage = rtb.stage
+	S.buffs.rtb.stageKnown = rtb.stageKnown
+	S.buffs.rtb.expires = rtb.expires
+	S.buffs.rtb.names = rtb.names          -- read-only; not copied
+
+	local opp = srcBuffs.opportunity or {}
+	S.buffs.opportunity.up = opp.up
+	S.buffs.opportunity.stacks = opp.stacks
+	S.buffs.opportunity.expires = opp.expires
+
+	local ar = srcBuffs.adrenalineRush or {}
+	S.buffs.adrenalineRush.up = ar.up
+	S.buffs.adrenalineRush.expires = ar.expires
+
+	return S
 end
 
 -- Restless-Blades-style CDR: 1.0s per CP, 1.3s during RtB stage 3.

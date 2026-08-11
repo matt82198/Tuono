@@ -163,9 +163,8 @@ function Tuono.Assist.Update()
 	end
 
 	-- Get rotation spells and build CAPABILITY SET (not a sequence)
-	local rotationSpells = Tuono.safe(function()
-		return C_AssistedCombat.GetRotationSpells()
-	end) or {}
+	local okRot, rotationSpells = pcall(C_AssistedCombat.GetRotationSpells)
+	if not okRot or type(rotationSpells) ~= "table" then rotationSpells = {} end
 
 	-- Clear rotation set and rebuild it for membership tests only
 	wipe(Tuono.Assist.rotationSet)
@@ -199,7 +198,7 @@ end
 
 -- Deviation detection: flag when player casts a spell that doesn't match recommendation
 -- This handler runs immediately on spell cast (forced by event), then Update() clears the flag on next tick
-Tuono.RegisterEvent("UNIT_SPELLCAST_SUCCEEDED", function(event, unit, castGUID, spellID, ...)
+Tuono.RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player", function(event, unit, castGUID, spellID, ...)
 	if unit == "player" and spellID ~= Tuono.Assist.nextSpellID then
 		Tuono.Assist.deviated = true
 		-- Request immediate update to refresh recommendation after deviation

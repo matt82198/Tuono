@@ -21,15 +21,10 @@ local function MarkBarDirty()
 	barDirty = true
 end
 
--- Probe for available glow mechanisms (run once at startup)
--- Pre-create the overlay pool. Called at login so nothing allocates during a fight.
--- (Allocating our OWN frames in combat would be safe -- the taint risk was only ever
--- writing to Blizzard's secure buttons -- but pooling keeps the combat tick clean.)
-local function PrewarmGlowPool()
-	for _ = 1, GLOW_POOL_SIZE do
-		table.insert(glowPool, makeGlow())
-	end
-end
+-- Forward declaration. The pool itself is defined further down, next to the glow
+-- implementation; declaring the function here without the locals in scope would have
+-- silently resolved GLOW_POOL_SIZE/glowPool/makeGlow to nil GLOBALS.
+local PrewarmGlowPool
 
 -- Bonus-bar-aware main-bar slot math (see Display.lua's copy for the full derivation
 -- and citations; duplicated locally rather than shared to keep Display/Highlight
@@ -95,8 +90,82 @@ local function GetActionButtonFrameName(slot)
 	return nil
 end
 
+-- ============================================================================
+-- SPELL -> ACTION SLOT INDEX
+-- ============================================================================
+-- This used to scan for the slot on every lookup: 12 GetActionInfo calls, then a
+-- fallback sweep of all 120 slots, with each slot running SpellMatchesAction ->
+-- two pcall'd C_Spell override calls. ~390 C calls per resolution.
+--
+-- And it ran EVERY TICK, because the caller only cached on success: a recommendation
+-- that is not on any action bar -- a levelling rogue, an unbarred cooldown -- never
+-- populated the cache, so the guard never short-circuited and the full sweep repeated
+-- at 10Hz forever. (Display's keybind cache already solved this with a MISS sentinel;
+-- Highlight never got the same treatment.)
+--
+-- Now the bar is indexed ONCE per layout change. Lookup is a table read, and a missing
+-- key is a definitive miss rather than a reason to rescan -- the index is complete by
+-- construction, so absence is information.
+local slotIndex = {}
+local slotIndexDirty = true
+
+local function MarkSlotIndexDirty()
+	slotIndexDirty = true
+end
+
+local function rebuildSlotIndex()
+	wipe(slotIndex)
+	slotIndexDirty = false
+	if not _G.GetActionInfo then return end
+
+	for slot = 1, 120 do
+		local ok, actionType, actionID = pcall(_G.GetActionInfo, slot)
+		if ok and actionID and
+			(actionType == "spell" or actionType == "talent" or actionType == "action") then
+			-- First slot wins, so a duplicated ability resolves to its earliest button.
+			if slotIndex[actionID] == nil then slotIndex[actionID] = slot end
+
+			-- Index BOTH directions of an override pair, so a lookup succeeds whether we
+			-- hold the base ID (which is what the profile stores) or the override the
+			-- bar actually reports. Done here, once per layout change, instead of two
+			-- pcall'd resolutions per slot per tick.
+			if Tuono.ResolveBaseSpell then
+				local base = Tuono.ResolveBaseSpell(actionID)
+				if base and base ~= actionID and slotIndex[base] == nil then
+					slotIndex[base] = slot
+				end
+			end
+			if Tuono.ResolveOverrideSpell then
+				local override = Tuono.ResolveOverrideSpell(actionID)
+				if override and override ~= actionID and slotIndex[override] == nil then
+					slotIndex[override] = slot
+				end
+			end
+		end
+	end
+end
+
 -- Resolve spellID to action slot using available APIs
 local function GetActionSlotForSpell(spellID)
+	if not spellID then return nil end
+
+	if slotIndexDirty then rebuildSlotIndex() end
+	local indexed = slotIndex[spellID]
+	if indexed then return indexed end
+
+	-- Not in the index. The index covers all 120 slots, so this is a real miss and
+	-- there is nothing to gain from sweeping again -- except for the override case,
+	-- which is one cheap resolution rather than 120.
+	if Tuono.ResolveOverrideSpell then
+		local override = Tuono.ResolveOverrideSpell(spellID)
+		if override and override ~= spellID then return slotIndex[override] end
+	end
+	return nil
+end
+
+-- Retained for the /tuono debug path and as a correctness reference; not on any hot
+-- path any more.
+local function GetActionSlotForSpell_Scan(spellID)
 	if not spellID then return nil end
 
 	-- TIER 1: C_ActionBar.FindSpellActionButtons (modern). Expects a BASE spell ID and
@@ -107,7 +176,7 @@ local function GetActionSlotForSpell(spellID)
 	-- modern path was permanently dead -- every lookup fell through to the uncached
 	-- 120-slot scan below, on the 0.1s combat tick. pcall directly instead.
 	if _G.C_ActionBar and _G.C_ActionBar.FindSpellActionButtons then
-		local ok, buttons = pcall(function() return _G.C_ActionBar.FindSpellActionButtons(spellID) end)
+		local ok, buttons = pcall(_G.C_ActionBar.FindSpellActionButtons, spellID)
 		if ok and buttons and #buttons > 0 then
 			return buttons[1]
 		end
@@ -198,6 +267,15 @@ local function acquireGlow()
 	return table.remove(glowPool) or makeGlow()
 end
 
+-- Pre-create the overlay pool at login so nothing allocates during a fight. (Allocating
+-- our OWN frames in combat is safe -- the taint risk was only ever writing to Blizzard's
+-- secure buttons -- but pooling keeps the combat tick clean.)
+function PrewarmGlowPool()
+	for _ = 1, GLOW_POOL_SIZE do
+		table.insert(glowPool, makeGlow())
+	end
+end
+
 local function ShowGlow(buttonFrame)
 	if not buttonFrame then return false end
 	if glowByButton[buttonFrame] then return true end
@@ -266,7 +344,12 @@ function Tuono.Highlight.Update(result)
 	-- Cache hit only holds when BOTH the recommendation AND the action-bar layout are
 	-- unchanged (see barDirty declaration for why: a stealth/bonus-bar swap can leave
 	-- the recommended spellID identical while moving it to a different button).
-	if not barDirty and currentSpellID == lastHighlightedSpellID and lastHighlightedButton then
+	--
+	-- The `lastHighlightedButton` term is gone from this guard. It was only ever
+	-- assigned on a SUCCESSFUL resolution, so a spell that is not on any bar left it
+	-- nil, the guard never short-circuited, and the resolution re-ran every tick
+	-- forever. A resolved miss is now cached like any other result.
+	if not barDirty and currentSpellID == lastHighlightedSpellID then
 		return
 	end
 	barDirty = false
@@ -278,7 +361,13 @@ function Tuono.Highlight.Update(result)
 		lastHighlightedSpellID = nil
 	end
 
-	-- Apply glow to new recommendation
+	-- Apply glow to new recommendation.
+	-- lastHighlightedSpellID is recorded UNCONDITIONALLY, including when the spell is
+	-- not on any bar. Recording it only on success is what made an unbarred
+	-- recommendation re-resolve every tick forever; "we looked and there is no button"
+	-- is a result worth remembering, and barDirty already invalidates it.
+	lastHighlightedSpellID = currentSpellID
+
 	if currentSpellID then
 		local slot = GetActionSlotForSpell(currentSpellID)
 		if slot then
@@ -288,7 +377,6 @@ function Tuono.Highlight.Update(result)
 				if buttonFrame then
 					ShowGlow(buttonFrame)
 					lastHighlightedButton = buttonFrame
-					lastHighlightedSpellID = currentSpellID
 				end
 			end
 		end
@@ -345,14 +433,24 @@ local function RegisterHighlightEvents()
 	-- ACTIONBAR_PAGE_CHANGED, UPDATE_BONUS_ACTIONBAR fire with no payload.
 	-- ACTIONBAR_SLOT_CHANGED/UPDATE_BINDINGS/SPELLS_CHANGED/PLAYER_REGEN_DISABLED are
 	-- pre-existing, verified WoW events used elsewhere in this addon.
-	Tuono.RegisterEvent("UPDATE_STEALTH", MarkBarDirty)
-	Tuono.RegisterEvent("ACTIONBAR_PAGE_CHANGED", MarkBarDirty)
-	Tuono.RegisterEvent("UPDATE_BONUS_ACTIONBAR", MarkBarDirty)
-	Tuono.RegisterEvent("ACTIONBAR_SLOT_CHANGED", MarkBarDirty)
-	Tuono.RegisterEvent("SPELLS_CHANGED", MarkBarDirty)
+	-- Both the glow-target cache AND the slot index invalidate on the same signals:
+	-- anything that can move a spell to a different button, or change which override
+	-- is active. Rebuilding is event-driven, never per tick.
+	local function dirty()
+		MarkBarDirty()
+		MarkSlotIndexDirty()
+	end
+
+	Tuono.RegisterEvent("UPDATE_STEALTH", dirty)
+	Tuono.RegisterEvent("ACTIONBAR_PAGE_CHANGED", dirty)
+	Tuono.RegisterEvent("UPDATE_BONUS_ACTIONBAR", dirty)
+	Tuono.RegisterEvent("ACTIONBAR_SLOT_CHANGED", dirty)
+	Tuono.RegisterEvent("SPELLS_CHANGED", dirty)
 	Tuono.RegisterEvent("UPDATE_BINDINGS", MarkBarDirty)
 	Tuono.RegisterEvent("PLAYER_REGEN_DISABLED", MarkBarDirty)
 	Tuono.RegisterEvent("PLAYER_REGEN_ENABLED", MarkBarDirty)
+	Tuono.RegisterEvent("PLAYER_ENTERING_WORLD", dirty)
+	Tuono.RegisterEvent("TRAIT_CONFIG_UPDATED", dirty)
 end
 
 -- Initialization: probe glow mechanisms and register events

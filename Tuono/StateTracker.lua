@@ -64,6 +64,7 @@ Tuono.State = {
 
 local lastBuffScan = -1
 local lastEnemyCountRefresh = -1
+local lastTrinketRefresh = -1
 local trinketSpellCache = {}
 local trinketCacheSentinel = {}
 
@@ -823,7 +824,13 @@ function Tuono.State.RefreshFast()
 		lastEnemyCountRefresh = now
 	end
 
-	pcall(RefreshTrinkets)
+	-- Trinkets were the one expensive subsystem in here with NO throttle, while the buff
+	-- scan (0.5s) and enemy count (0.25s) both had one. Trinket cooldowns move on a scale
+	-- of minutes; polling four API calls for them at 10Hz is pure waste.
+	if (now - lastTrinketRefresh) >= 0.5 then
+		pcall(RefreshTrinkets)
+		lastTrinketRefresh = now
+	end
 end
 
 local function OnPlayerEnteringWorld(event)
@@ -886,8 +893,8 @@ Tuono.RegisterEvent("PLAYER_ENTERING_WORLD", OnPlayerEnteringWorldFull)
 Tuono.RegisterEvent("PLAYER_EQUIPMENT_CHANGED", OnPlayerEquipmentChanged)
 Tuono.RegisterEvent("PLAYER_REGEN_DISABLED", OnPlayerRegenDisabled)
 Tuono.RegisterEvent("PLAYER_REGEN_ENABLED", OnPlayerRegenEnabled)
-Tuono.RegisterEvent("UNIT_AURA", OnUnitAura)
-Tuono.RegisterEvent("UNIT_SPELLCAST_SUCCEEDED", OnUnitSpellcastSucceeded)
+Tuono.RegisterUnitEvent("UNIT_AURA", "player", OnUnitAura)
+Tuono.RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player", OnUnitSpellcastSucceeded)
 Tuono.RegisterEvent("NAME_PLATE_UNIT_ADDED", OnNamePlateUnitAdded)
 Tuono.RegisterEvent("NAME_PLATE_UNIT_REMOVED", OnNamePlateUnitRemoved)
 
