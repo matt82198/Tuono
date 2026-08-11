@@ -1,21 +1,10 @@
 local ADDON_NAME, OA = ...
 
-OA.SpellIDs = {
-	adrenalineRush = 13750, -- VERIFIED: Wowhead 2026-08-01
-	bladeRush = 271877, -- VERIFIED: Wowhead 2026-08-01
-	preparation = 14185, -- VERIFIED: Wowhead 2026-08-01
-	betweenTheEyes = 315341, -- VERIFIED: Wowhead 2026-08-01
-	rollTheBones = 315508, -- VERIFIED: Wowhead 2026-08-01
-	sinisterStrike = 193315, -- VERIFIED: Wowhead 2026-08-01
-	bladeFlurry = 13877, -- VERIFIED: Wowhead 2026-08-01
-	stealth = 1784, -- VERIFIED: Wowhead 2026-08-01
-	pistolShot = 185763, -- VERIFIED: Wowhead 2026-08-01
-	opportunity = 195627, -- VERIFIED: Opportunity buff (enables free Pistol Shot), hardcoded 3x in StateTracker before fix
-	ambush = 8676, -- VERIFIED: Stealth opener ability, primary damage button from Stealth
-	killingSpree = 51690, -- VERIFIED: Wowhead 2026-08-01
-	dispatch = 2098, -- VERIFIED: Wowhead 2026-08-01
-	keepItRolling = 381989 -- VERIFIED: Wowhead 2026-08-01
-}
+-- OA.SpellIDs is OWNED BY THE ACTIVE PROFILE (see Profiles.lua) and is already
+-- populated by the time this file loads. It used to be defined here, which hardcoded
+-- Outlaw into the state tracker; redefining it here now would silently overwrite the
+-- active profile's spell table. The tracker is spec-agnostic and follows whatever keys
+-- the profile declares.
 
 OA.RTB_BUFF_NAMES = {
 	"Roll the Bones", -- TODO(M0): verify names
@@ -32,6 +21,14 @@ OA.State = {
 	energyMax = 0,
 	comboPoints = 0,
 	comboPointsMax = 0,
+	-- Readability flags. `energy == 0` and "energy is unreadable" are DIFFERENT states
+	-- and must never be conflated -- see OA.readNum in Core.lua. Start false (unknown)
+	-- so nothing trusts a resource before the first successful read.
+	energyKnown = false,
+	energyMaxKnown = false,
+	comboPointsKnown = false,
+	comboPointsMaxKnown = false,
+	lastKnownCPMax = nil,
 	buffs = {
 		rtb = { stage = 0, expires = 0, names = {} },
 		opportunity = { up = false, expires = 0, stacks = 0 },
@@ -88,49 +85,102 @@ local instanceMap = {}
 local lastCast = { spellID = nil, t = 0 }
 local castCorrelationWindow = 0.8
 
-local function NormalizeCooldown(startTime, duration)
-	-- FAIL-CLOSED: Check for secret values BEFORE coercing
-	-- Secret cooldowns are UNKNOWN, never READY
-	if isSecret(startTime) or isSecret(duration) then
-		return { known = false, ready = false, remaining = 0 }
+-- COOLDOWN READABILITY IS TWO SEPARATE QUESTIONS, AND MIDNIGHT ANSWERS THEM DIFFERENTLY:
+--   "is it ready?"       -> SpellCooldownInfo.isEnabled/.isActive are flagged NeverSecret
+--   "how long is left?"  -> .startTime/.duration are SecretWhenCooldownsRestricted
+--                           (secret in combat, encounters, mythic keystones and PvP)
+-- The old code checked only startTime/duration, and on a secret returned
+-- {known=false, ready=false}. Treating "I can't read the timer" as "the ability is NOT
+-- ready" made IntelligenceLayer's castability filter drop every cooldown ability in
+-- exactly the content this addon is for. Readiness survives; only the countdown dies.
+-- `remainingKnown` tells the UI whether it may draw a number.
+local function NormalizeCooldown(startTime, duration, isEnabled, isActive)
+	local now = GetTime()
+
+	local st, stKnown = OA.readNum(startTime)
+	local dur, durKnown = OA.readNum(duration)
+
+	-- Exact path: the timer is readable, so derive everything from it.
+	if stKnown and durKnown then
+		if st == 0 or dur == 0 then
+			return { known = true, ready = true, remaining = 0, remainingKnown = true }
+		end
+		local remaining = (st + dur) - now
+		return {
+			known = true,
+			ready = remaining <= 0,
+			remaining = math.max(0, remaining),
+			remainingKnown = true
+		}
 	end
 
-	startTime = OA.num(startTime, 0)
-	duration = OA.num(duration, 0)
-	if startTime == 0 or duration == 0 then
-		return { known = true, ready = true, remaining = 0 }
+	-- Degraded path: timer hidden, but the never-secret booleans still answer "ready?".
+	-- isActive is authoritative when present (a cooldown is running). isEnabled==false
+	-- means the spell is currently unusable/locked out.
+	local active, activeKnown = OA.readBool(isActive)
+	local enabled, enabledKnown = OA.readBool(isEnabled)
+
+	if activeKnown then
+		return { known = true, ready = not active, remaining = 0, remainingKnown = false }
 	end
-	local now = GetTime()
-	local remaining = (startTime + duration) - now
-	return {
-		known = true,
-		ready = remaining <= 0,
-		remaining = math.max(0, remaining)
-	}
+	if enabledKnown then
+		-- Legacy semantics: isEnabled==0/false while a cooldown blocks the cast.
+		return { known = true, ready = enabled, remaining = 0, remainingKnown = false }
+	end
+
+	-- Nothing readable at all: genuinely unknown. Callers must not treat this as ready
+	-- OR as not-ready; it is an absence of information.
+	return { known = false, ready = false, remaining = 0, remainingKnown = false }
+end
+
+-- Which spell keys are worth polling a cooldown for. Derived from the active profile
+-- rather than hardcoded, and limited to abilities that actually HAVE a cooldown so a
+-- 14-spell profile does not cost 14 API calls per tick at 10Hz.
+local cooldownKeyCache = nil
+local function cooldownKeys()
+	if cooldownKeyCache then return cooldownKeyCache end
+	cooldownKeyCache = {}
+	local profile = OA.Profiles and OA.Profiles.Active()
+	if not profile then return cooldownKeyCache end
+	for key, spellID in pairs(profile.spells or {}) do
+		local ability = (profile.abilities or {})[spellID]
+		if ability and (ability.cd or 0) > 0 then
+			table.insert(cooldownKeyCache, key)
+		end
+	end
+	table.sort(cooldownKeyCache)   -- deterministic order for reproducible tests
+	return cooldownKeyCache
+end
+
+if OA.Profiles then
+	OA.Profiles.OnActivate(function() cooldownKeyCache = nil end)
 end
 
 local function RefreshCooldowns()
-	-- Track all cooldowns in a single pass
-	local cooldownKeys = {
-		"adrenalineRush", "bladeRush", "preparation", "betweenTheEyes",
-		"bladeFlurry", "rollTheBones", "killingSpree", "dispatch", "keepItRolling"
-	}
-
-	for _, key in ipairs(cooldownKeys) do
+	for _, key in ipairs(cooldownKeys()) do
 		local spellID = OA.SpellIDs[key]
 		if spellID then
-			local cd
+			local handled = false
 			-- Try modern API first
 			if C_Spell and C_Spell.GetSpellCooldown then
-				cd = C_Spell.GetSpellCooldown(spellID)
-				if cd then
-					OA.State.cooldowns[key] = NormalizeCooldown(cd.startTime, cd.duration)
+				local ok, cd = pcall(C_Spell.GetSpellCooldown, spellID)
+				if ok and type(cd) == "table" then
+					OA.State.cooldowns[key] =
+						NormalizeCooldown(cd.startTime, cd.duration, cd.isEnabled, cd.isActive)
+					handled = true
 				end
 			end
-			-- Fallback to legacy API
-			if not cd and GetSpellCooldown then
-				local start, duration = GetSpellCooldown(spellID)
-				OA.State.cooldowns[key] = NormalizeCooldown(start, duration)
+			-- Fallback to legacy API: (start, duration, enabled, modRate)
+			if not handled and GetSpellCooldown then
+				local ok, start, duration, enabled = pcall(GetSpellCooldown, spellID)
+				if ok then
+					OA.State.cooldowns[key] = NormalizeCooldown(start, duration, enabled, nil)
+					handled = true
+				end
+			end
+			if not handled then
+				OA.State.cooldowns[key] =
+					{ known = false, ready = false, remaining = 0, remainingKnown = false }
 			end
 		end
 	end
@@ -458,51 +508,105 @@ local function RefreshTrinkets()
 	end
 end
 
+-- ENEMY COUNTING IS LEGAL AND WORTH DOING PROPERLY.
+-- Nameplates and player-vs-nameplate threat are both never-secret, so this is real
+-- data, not an inference from whether Blade Flurry showed up in Blizzard's queue.
+-- (The README's "cannot count nearby enemies legally" is out of date.)
+--
+-- The old version counted every nameplate it could touch, which over-counted badly:
+-- friendly units, critters, dead bodies, and everything out to the ~40yd nameplate
+-- range all scored. An 8yd Blade Flurry decision built on a 40yd count is noise. Each
+-- unit must now be attackable, alive, and actually in melee range.
+local function unitInMeleeRange(token)
+	-- Prefer a real range check against a melee ability from the active profile.
+	local profile = OA.Profiles and OA.Profiles.Active()
+	local meleeSpell = profile and profile.meleeRangeSpell and profile.spells[profile.meleeRangeSpell]
+	if meleeSpell then
+		local fn = (C_Spell and C_Spell.IsSpellInRange) or _G.IsSpellInRange
+		if fn then
+			local ok, inRange = pcall(fn, meleeSpell, token)
+			if ok then
+				local b, known = OA.readBool(inRange)
+				if known then return b end
+				local n, numKnown = OA.readNum(inRange)   -- legacy API returns 1/0
+				if numKnown then return n == 1 end
+			end
+		end
+	end
+	-- Fall back to the interact-distance probe (4 == ~28yd "follow"; the tightest
+	-- generally-available bracket). Better than no filter at all.
+	if _G.CheckInteractDistance then
+		local ok, res = pcall(_G.CheckInteractDistance, token, 4)
+		if ok then
+			local b, known = OA.readBool(res)
+			if known then return b end
+		end
+	end
+	return true
+end
+
 local function RefreshEnemyCount()
 	OA.State.enemyCount = nil
+	OA.State.enemyCountKnown = false
 
 	local api = _G.C_NamePlate
-	if not api or not api.GetNamePlates then
-		return
-	end
+	if not api or not api.GetNamePlates then return end
 
-	local plates = api.GetNamePlates()
-	if not plates then
-		return
-	end
+	local ok, plates = pcall(api.GetNamePlates)
+	if not ok or type(plates) ~= "table" then return end
 
 	local count = 0
+	local considered = 0
 	local poisoned = 0
 
 	for _, plate in ipairs(plates) do
-		local token = nil
-		if plate.namePlateUnitToken then
-			token = plate.namePlateUnitToken
-		elseif plate.UnitFrame and plate.UnitFrame.unit then
-			token = plate.UnitFrame.unit
-		end
+		local token = plate.namePlateUnitToken
+			or (plate.UnitFrame and plate.UnitFrame.unit)
 
 		if token then
-			local ok, threat = pcall(function()
-				return UnitThreatSituation("player", token)
-			end)
+			considered = considered + 1
 
-			if ok and threat ~= nil then
-				if isSecret(threat) then
-					poisoned = poisoned + 1
-				else
-					count = count + 1
-				end
-			else
+			local attackable = true
+			if _G.UnitCanAttack then
+				local okA, res = pcall(_G.UnitCanAttack, "player", token)
+				local b, known = OA.readBool(okA and res)
+				attackable = known and b or false
+			end
+
+			local alive = true
+			if _G.UnitIsDead then
+				local okD, res = pcall(_G.UnitIsDead, token)
+				local b, known = OA.readBool(okD and res)
+				if known then alive = not b end
+			end
+
+			-- Threat is the engagement signal: a unit we have no threat relationship
+			-- with is usually not one we are fighting. A SECRET threat value means we
+			-- cannot judge this unit, which is a gap in the count, not a zero.
+			local engaged = true
+			local okT, threat = pcall(UnitThreatSituation, "player", token)
+			if not okT then
 				poisoned = poisoned + 1
+				engaged = false
+			elseif isSecret(threat) then
+				poisoned = poisoned + 1
+				engaged = false
+			end
+
+			if attackable and alive and engaged and unitInMeleeRange(token) then
+				count = count + 1
 			end
 		end
 	end
 
-	if #plates == 0 or poisoned == #plates then
+	-- Distinguish "zero enemies" from "could not tell". If every plate we looked at was
+	-- unreadable, we know nothing -- and nil must never be treated as 0 downstream.
+	if considered > 0 and poisoned == considered then
 		OA.State.enemyCount = nil
+		OA.State.enemyCountKnown = false
 	else
 		OA.State.enemyCount = count
+		OA.State.enemyCountKnown = true
 	end
 end
 
@@ -623,10 +727,52 @@ function OA.State.RefreshFast()
 		if ok then OA.State.stealthed = stealthed and true or false end
 	end
 
-	OA.State.energy = OA.num(UnitPower("player", energyPower), 0)
-	OA.State.energyMax = OA.num(UnitPowerMax("player", energyPower), 0)
-	OA.State.comboPoints = OA.num(UnitPower("player", comboPower), 0)
-	OA.State.comboPointsMax = OA.num(UnitPowerMax("player", comboPower), 0)
+	-- RESOURCES MUST REPORT READABILITY, NOT JUST A NUMBER.
+	-- The old code was OA.num(UnitPower(...), 0). When Midnight makes a resource secret
+	-- that yields a confident "0 energy / 0 combo points" -- and every canAfford() gate
+	-- in Rotation.lua then fails, Predict() returns an EMPTY sequence, and the bar falls
+	-- back to a stale Blizzard pick. Unreadable must be UNKNOWN, so the predictor can
+	-- drop the gate instead of asserting zero.
+	local energy, energyKnown = OA.readNum(UnitPower("player", energyPower))
+	local energyMax, energyMaxKnown = OA.readNum(UnitPowerMax("player", energyPower))
+	local cp, cpKnown = OA.readNum(UnitPower("player", comboPower))
+	local cpMax, cpMaxKnown = OA.readNum(UnitPowerMax("player", comboPower))
+
+	OA.State.energyMax = energyMax or 0
+	OA.State.energyMaxKnown = energyMaxKnown
+
+	-- THE SHADOW MODEL IS THE SINGLE SOURCE OF ENERGY, ALWAYS -- not just a fallback.
+	-- It measures directly whenever the API is readable and integrates forward when it
+	-- is not. Running it only on the unreadable path was a seeding bug: the model never
+	-- saw a real measurement to anchor to, so the moment energy went secret it had
+	-- nothing to extrapolate from and reported "unknown" forever.
+	if OA.Energy then
+		pcall(OA.Energy.Advance)
+		local est, usable, conf = OA.Energy.Get()
+		OA.State.energy = est
+		OA.State.energyKnown = usable
+		OA.State.energySource = usable and conf or "unknown"
+	elseif energyKnown then
+		OA.State.energy = energy or 0
+		OA.State.energyKnown = true
+		OA.State.energySource = "measured"
+	else
+		OA.State.energy = 0
+		OA.State.energyKnown = false
+		OA.State.energySource = "unknown"
+	end
+	OA.State.comboPoints = cp or 0
+	OA.State.comboPointsKnown = cpKnown
+	-- comboPointsMax is a character constant (5/6/7), not combat state. If it ever reads
+	-- secret, keeping the last known value beats collapsing to 0 -- `cp < cpMax` with
+	-- cpMax==0 is false for every cp, which silently disables the builder rule.
+	if cpMaxKnown and cpMax and cpMax > 0 then
+		OA.State.comboPointsMax = cpMax
+		OA.State.lastKnownCPMax = cpMax
+	elseif OA.State.lastKnownCPMax then
+		OA.State.comboPointsMax = OA.State.lastKnownCPMax
+	end
+	OA.State.comboPointsMaxKnown = cpMaxKnown
 
 	RefreshCooldowns()
 
@@ -635,17 +781,23 @@ function OA.State.RefreshFast()
 	-- When inCombat=true, skip Tier 3 and trust Tier 1 delta tracking.
 	-- If Tier 1 failed (degraded), stay degraded; Tier 3 won't fix it mid-combat.
 	if (now - lastBuffScan) >= 0.5 and not OA.State.inCombat then
-		-- Periodic fallback scan in case delta tracking lost sync (out of combat only)
-		RefreshBuffsFallback()
+		-- Periodic fallback scan in case delta tracking lost sync (out of combat only).
+		-- ISOLATED pcall: as of 12.1.0 the index/slot/instanceID aura paths do not merely
+		-- return secrets, they raise an immediate Lua ERROR while auras are restricted.
+		-- Sharing RefreshFast's outer pcall meant one such throw skipped everything after
+		-- it -- enemy count and trinket state included -- so a hidden aura silently took
+		-- out unrelated, still-readable subsystems.
+		local ok = pcall(RefreshBuffsFallback)
+		if not ok then OA.State.buffs.degraded = true end
 		lastBuffScan = now
 	end
 
 	if (now - lastEnemyCountRefresh) >= 0.25 then
-		RefreshEnemyCount()
+		pcall(RefreshEnemyCount)
 		lastEnemyCountRefresh = now
 	end
 
-	RefreshTrinkets()
+	pcall(RefreshTrinkets)
 end
 
 local function OnPlayerEnteringWorld(event)

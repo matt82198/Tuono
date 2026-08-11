@@ -62,32 +62,61 @@ function OA.safe(fn, ...)
   return result
 end
 
--- Coerce WoW API returns to safe number type, guarding against secret values
--- Returns default (default 0) if v is nil, issecretvalue(v) is true, or type(v) ~= "number"
-function OA.num(v, default)
-  default = default or 0
-  if v == nil then return default end
-  -- Check for secret values FIRST, before any type() check (issecretvalue exists in Midnight)
-  -- Secret values report their real type, so type(secret_number)=="number" without this guard
-  if _G.issecretvalue and _G.issecretvalue(v) then return default end
-  if type(v) == "number" then return v end
-  -- Try string coercion as fallback
+-- ===== SECRET-VALUE PRIMITIVES =====
+-- Midnight (12.0+) hands back "secret" values: they report their real type() but ERROR
+-- on arithmetic, comparison, boolean test, length, and table-key use.
+--
+-- THE BUG THIS REPLACES: OA.num/OA.bool collapsed a secret to a DEFAULT (0 / false).
+-- That is fail-SILENT, not fail-closed. Unreadable energy became "0 energy", every
+-- affordability check then failed, Rotation.Predict returned an EMPTY sequence, and the
+-- bar fell through to a stale Blizzard pick -- the frozen first icon.
+--
+-- A read must report KNOWN vs UNKNOWN so callers can degrade HONESTLY (drop the gate,
+-- lower confidence, say so in the UI) instead of silently pretending the value is zero.
+
+local hasIsSecret = type(_G.issecretvalue) == "function"
+
+function OA.isSecret(v)
+  if not hasIsSecret then return false end
+  local ok, res = pcall(_G.issecretvalue, v)
+  return ok and res == true
+end
+
+-- Returns (number, true) when readable; (nil, false) when absent, secret, or wrong type.
+function OA.readNum(v)
+  if v == nil then return nil, false end
+  if OA.isSecret(v) then return nil, false end
+  if type(v) == "number" then return v, true end
   if type(v) == "string" then
     local n = tonumber(v)
-    if n then return n end
+    if n then return n, true end
   end
+  return nil, false
+end
+
+-- Returns (boolean, true) when readable; (nil, false) when absent or secret.
+-- NEVER test a secret boolean directly: `if secretBool then` THROWS.
+function OA.readBool(v)
+  if v == nil then return nil, false end
+  if OA.isSecret(v) then return nil, false end
+  if type(v) == "boolean" then return v, true end
+  return nil, false
+end
+
+-- Back-compat coercions, now implemented on top of the tri-state readers. These are
+-- still fail-silent by construction, so prefer OA.readNum/OA.readBool anywhere the
+-- DIFFERENCE between "zero" and "unreadable" changes a decision.
+function OA.num(v, default)
+  if default == nil then default = 0 end
+  local n, known = OA.readNum(v)
+  if known then return n end
   return default
 end
 
--- Coerce WoW API returns to safe boolean type, guarding against secret values
--- Returns default (default false) if v is nil, issecretvalue(v) is true, or type(v) ~= "boolean"
 function OA.bool(v, default)
-  default = default or false
-  if v == nil then return default end
-  -- Check for secret values FIRST, before any type() check
-  -- Secret values report their real type, so type(secret_bool)=="boolean" without this guard
-  if _G.issecretvalue and _G.issecretvalue(v) then return default end
-  if type(v) == "boolean" then return v end
+  if default == nil then default = false end
+  local b, known = OA.readBool(v)
+  if known then return b end
   return default
 end
 

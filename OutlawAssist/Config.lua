@@ -2,7 +2,12 @@ local ADDON_NAME, OA = ...
 
 OA.defaults = {
 	updateInterval = 0.1,
-	aoeMode = false,
+	-- Tri-state: "auto" switches rotations on the live enemy count (with hysteresis),
+	-- "on"/"off" pin one rotation. Auto is the default now that enemy counting is
+	-- verified legal and range-filtered.
+	aoeMode = "auto",
+	aoeThreshold = 2,
+	activeProfile = nil,
 	show = {
 		queue = true,
 		ooc = true

@@ -515,12 +515,19 @@ function OA.Display.Render(result)
 					-- Cooldown widget: cache-guard to avoid resetting animation every tick
 					if icon.cooldownWidget then
 						local remaining = 0
+						-- Default TRUE so trinkets and the no-cooldown case behave as before;
+						-- only a spell cooldown whose timer went secret sets this false.
+						local remainingIsKnown = true
 						if entry.kind == "cooldown" and entry.spellID then
-							local cdKey = entry.spellID == OA.SpellIDs.adrenalineRush and "adrenalineRush" or
-							              entry.spellID == OA.SpellIDs.bladeRush and "bladeRush" or
-							              entry.spellID == OA.SpellIDs.preparation and "preparation" or nil
-							if cdKey and OA.State.cooldowns[cdKey] then
-								remaining = OA.State.cooldowns[cdKey].remaining
+							-- Resolve via the shared spellID->key map rather than a hand-written
+							-- chain: the old inline version knew only AR/Blade Rush/Preparation,
+							-- so every other cooldown silently rendered no sweep at all.
+							local cdKey = OA.Rotation and OA.Rotation.SPELL_TO_CDKEY
+								and OA.Rotation.SPELL_TO_CDKEY[entry.spellID]
+							local cd = cdKey and OA.State.cooldowns[cdKey]
+							if cd then
+								remaining = cd.remaining or 0
+								remainingIsKnown = cd.remainingKnown ~= false
 							end
 						elseif entry.kind == "trinket" and entry.itemSlot then
 							if OA.State.trinkets[entry.itemSlot] then
@@ -528,13 +535,21 @@ function OA.Display.Render(result)
 							end
 						end
 
-						-- Only call SetCooldown if values changed (cache-guard)
-						if remaining ~= icon.lastCDDuration or (GetTime() - icon.lastCDStart or 0) > 0.1 then
+						-- Cache-guard. `(GetTime() - icon.lastCDStart or 0)` parsed as
+						-- `(GetTime() - lastCDStart) or 0`, so it performed arithmetic on nil
+						-- whenever the first branch did not short-circuit -- a latent throw that
+						-- would abort the whole render. Compare against an explicit default.
+						local sinceLast = GetTime() - (icon.lastCDStart or 0)
+						if remaining ~= icon.lastCDDuration or sinceLast > 0.1 then
 							if remaining > 0 then
 								icon.cooldownWidget:SetCooldown(GetTime(), remaining)
 							end
 							if icon.cooldownText then
-								if remaining and remaining > 0 then
+								-- Only draw a countdown we actually measured. Under Midnight the
+								-- timer goes secret while readiness stays readable, so `remaining`
+								-- is legitimately 0-with-unknown-duration; printing "0" there would
+								-- assert a precision we do not have.
+								if remaining and remaining > 0 and remainingIsKnown then
 									icon.cooldownText:SetText(string.format("%.0f", remaining))
 									icon.cooldownText:Show()
 								else

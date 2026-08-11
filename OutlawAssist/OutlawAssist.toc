@@ -7,12 +7,17 @@
 ## SavedVariables: OutlawAssistDB
 
 Core.lua
+Profiles.lua
+UserRules.lua
+profiles/OutlawRogue.lua
 data/rules.lua
 StateTracker.lua
 AssistReader.lua
 Rotation.lua
+EnergyModel.lua
 IntelligenceLayer.lua
 Display.lua
 Highlight.lua
 Config.lua
+Secrets.lua
 ApiTest.lua
