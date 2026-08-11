@@ -185,6 +185,14 @@ Tuono.RegisterEvent("ADDON_LOADED", function(event, addonName)
   if not Tuono.defaults then
     Tuono.defaults = {}
   end
+
+  -- MIGRATION SIGNAL. Capture emptiness BEFORE defaults are merged in: one line later
+  -- every fresh DB is indistinguishable from a configured one, because deepMerge has
+  -- filled it with the default tree. Migration.lua reads this at PLAYER_LOGIN, which is
+  -- the earliest point where the OLD addon is guaranteed to have loaded its own saved
+  -- variables into the global environment.
+  Tuono.dbWasFresh = (TuonoDB == nil) or (next(TuonoDB) == nil)
+
   TuonoDB = deepMerge(TuonoDB or {}, Tuono.defaults)
   Tuono.db = TuonoDB
 end)

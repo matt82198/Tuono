@@ -52,6 +52,17 @@ that is still legally readable**, with your own priority logic layered on top.
 3. **Trap #2 — it may show as "out of date."** Tick **Load out of date AddOns** in the
    Addons pane before entering the world.
 4. In game: `/tuono config` to open the editor, `/tuono secrets` to audit what your client is
+
+### Upgrading from OutlawAssist
+
+Tuono is OutlawAssist renamed. WoW keys saved variables to the addon folder, so the
+rename would otherwise look like a fresh install and lose your bar position, scale,
+glow settings and any edited priority rows.
+
+**Keep the old `OutlawAssist` folder in place for one login.** On first load Tuono reads
+its saved variables, imports them, and tells you in chat what it carried. After that you
+can delete the old folder. The import runs once and will never overwrite settings you
+have already changed in Tuono.
    actually exposing.
 
 ---

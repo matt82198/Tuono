@@ -9,6 +9,7 @@
 ## SavedVariables: TuonoDB
 
 Core.lua
+Migration.lua
 Profiles.lua
 UserRules.lua
 profiles/OutlawRogue.lua
