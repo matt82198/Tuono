@@ -2,6 +2,64 @@
 
 All notable changes to Tuono are documented here.
 
+## [2.0.0] - 2026-08-11
+
+Renamed from **OutlawAssist** to **Tuono**, and turned from one spec's rotation
+helper into a framework. Not yet validated against a live 12.x client.
+
+### Fixed
+- **The first icon was frozen in combat and pressing it did nothing.** Two stacking
+  secret-value bugs:
+  1. `C_AssistedCombat.IsAvailable()` returns a boolean that goes secret in instanced
+     combat, and `if not isAvailable then` on a secret raises an immediate Lua error.
+     Core drives `Assist.Update` through a pcall, so the throw was swallowed and
+     `nextSpellID` was never reassigned — Blizzard's pick froze at combat entry. The
+     old "GetNextCastSpell is STATIC in combat, 52 samples" note was measuring this
+     crash, not the API.
+  2. `OA.num(UnitPower(...), 0)` collapsed an unreadable energy read to a confident
+     zero. Every affordability gate then failed, `Rotation.Predict` returned an empty
+     sequence, and the bar fell through to that frozen pick.
+- Secret cooldown timers were reported `ready=false`, deleting every cooldown ability
+  from the queue in exactly the content this addon is for. `SpellCooldownInfo.isEnabled`
+  and `.isActive` are never-secret, so readiness survives even when the countdown does
+  not; `remainingKnown=false` now tells the UI not to draw a number it did not measure.
+- The aura index scan raises rather than returning secrets as of 12.1.0. It shared
+  `RefreshFast`'s outer pcall, so one hidden aura silently took out trinket and
+  enemy-count refresh too. Now isolated.
+- Latent nil arithmetic in the display cooldown cache-guard (`GetTime() - x or 0`
+  parses as `(GetTime() - x) or 0`).
+
+### Added
+- **Profile framework.** Outlaw lives in `profiles/OutlawRogue.lua` behind a registry;
+  the engine is spec-agnostic. Adding a spec is a data change. See `docs/PROFILES.md`.
+- **User-editable priority rules** — ordered rows, first match wins, compiled to
+  predicates. No stored Lua. In-game editor at `/tuono config`.
+- **Shadow energy model.** Energy is secret unconditionally, so it is modelled from
+  our own casts, elapsed time and haste rather than read. Reports
+  measured/estimated/bracketed/anchored and never presents an estimate as a reading.
+- **Energy bracketing** via the never-secret `IsSpellUsable` + `GetSpellPowerCost`:
+  costliest usable ability bounds energy below, cheapest unaffordable one bounds it
+  above. Can cold-start the model with no direct read ever having succeeded.
+- **Sentinel anchoring.** Blizzard returns pseudo-spell 1249752 "Waiting for Energy"
+  when the next action is unaffordable. Its falling edge is an exact energy reading,
+  and two consecutive anchors solve for the real regen rate — retiring a hardcoded
+  Combat Potency guess.
+- **Two rotations, one bar.** Separate single-target and AoE priority lists, selected
+  on live enemy count with a 2s dwell so the bar cannot strobe. Enemy counting is
+  legal after all (nameplates and threat are never-secret) and now filters for
+  attackable, alive, and in melee range.
+- `/tuono secrets` — live audit of which values are readable and which restriction
+  contexts are active.
+- First-load migration of `OutlawAssistDB`.
+
+### Changed
+- **Blizzard's pick is no longer rendered.** It is a different rotation, not a degraded
+  copy of ours, and swapping between them mid-fight was incoherent. It is still read
+  every tick as a drift sensor and as the energy anchor source.
+- Starvation now shows a dimmed "pooling" entry — what you are waiting to afford —
+  instead of a blank bar.
+- Slash commands are `/tuono` and `/tu`; `/oa` still works.
+
 ## [1.8.2] - 2026-08-02
 
 ### Fixed

@@ -50,15 +50,26 @@ end
 
 -- Load addon files in TOC order
 local files = {
+  -- MUST MIRROR Tuono.toc LOAD ORDER. Profiles must precede StateTracker: it owns
+  -- Tuono.SpellIDs, which StateTracker reads at load. Omitting it does not fail
+  -- loudly -- the addon simply comes up with an empty spell table and every
+  -- behavioural test below silently exercises a half-assembled addon.
   "Tuono/Core.lua",
+  "Tuono/Migration.lua",
+  "Tuono/Profiles.lua",
+  "Tuono/UserRules.lua",
+  "Tuono/profiles/OutlawRogue.lua",
   "Tuono/data/rules.lua",
   "Tuono/StateTracker.lua",
   "Tuono/AssistReader.lua",
   "Tuono/Rotation.lua",
+  "Tuono/EnergyModel.lua",
   "Tuono/IntelligenceLayer.lua",
   "Tuono/Display.lua",
   "Tuono/Highlight.lua",
   "Tuono/Config.lua",
+  "Tuono/Options.lua",
+  "Tuono/Secrets.lua",
   "Tuono/ApiTest.lua"
 }
 
@@ -137,23 +148,34 @@ if Tuono.Assist and Tuono.Assist.Update then
 end
 
 -- Test 1: Base queue with assist available
-test("assist available - queue adapts to varying nextSpellID values", function()
-  -- Self-sufficient: prevent opener rule from pinning by setting inCombat=true
+-- REPLACES "queue adapts to varying nextSpellID values".
+-- That test asserted Blizzard's pick lands at queue position 1. It no longer does, by
+-- design: the assist is a DIFFERENT rotation, not a degraded copy of ours, and swapping
+-- between the two mid-fight with only an alpha difference to signal it was incoherent to
+-- read. The queue is now sourced solely from our own priority list.
+--
+-- The assist is still polled every tick, as a drift sensor and as the energy anchor
+-- source -- so the property worth pinning is the inverse of the old one: an arbitrary
+-- assist pick must NOT be able to reach the bar.
+test("assist pick never reaches the queue, whatever it returns", function()
   Tuono.State.inCombat = true
   stub.state.stealthed = false
   Tuono.State.stealthed = false
 
-  _G.C_AssistedCombat.GetNextCastSpell = function() return 193315 end
+  _G.C_AssistedCombat.GetNextCastSpell = function() return 1234 end   -- in no profile
   Tuono.Assist.Update()
   local r = Tuono.Engine.Evaluate()
   assert_true(r.queue ~= nil, "queue exists")
-  assert_true(#r.queue > 0, "queue has entries")
-  assert_eq(r.queue[1].spellID, 193315, "queue adapts: starts with 193315 when GetNextCastSpell returns 193315")
+  assert_true(#r.queue > 0, "queue has entries from our own rotation")
 
-  _G.C_AssistedCombat.GetNextCastSpell = function() return 1234 end
-  Tuono.Assist.Update()
-  r = Tuono.Engine.Evaluate()
-  assert_eq(r.queue[1].spellID, 1234, "queue adapts: starts with 1234 when GetNextCastSpell returns 1234")
+  local leaked = false
+  for _, e in ipairs(r.queue) do
+    if e.spellID == 1234 then leaked = true end
+  end
+  assert_true(not leaked, "assist spellID 1234 must not appear in the queue")
+
+  -- ...but it is still being read, because the drift sensor and energy anchor need it.
+  assert_eq(Tuono.Assist.nextSpellID, 1234, "assist pick is still tracked, just not rendered")
 
   _G.C_AssistedCombat.GetNextCastSpell = function() return 193315 end
   Tuono.State.inCombat = false
@@ -683,7 +705,10 @@ test("display reset and status commands work without errors", function()
 
   resetHandler()
   assert_true(Tuono.db ~= nil, "db exists after reset")
-  assert_eq(Tuono.db.aoeMode, false, "db reset to defaults")
+  -- aoeMode became a tri-state ("auto"/"on"/"off") once enemy counting was confirmed
+  -- legal: a boolean cannot express "decide from the live enemy count", which is now
+  -- the default. This assertion pinned the old boolean default.
+  assert_eq(Tuono.db.aoeMode, "auto", "db reset to defaults")
 
   statusHandler()
   assert_true(true, "status handler completed without error")
@@ -2802,11 +2827,18 @@ test("display-clarity: low confidence renders clearly dimmed", function()
 end)
 
 -- Display Test 4: Static-fallback renders distinctly dimmed and marked
-test("display-clarity: static-fallback renders distinctly dimmed with marker", function()
+-- REPLACES the "static-fallback" rendering test. That confidence tier existed only to
+-- mark Blizzard's fallback pick, which is no longer rendered at all.
+--
+-- "pooling" inherits the role: the one entry type that must be visually distinct from a
+-- normal recommendation, because it means "wait for this", not "press this". The
+-- position-1 authority ring is what says press-now, so it must be muted here too --
+-- dimming alone reads as low confidence, which is a different message entirely.
+test("display-clarity: pooling entry renders as a wait, not a command", function()
   Tuono.Display.Init()
   local result = {
     queue = {
-      {spellID = 193315, kind = "rotation", source = "blizzard", confidence = "static-fallback", degraded = false}
+      {spellID = 193315, kind = "rotation", source = "SS_last_resort", confidence = "pooling", degraded = false}
     },
     advisories = {}
   }
@@ -2814,11 +2846,10 @@ test("display-clarity: static-fallback renders distinctly dimmed with marker", f
 
   local icon = Tuono.Display.anchor.icons[1]
   local alpha = icon:GetAlpha()
-  assert_true(alpha >= 0.25 and alpha <= 0.35, "static-fallback icon has alpha ~0.3, got " .. tostring(alpha))
+  assert_true(alpha >= 0.3 and alpha <= 0.4, "pooling icon is dimmed (~0.35), got " .. tostring(alpha))
 
-  -- Static-fallback should show badge marker
   if icon.badge then
-    assert_true(icon.badge:IsShown(), "static-fallback icon has badge shown")
+    assert_true(icon.badge:IsShown(), "pooling icon shows its wait marker")
   end
 end)
 
