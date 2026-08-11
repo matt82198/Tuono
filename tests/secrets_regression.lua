@@ -538,6 +538,72 @@ check("no upper bound when everything is affordable",
   lo2 == 45 and up2 == nil,
   "lower=" .. tostring(lo2) .. " upper=" .. tostring(up2))
 
+-- ===========================================================================
+-- Sentinel anchoring: the falling edge is an EXACT energy reading
+-- ===========================================================================
+local SS = Tuono.SpellIDs.sinisterStrike       -- 45 energy
+scenario.energySecret = true
+scenario.energy = 100                          -- keep the bracket from fighting us
+
+-- Enter the wait, then clear it. Energy must land exactly on the cost of the ability
+-- the engine was waiting to afford.
+scenario.assistNext = 1249752
+tick(0.1); tick(0.1)
+Tuono.Energy.value = 3                          -- deliberately wrong going in
+scenario.assistNext = SS
+tick(0.1); tick(0.1)
+
+check("sentinel clear anchors energy to the cost of the revealed ability",
+  Tuono.Energy.value == 45 and Tuono.Energy.confidence == "anchored",
+  "value=" .. tostring(Tuono.Energy.value)
+    .. " conf=" .. tostring(Tuono.Energy.confidence))
+
+-- A second anchor with a known spend between the two lets us SOLVE for regen:
+--   regen = (C2 - C1 + spent) / dt = (45 - 45 + 45) / 4 = 11.25
+Tuono.Energy.OnCast(SS)                         -- spends 45, books it against the anchor
+scenario.assistNext = 1249752
+tick(0.1)
+clock = clock + 4.0
+scenario.assistNext = SS
+tick(0.1); tick(0.1)
+
+check("two anchors plus the spend ledger measure the real regen rate",
+  Tuono.Energy.measuredRegen ~= nil
+    and Tuono.Energy.measuredRegen > 5 and Tuono.Energy.measuredRegen < 60,
+  "measuredRegen=" .. tostring(Tuono.Energy.measuredRegen))
+
+check("measured regen replaces the hardcoded Combat Potency guess",
+  Tuono.Energy.EffectiveRegen() == Tuono.Energy.measuredRegen,
+  "effective=" .. tostring(Tuono.Energy.EffectiveRegen()))
+
+-- Implausible samples must be rejected rather than smeared into the average.
+-- NOTE ON TICK COUNTS: ObserveAssist runs inside RefreshFast, which the update loop
+-- calls BEFORE Assist.Update, so it always sees the PREVIOUS tick's assist state and
+-- the falling edge lands one tick late. An earlier version of this test used a single
+-- tick after revealing the spell, so the edge was never processed at all and the
+-- assertion passed no matter what the code did -- it survived deleting BOTH rejection
+-- guards. Two ticks after each transition, or it proves nothing.
+local goodRate = Tuono.Energy.measuredRegen
+scenario.assistNext = 1249752
+tick(0.01); tick(0.01)
+Tuono.Energy.anchor = { value = 45, at = GetTime(), spentSince = 0 }
+scenario.assistNext = SS
+tick(0.01); tick(0.01)                          -- dt far below MIN_OBS_DT
+check("implausibly short observation windows are rejected",
+  Tuono.Energy.measuredRegen == goodRate,
+  "regen moved to " .. tostring(Tuono.Energy.measuredRegen))
+
+-- A free ability revealing on the clear tells us nothing about energy.
+Tuono.Energy.value = 20
+Tuono.Energy.confidence = "estimated"
+scenario.assistNext = 1249752
+tick(0.1)
+scenario.assistNext = Tuono.SpellIDs.adrenalineRush     -- 0 cost
+tick(0.1); tick(0.1)
+check("a zero-cost reveal does not anchor",
+  Tuono.Energy.confidence ~= "anchored",
+  "conf=" .. tostring(Tuono.Energy.confidence))
+
 print("")
 print(string.format("SECRETS REGRESSION: %d passed, %d failed", results.passed, results.failed))
 os.exit(results.failed == 0 and 0 or 1)

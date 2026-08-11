@@ -120,6 +120,19 @@ local function reportResources()
 		Tuono.print("  |cff88ccffenergy bracket|r         " ..
 			tostring(lower or "-") .. " <= energy < " .. tostring(upper or "max") ..
 			"   (corrections=" .. tostring(Tuono.Energy.corrections or 0) .. ")")
+
+		-- Sentinel anchoring and the regen rate solved from it. A measuredRegen that
+		-- stays nil after a real fight means the "Waiting for Energy" edge never fired
+		-- -- either the player never pooled, or the sentinel assumption is wrong on
+		-- this build and the model is running on the hardcoded guess.
+		Tuono.print("  |cff88ccffsentinel anchors|r       " ..
+			tostring(Tuono.Energy.anchors or 0) ..
+			"   waiting-now=" .. tostring(Tuono.Assist and Tuono.Assist.waitingForResource))
+		Tuono.print(string.format("  |cff88ccffregen|r  modelled=%.1f/s  measured=%s  (%d samples)",
+			Tuono.Energy.RegenPerSecond(),
+			Tuono.Energy.measuredRegen and string.format("%.1f/s", Tuono.Energy.measuredRegen)
+				or "|cff888888none yet|r",
+			Tuono.Energy.regenSamples or 0))
 	end
 end
 

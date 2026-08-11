@@ -218,6 +218,113 @@ function Tuono.Energy.ApplyBracket()
 	return true
 end
 
+-- ============================================================================
+-- SENTINEL ANCHORING  +  MEASURED REGEN
+-- ============================================================================
+-- The bracket bounds energy every frame but only to a band, and the band is widest
+-- (45..max) exactly when everything is affordable. Blizzard's "Waiting for Energy"
+-- sentinel gives something the bracket cannot: an EXACT value, occasionally.
+--
+-- While the sentinel is showing, energy is BY DEFINITION the blocker -- that is what
+-- the placeholder means. The instant it clears, GetNextCastSpell returns the ability
+-- it was waiting for. If energy had already been at or above that ability's cost the
+-- sentinel would not have been showing, so at the moment of the transition:
+--
+--     energy == cost(newly returned spell)
+--
+-- We do not know the cost during the wait; we learn it retroactively on the clear.
+--
+-- WHY THIS IS WORTH MORE THAN THE ANCHOR ITSELF:
+-- Two consecutive exact anchors let us MEASURE the regen rate rather than assume it.
+-- Between anchors every other term is known -- the casts we saw and their costs, and
+-- elapsed time -- so:
+--
+--     regen = (C2 - C1 + sum(costs spent between)) / dt
+--
+-- That retires COMBAT_POTENCY_AVG, a hardcoded 2.5 guess which is the single largest
+-- source of drift in this model. It also absorbs haste, Adrenaline Rush and trinket
+-- procs for free, since it measures the effective rate rather than deriving it.
+--
+-- STALENESS CAVEAT: the assist pick can lag a completed cast by up to ~1 GCD, so the
+-- clear edge may arrive slightly late and bias the anchor low relative to true energy.
+-- Observations are therefore sanity-bounded rather than trusted outright, and the
+-- measured rate is smoothed instead of replaced outright by any single sample.
+-- ============================================================================
+
+local MIN_OBS_DT = 0.5           -- shorter than this and timing noise dominates
+local MAX_OBS_DT = 15            -- longer and an unobserved cast has probably crept in
+local MIN_PLAUSIBLE_REGEN = 5    -- below base regen: something is wrong with the sample
+local MAX_PLAUSIBLE_REGEN = 60   -- well above AR+haste ceiling: reject
+local REGEN_SMOOTHING = 0.25     -- weight of each new observation
+
+E.measuredRegen = nil            -- nil until we have a plausible observation
+E.regenSamples = 0
+E.anchor = nil                   -- { value, at, spentSince }
+E.wasWaiting = false
+
+-- Record a cast against the OPEN anchor window, so the regen solve knows what left the
+-- pool between the two exact points.
+local function accrueSpend(cost)
+	if E.anchor then
+		E.anchor.spentSince = (E.anchor.spentSince or 0) + cost
+	end
+end
+
+local function observeRegen(newValue, now)
+	local a = E.anchor
+	if not a then return end
+
+	local dt = now - a.at
+	if dt < MIN_OBS_DT or dt > MAX_OBS_DT then return end
+
+	-- Everything but the rate is known between two exact points.
+	local rate = (newValue - a.value + (a.spentSince or 0)) / dt
+	if rate < MIN_PLAUSIBLE_REGEN or rate > MAX_PLAUSIBLE_REGEN then return end
+
+	if E.measuredRegen == nil then
+		E.measuredRegen = rate
+	else
+		E.measuredRegen = E.measuredRegen * (1 - REGEN_SMOOTHING) + rate * REGEN_SMOOTHING
+	end
+	E.regenSamples = (E.regenSamples or 0) + 1
+end
+
+-- Called once per tick with the current assist state.
+function Tuono.Energy.ObserveAssist()
+	local A = Tuono.Assist
+	if not A then return end
+
+	local waiting = A.waitingForResource == true
+	local wasWaiting = E.wasWaiting
+	E.wasWaiting = waiting
+
+	-- Only the FALLING edge carries information: sentinel -> real recommendation.
+	if not (wasWaiting and not waiting) then return end
+
+	local spellID = A.nextSpellID
+	if not spellID then return end
+
+	local cost = energyCostOf(spellID)
+	if not cost or cost <= 0 then return end   -- a free ability anchors nothing
+
+	local now = GetTime()
+
+	observeRegen(cost, now)
+
+	E.value = cost
+	E.confidence = "anchored"
+	E.lastSyncAt = now
+	E.driftSeconds = 0
+	E.anchor = { value = cost, at = now, spentSince = 0 }
+	E.anchors = (E.anchors or 0) + 1
+end
+
+-- Effective regen: the measured rate when we have one, otherwise the modelled guess.
+function Tuono.Energy.EffectiveRegen()
+	if E.measuredRegen then return E.measuredRegen end
+	return Tuono.Energy.RegenPerSecond()
+end
+
 -- Attempt a real read. Returns true when a hard measurement landed.
 function Tuono.Energy.TrySync()
 	local powerType = (Enum and Enum.PowerType and Enum.PowerType.Energy) or 3
@@ -260,17 +367,27 @@ function Tuono.Energy.Advance()
 			-- A long gap (loading screen, /reload, afk) makes the estimate meaningless.
 			E.confidence = "unknown"
 		elseif dt > 0 then
-			E.value = math.min(E.max, E.value + Tuono.Energy.RegenPerSecond() * dt)
+			-- Measured rate when we have one; the modelled guess only until then.
+			E.value = math.min(E.max, E.value + Tuono.Energy.EffectiveRegen() * dt)
 			E.confidence = "estimated"
 			E.driftSeconds = now - E.lastSyncAt
 		end
 	end
+
+	-- Ordering is deliberate, weakest evidence first so the strongest wins:
+	--   integrate -> bracket (a band) -> sentinel anchor (an exact value)
+	--
+	-- The anchor runs last because it is the only signal that pins a number rather
+	-- than bounding one. Running it before the bracket would let a band clamp away an
+	-- exact measurement, which is backwards.
 
 	-- IsSpellUsable-derived bounds. This both corrects accumulated drift and can COLD
 	-- START the model when energy has never once been directly readable -- which is the
 	-- normal case in Midnight, where UnitPower is secret unconditionally. Without it,
 	-- a player who logs in mid-combat would have no seed and stay "unknown" forever.
 	pcall(Tuono.Energy.ApplyBracket)
+
+	pcall(Tuono.Energy.ObserveAssist)
 end
 
 -- Debit a cast from the model. Called from UNIT_SPELLCAST_SUCCEEDED.
@@ -296,6 +413,11 @@ function Tuono.Energy.OnCast(spellID)
 		E.value = math.max(0, E.value - cost)
 		E.confidence = "estimated"
 	end
+
+	-- Book the spend against the open anchor window regardless of confidence: the regen
+	-- solve needs the full ledger of what left the pool between two exact points, and
+	-- dropping spends here would make the measured rate read systematically low.
+	accrueSpend(cost)
 end
 
 -- Public accessor. Returns (value, isUsable, confidence).
