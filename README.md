@@ -14,6 +14,7 @@
   <a href="#secrets-did-not-remove-these-tools-they-privatized-them">The argument</a> ·
   <a href="#what-is-actually-readable">What is readable</a> ·
   <a href="#how-this-stays-legal">How this stays legal</a> ·
+  <a href="docs/INVERSION.md">The maths</a> ·
   <a href="docs/PROFILES.md">Write a profile</a>
 </p>
 
@@ -145,11 +146,21 @@ tightens it — chiefly `IsSpellUsable`'s `insufficientPower`, which turns each 
 into a threshold you can watch the true value cross. Affordability answers yes, no, or
 **maybe**, and "maybe" is rendered as maybe.
 
-That is the general shape of everything here: *you never need to read the hidden value, you
-need any never-secret function of it, and then you invert.* The full write-up is in
-**[docs/SECRET-VALUES-FINDINGS.md](docs/SECRET-VALUES-FINDINGS.md)** — the practical shape of
-the constraints, what survives, what does not, and the techniques that keep a helper
-possible. Written to be useful whether or not you use this addon.
+That is the general shape of everything here:
+
+> **You never need to read the hidden value. You need any never-secret *function* of it,
+> and then you invert.**
+
+You never invert to a number — you invert to a *set*, and accuracy is the size of the
+intersection of every constraint you have. Two documents, both written to be useful whether
+or not you use this addon:
+
+- **[docs/SECRET-VALUES-FINDINGS.md](docs/SECRET-VALUES-FINDINGS.md)** — what is and is not
+  readable, measured against a live client, and the four practical techniques.
+- **[docs/INVERSION.md](docs/INVERSION.md)** — the mathematics. Interval arithmetic as a
+  set-membership filter, why threshold *crossings* are exact measurements where threshold
+  *levels* are coarse, how two crossings solve a rate without ever knowing the value, and
+  why an estimator that fully converges will eventually lie to you.
 
 ---
 

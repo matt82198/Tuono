@@ -152,7 +152,9 @@ threshold is an exact measurement of something you cannot read. Affordability th
 answers **yes / no / maybe**, and rules are written to handle all three.
 
 It reports `measured` / `bracketed` / `anchored` / `estimated` / `stale`, and never presents
-an estimate as a measurement.
+an estimate as a measurement. The maths is in [INVERSION.md](INVERSION.md); the part that
+affects how you write rules is that **affordability has three answers, not two**, and you
+decide which way each rule fails on `maybe`.
 
 This touches no secret and automates no input. It is a client-side model of your own
 actions — the same thing a human does in their head.

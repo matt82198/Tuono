@@ -3,7 +3,7 @@
 ## Title: Tuono
 ## Notes: Configurable rotation-helper framework for Midnight. Legal by construction.
 ## Author: Matt Culliton
-## Version: 2.2.0
+## Version: 2.2.1
 ## X-License: MIT
 ## X-Website: https://github.com/matt82198/Tuono
 ## SavedVariables: TuonoDB, TuonoDiagDB

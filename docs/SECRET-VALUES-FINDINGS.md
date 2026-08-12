@@ -69,6 +69,13 @@ function of it, then invert.** Almost everything below is an application of that
 
 ## The four techniques
 
+> The first two have a formal treatment in **[INVERSION.md](INVERSION.md)** — interval
+> arithmetic as a set-membership filter, why threshold *crossings* beat threshold *levels*,
+> how two crossings solve a rate without knowing the value, and why the estimator
+> deliberately refuses to fully converge. Read that if you want to port the approach to
+> another game or another hidden value.
+
+
 **1. Bound it, don't estimate it.** A point estimate of a hidden number is a lie with a
 decimal point on it. Carry an interval instead: time widens it, observations tighten it.
 It can be wide, but it cannot be wrong — and "wide" is a state a UI can render honestly.

@@ -2,6 +2,24 @@
 
 All notable changes to Tuono are documented here.
 
+## [2.2.1] - 2026-08-11
+
+### Documentation
+
+- **`docs/INVERSION.md`** — the mathematics behind reading a value you are not allowed to
+  read, written to be portable rather than WoW-specific. Inverting an observation to a *set*
+  rather than a point; intervals as a set-membership (bounded-error) filter with guaranteed
+  containment instead of a confidence interval; why threshold **crossings** are exact
+  measurements where threshold **levels** are only a coarse quantizer; how two crossings
+  solve a rate with the unknown initial condition cancelling out; why saturation is free
+  information; why an estimator that fully converges will eventually exclude the truth and
+  never recover; three-valued affordability as abstract interpretation; and observability
+  under persistent excitation, including the worst case where no crossing occurs.
+  It closes with a worked diagnosis showing the formalism is falsifiable — the live trace's
+  `[100,100]`-while-out-of-energy is provably *impossible* under the model, which localises
+  the fault to a disconnected update step rather than a mis-tuned one.
+- README and PROFILES.md now state the inversion principle directly and link the treatment.
+
 ## [2.2.0] - 2026-08-11
 
 Three live reports — "it only suggested Sinister Strike the whole time", "it adds a 4th
