@@ -150,6 +150,41 @@ Tuono.RegisterEvent("PLAYER_LOGIN", function()
 		Tuono.print("Found " .. LEGACY_NAME .. " but imported nothing (already migrated, " ..
 			"or no recognised settings). Safe to remove the old folder.")
 	end
+	-- WARN WHENEVER THE OLD ADDON IS STILL LOADED, not only during the import.
+	--
+	-- Both branches above are gated on migration state, so once Tuono has settings of its
+	-- own the warning goes silent -- while OutlawAssist keeps running. It is not passive:
+	-- it draws its own bar, installs its own action-button glows, and it still contains
+	-- every secret-value bug fixed here since the rename. A live report of a strobing icon,
+	-- a second icon "underneath the first", and
+	--
+	--     attempt to perform boolean test on field isFullUpdate ... is a secret value
+	--
+	-- turned out to be OutlawAssist/StateTracker.lua:249 -- the pre-fix copy of a bug this
+	-- addon fixed months of commits ago -- with two rotation addons fighting over the same
+	-- action buttons. None of it was Tuono, and nothing in Tuono said so.
+	local stillLoaded = false
+	if C_AddOns and C_AddOns.IsAddOnLoaded then
+		local ok, loaded = pcall(C_AddOns.IsAddOnLoaded, LEGACY_NAME)
+		stillLoaded = ok and loaded and true or false
+	elseif _G.IsAddOnLoaded then
+		local ok, loaded = pcall(_G.IsAddOnLoaded, LEGACY_NAME)
+		stillLoaded = ok and loaded and true or false
+	end
+	if not stillLoaded and type(_G[LEGACY_GLOBAL]) == "table" then
+		-- The global only exists if the old addon declared it, so its presence is itself
+		-- evidence, even when the IsAddOnLoaded API is unavailable.
+		stillLoaded = true
+	end
+
+	if stillLoaded then
+		Tuono.print("|cffff4444" .. LEGACY_NAME .. " is still enabled.|r You are running two " ..
+			"rotation addons at once: two bars, two sets of action-button glows, and the old " ..
+			"one still has secret-value bugs that Tuono has since fixed (it throws on " ..
+			"UNIT_AURA).")
+		Tuono.print("Disable it in the AddOns list, or delete Interface/AddOns/" ..
+			LEGACY_NAME .. ", then /reload. Your settings are already here.")
+	end
 	-- Silent otherwise. A fresh install with no old addon present is the normal
 	-- first-run path; a "could not migrate" warning there would be pure noise.
 end)

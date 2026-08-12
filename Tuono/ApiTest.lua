@@ -504,7 +504,13 @@ local function procProbe()
     if not procProbeState.active or unit ~= "player" then return end
 
     if updateInfo then
-      if updateInfo.isFullUpdate then
+      -- `if updateInfo.isFullUpdate then` is a BOOLEAN TEST ON A SECRET and raises. This
+      -- is the exact line, in the pre-rename copy of this file, that the live client is
+      -- still throwing from -- StateTracker had the same bug and was fixed; the proc probe
+      -- kept its own unguarded copy because it is only reachable from /tuono probe.
+      -- Reading the field is safe; testing its truth is not.
+      local okFull, full = pcall(function() return updateInfo.isFullUpdate end)
+      if okFull and full ~= nil and not Tuono.isSecret(full) and full == true then
         procProbeState.deltaFullUpdate = procProbeState.deltaFullUpdate + 1
       end
 
