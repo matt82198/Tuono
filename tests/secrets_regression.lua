@@ -742,6 +742,58 @@ check("rotation still works with zero energy information",
   blind and #blind >= 1,
   "got " .. tostring(blind and #blind) .. " steps")
 
+-- ===========================================================================
+-- The player's own actions as an observation channel
+-- ===========================================================================
+-- Neither of these reads a protected value. Both invert a never-secret signal that
+-- happens to be a function of the secret one.
+_G.SPELL_FAILED_NO_POWER = "Not enough energy"
+
+-- A SUCCESSFUL cast proves affordability at that instant. Start the interval
+-- deliberately too low and confirm the cast raises the floor rather than being
+-- destroyed by the debit that follows it.
+Tuono.Energy.intervalSeeded = true
+Tuono.Energy.lo, Tuono.Energy.hi = 0, 100
+Tuono.Energy.OnCast(Tuono.SpellIDs.sinisterStrike)      -- costs 45
+local lo3 = select(1, Tuono.Energy.Interval())
+check("a successful cast raises the floor by its cost, then debits",
+  lo3 == 0,
+  "lo=" .. tostring(lo3) .. " (expected 45 recorded, then 45 debited -> 0)")
+
+Tuono.Energy.lo, Tuono.Energy.hi = 10, 100
+Tuono.Energy.OnCast(Tuono.SpellIDs.sinisterStrike)
+local lo4 = select(1, Tuono.Energy.Interval())
+check("the pre-cast lower bound is recorded before the debit, not after",
+  lo4 == 0,
+  "lo=" .. tostring(lo4) .. " (45 proven, minus 45 spent)")
+
+-- A FAILED cast for want of power proves the opposite bound.
+local errHandlers = Tuono.eventHandlers["UI_ERROR_MESSAGE"]
+local failHandlers = Tuono.eventHandlers["UNIT_SPELLCAST_FAILED"]
+check("out-of-power observation channel is wired",
+  errHandlers and #errHandlers > 0 and failHandlers and #failHandlers > 0,
+  "missing handlers")
+
+if errHandlers and failHandlers then
+  Tuono.Energy.lo, Tuono.Energy.hi = 0, 100
+  for _, h in ipairs(errHandlers) do pcall(h, "UI_ERROR_MESSAGE", 50, "Not enough energy") end
+  for _, h in ipairs(failHandlers) do
+    pcall(h, "UNIT_SPELLCAST_FAILED", "player", "cast-1", Tuono.SpellIDs.sinisterStrike)
+  end
+  local _, hi4 = Tuono.Energy.Interval()
+  check("a failed cast for want of power caps energy below that cost",
+    hi4 == 44, "hi=" .. tostring(hi4) .. " (expected 44, i.e. < 45)")
+
+  -- A failure UNRELATED to power must not be treated as evidence about energy.
+  Tuono.Energy.lo, Tuono.Energy.hi = 0, 100
+  for _, h in ipairs(failHandlers) do
+    pcall(h, "UNIT_SPELLCAST_FAILED", "player", "cast-2", Tuono.SpellIDs.sinisterStrike)
+  end
+  local _, hi5 = Tuono.Energy.Interval()
+  check("an unrelated cast failure is NOT read as an energy bound",
+    hi5 == 100, "hi=" .. tostring(hi5) .. " (out-of-range/LoS must not imply low energy)")
+end
+
 print("")
 print(string.format("SECRETS REGRESSION: %d passed, %d failed", results.passed, results.failed))
 os.exit(results.failed == 0 and 0 or 1)

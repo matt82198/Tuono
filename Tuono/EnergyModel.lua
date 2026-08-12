@@ -354,6 +354,65 @@ local function recordEdge(cost, now)
 	E.anchors = (E.anchors or 0) + 1
 end
 
+-- ============================================================================
+-- THE PLAYER'S OWN ACTIONS ARE AN OBSERVATION CHANNEL
+-- ============================================================================
+-- Two exact bounds we were discarding, both free, both derived from things the player
+-- did rather than from anything hidden:
+--
+--   A SUCCESSFUL CAST proves you could afford it. UNIT_SPELLCAST_SUCCEEDED carries a
+--   readable spellID, so at that instant energy >= cost. We were debiting the cost but
+--   never recording the lower bound it implies -- throwing away the tightest
+--   observation in the whole system, on every single cast.
+--
+--   A FAILED CAST FOR WANT OF POWER proves the opposite: energy < cost. The client
+--   emits UI_ERROR_MESSAGE with the localized out-of-energy string, and
+--   UNIT_SPELLCAST_FAILED carries the spellID. Correlated within a frame or two, that
+--   is an exact upper bound handed to us by the player's own misclick.
+--
+-- Neither reads a protected value. Both are the same trick as the IsSpellUsable
+-- bracket: a never-secret signal that happens to be a function of a secret one.
+-- ============================================================================
+
+local noPowerAt = 0
+local NO_POWER_WINDOW = 0.35
+
+-- Compare against the client's own localized constant rather than an English literal,
+-- so this works on every locale without a translation table.
+local function isOutOfPowerMessage(msg)
+	if type(msg) ~= "string" then return false end
+	local outOfEnergy = _G.SPELL_FAILED_NO_POWER or _G.ERR_OUT_OF_ENERGY
+	if outOfEnergy and msg == outOfEnergy then return true end
+	-- Some builds format the generic "not enough <resource>" string; fall back to the
+	-- energy-specific one if it exists.
+	local generic = _G.ERR_NOT_ENOUGH_ENERGY
+	return generic ~= nil and msg == generic
+end
+
+Tuono.RegisterEvent("UI_ERROR_MESSAGE", function(event, errorType, message)
+	if isOutOfPowerMessage(message) then
+		noPowerAt = GetTime()
+	end
+end)
+
+-- A cast that FAILED while an out-of-power error was fresh bounds energy from above.
+Tuono.RegisterUnitEvent("UNIT_SPELLCAST_FAILED", "player", function(event, unit, castGUID, spellID)
+	local id = Tuono.readNum(spellID)
+	if not id then return end
+	if (GetTime() - noPowerAt) > NO_POWER_WINDOW then return end
+	-- CONSUME the flag: one error message corresponds to ONE failed cast. Leaving it
+	-- armed let a single out-of-power error taint every unrelated failure in the next
+	-- third of a second -- out of range, line of sight, facing -- each of which would
+	-- have been recorded as false evidence that energy was low.
+	noPowerAt = 0
+
+	local cost = energyCostOf(id)
+	if not cost or cost <= 0 then return end
+	-- Could not afford it => energy < cost => inclusive upper bound is cost-1.
+	intersect(nil, cost - 1)
+	E.observations = (E.observations or 0) + 1
+end)
+
 -- Sample every costing ability and fold the result into the interval.
 function Tuono.Energy.Observe()
 	if not (C_Spell and C_Spell.IsSpellUsable) then return false end
@@ -700,6 +759,12 @@ function Tuono.Energy.OnCast(spellID)
 		local opp = Tuono.State and Tuono.State.buffs and Tuono.State.buffs.opportunity
 		if opp and opp.up then cost = 0 end
 	end
+
+	-- ORDER MATTERS: the cast SUCCEEDED, so immediately before it energy was at least
+	-- the cost. Record that lower bound BEFORE debiting, or the evidence is destroyed
+	-- by the very subtraction it should have informed.
+	intersect(cost, nil)
+	E.observations = (E.observations or 0) + 1
 
 	debit(cost)
 
