@@ -78,10 +78,13 @@ with your own priority logic layered on top.
 - **Honesty about uncertainty.** Values Midnight hides are shown as estimates, never as
   measurements. The display dims, shortens, and admits doubt rather than guessing at you.
 
-> **Status:** 180 behavioural tests plus 77 secret-value regressions, all passing, against
+> **Status:** 183 behavioural tests plus 77 secret-value regressions, all passing, against
 > a harness that emulates secret values. Validated on a live 12.1.0 client in open-world
-> play, where the immediate recommendation reads as optimal. **Not** yet validated inside a
-> mythic keystone — see [Help wanted](#help-wanted).
+> play: the immediate recommendation reads as optimal, and energy — a value the client
+> refuses to return at all — is held to a **mean interval width of 2.76 out of 100**. The
+> lookahead beyond the next press is right about half the time and truncates itself when it
+> cannot justify a step. **Not** yet validated inside a mythic keystone — see
+> [Help wanted](#help-wanted).
 
 ---
 
@@ -145,6 +148,12 @@ carries an interval `[lo, hi]`: elapsed time widens it, and every never-secret o
 tightens it — chiefly `IsSpellUsable`'s `insufficientPower`, which turns each ability's cost
 into a threshold you can watch the true value cross. Affordability answers yes, no, or
 **maybe**, and "maybe" is rendered as maybe.
+
+**Measured on a live 12.1.0 client: mean interval width 2.76 out of a 0–100 range, across
+113 in-combat ticks**, with exact zero-width pins at every threshold crossing. That is a
+value the client refuses to return, held to under 3% of its range for the whole fight,
+using nothing it declined to tell us. It got there in three steps — 7.13 → 3.44 → 2.76 —
+as the crossing solve, an out-of-combat regen seed and per-buff provenance each landed.
 
 That is the general shape of everything here:
 
@@ -259,7 +268,7 @@ Issues and PRs: <https://github.com/matt82198/Tuono/issues>
 ## Development
 
 ```bash
-lua tests/run_tests.lua           # 180 behavioural tests (also runs the two lints)
+lua tests/run_tests.lua           # 183 behavioural tests (also runs the two lints)
 lua tests/secrets_regression.lua  #  77 assertions against emulated secret values
 lua tests/migration_test.lua      #   8 tests for the OutlawAssist import path
 lua tests/toc_check.lua           #   TOC / CHANGELOG / file-manifest drift gate
