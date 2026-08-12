@@ -58,9 +58,15 @@ local E = Tuono.Energy
 -- +60%; Combat Potency contributes off-hand-proc energy that is stochastic, so it is
 -- modelled as a flat average and is the single largest source of drift.
 local BASE_REGEN = 10
-local AR_REGEN_MULTIPLIER = 1.6
+-- Adrenaline Rush is +75% energy regen, not +60%, and it lasts 15s, not 20s. Both were
+-- wrong in the original model, and both errors pushed the estimate the same way: too
+-- little regen for too long. Verified against SimC's midnight branch; +50 max energy is
+-- handled via the readable UnitPowerMax rather than assumed.
+-- (Heightened Rush extends AR to 19s -- not modelled, so the shadow window closes early
+-- rather than late, which is the safer direction.)
+local AR_REGEN_MULTIPLIER = 1.75
 local COMBAT_POTENCY_AVG = 2.5
-local AR_DURATION = 20
+local AR_DURATION = 15
 local MAX_DRIFT_BEFORE_LOW_CONFIDENCE = 8
 
 -- ============================================================================

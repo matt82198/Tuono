@@ -97,6 +97,14 @@ showAuras("BUFFS AT START", diag.aurasAtStart)
 showAuras("BUFFS AT STOP", diag.aurasAtStop)
 showAuras("BUFFS CAPTURED MANUALLY (/tuono record auras)", diag.aurasManual)
 
+if diag.rtbCandidates and next(diag.rtbCandidates) then
+  section("ROLL THE BONES AURAS LEARNED FROM PLAY")
+  for id, name in pairs(diag.rtbCandidates) do
+    print(string.format("  %-10s %s", tostring(id), tostring(name)))
+  end
+  print("  -> add these to the profile's rtbStageBuffs with their stage numbers")
+end
+
 -- ---------------------------------------------------------------------------
 -- Event stream
 -- ---------------------------------------------------------------------------

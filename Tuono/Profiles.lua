@@ -84,9 +84,39 @@ function P.List()
 	return out
 end
 
+-- Resolve spell IDs that Blizzard has renumbered between patches. A profile lists the
+-- candidates newest-first; whichever the character actually KNOWS wins.
+--
+-- This exists because Roll the Bones moved in Midnight (315508 -> 1214909) and the
+-- addon silently kept using the dead ID: cooldown polling returned nothing, cast
+-- detection never matched, and the known-spell probe filtered the rule out. A stale
+-- spell ID fails quietly in every direction, so guessing one is worse than asking.
+local function resolveAliases(profile)
+	if not profile.spellAliases then return end
+	local check = nil
+	if C_SpellBook and C_SpellBook.IsSpellKnown then
+		check = function(id) return C_SpellBook.IsSpellKnown(id) end
+	elseif _G.IsPlayerSpell then
+		check = function(id) return _G.IsPlayerSpell(id) end
+	end
+	if not check then return end   -- cannot tell; keep whatever the profile declared
+
+	for key, candidates in pairs(profile.spellAliases) do
+		for _, id in ipairs(candidates) do
+			local ok, known = pcall(check, id)
+			if ok and known then
+				profile.spells[key] = id
+				break
+			end
+		end
+	end
+end
+
 function P.Activate(id)
 	local profile = P.registry[id]
 	if not profile then return false end
+
+	pcall(resolveAliases, profile)
 
 	P.active = id
 

@@ -888,6 +888,25 @@ function Tuono.State.RefreshFast()
 	end
 	Tuono.State.comboPointsMaxKnown = cpMaxKnown
 
+	-- Roll the Bones stage, resolved through the observation channels rather than the
+	-- aura payload: never-secret whitelist first, then the known stage-buff map, then
+	-- the learner. Only overwrite when the answer is genuinely KNOWN -- a nil result
+	-- must leave the previous belief alone rather than silently resetting stage to 0,
+	-- which is the same unknown-as-zero mistake in a new place.
+	if Tuono.Observers and Tuono.Observers.ResolveRtbStage then
+		Tuono.safe(Tuono.Observers.PollRtbLearner)
+		local stage, known = Tuono.Observers.ResolveRtbStage()
+		if known then
+			Tuono.State.buffs.rtb.stage = stage
+			Tuono.State.buffs.rtb.stageKnown = true
+			Tuono.Observers.rtbUnknownPresent = false
+		elseif Tuono.Observers.rtbUnknownPresent then
+			-- A roll landed but we cannot identify which stage. Presence is real,
+			-- the stage is not -- so the reroll rule must refuse to fire.
+			Tuono.State.buffs.rtb.stageKnown = false
+		end
+	end
+
 	-- Snapshot combo points BEFORE anything can consume them. UNIT_SPELLCAST_SUCCEEDED
 	-- fires after a finisher has already spent them, so the live value reads 0 at
 	-- exactly the moment CooldownModel needs to know what was spent for Restless Blades.

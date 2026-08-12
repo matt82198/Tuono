@@ -92,20 +92,16 @@ local PRIORITY = {
 		-- REROLLING MUST FAIL CLOSED WHEN THE STAGE IS UNREADABLE.
 		--
 		-- `stage` reads 0 both when no Roll the Bones buff is up AND when we simply
-		-- cannot see it -- and in 12.x we usually cannot: RtB does not apply an aura
-		-- with spellID 315508 (that is the castable ability). It applies one of four
-		-- separately-named buffs -- One of a Kind / Double Trouble / Triple Threat /
-		-- Jackpot -- whose IDs are NOT YET CONFIRMED for this build, so the tracker
-		-- finds nothing and reports stage 0 forever.
+		-- cannot see it. The old condition was a bare `stage < 2`, true for stage 0, so
+		-- this rule fired every time RtB came off cooldown -- telling the player to
+		-- reroll a JACKPOT down to a single buff, every 45 seconds. The most damaging
+		-- thing this profile did.
 		--
-		-- The old condition was a bare `stage < 2`, which is true for stage 0, so this
-		-- rule fired every time RtB came off cooldown. That means it was telling the
-		-- player to reroll a JACKPOT down to a fresh single buff, every 45 seconds --
-		-- the most damaging thing in this profile.
-		--
-		-- Until the stage buffs are resolvable, only recommend RtB when we positively
-		-- know there is nothing to lose: stage known AND below 2. `rtbStageKnown` is
-		-- false whenever the aura layer could not read it.
+		-- The four stage auras are now known (see rtbStageBuffs) and resolved through
+		-- Observers.ResolveRtbStage, so the common case is genuinely readable. The guard
+		-- stays because readability is still conditional: an unidentified roll, or a
+		-- stage aura that is neither whitelisted nor readable out of combat, must not be
+		-- silently treated as "no buff".
 		name = "Roll the Bones below stage 2",
 		spellKey = "rollTheBones",
 		requiresSpell = "rollTheBones",
@@ -404,15 +400,55 @@ Tuono.Profiles.Register({
 	-- Opportunity glows Pistol Shot; Audacity glows Ambush.
 	overlayAuras = {
 		[SPELLS.pistolShot] = "opportunity",
-		[SPELLS.ambush]     = "audacity",
+		[SPELLS.ambush]     = "audacity",   -- aura 386270; 381845 is the TALENT, not an aura
 	},
 
-	-- Extra spell IDs to run through C_Secrets.GetSpellAuraSecrecy at load, on the
-	-- chance they are flagged never-secret and can therefore be read in full even in
-	-- combat. The Roll the Bones stage buffs belong here once their IDs are known --
-	-- 315508 is the castable ability, NOT the aura, so this list is deliberately empty
-	-- rather than populated with a guess.
-	auraProbeList = {},
+	-- ROLL THE BONES STAGE BUFFS.
+	-- 315508 is the castable ability and applies NO aura of its own -- reading it was
+	-- why stage sat at 0 forever and the addon told you to reroll a Jackpot every 45s.
+	-- In 12.x RtB applies ONE named summary aura whose identity IS the stage.
+	--
+	-- 1214933 "One of a Kind" = stage 1, captured from a live 12.1.0 client
+	-- (/tuono record auras after a roll). The other three -- Double Trouble, Triple
+	-- Threat, Jackpot -- are still unknown because a roll only produces one at a time.
+	-- They are NOT guessed here; RtBLearner discovers them from play and writes them to
+	-- SavedVariables, and until then an unrecognised post-roll aura is treated as
+	-- "a stage buff of unknown stage", which is safe (see the reroll rule).
+	-- All four confirmed from SimC's midnight branch (sc_rogue.cpp:10270-10273), and
+	-- stage 1 independently confirmed from a live 12.1.0 client capture -- the two
+	-- agreeing on 1214933 is what makes the other three trustworthy.
+	-- Note Jackpot is 1214937; 1214936 is NOT in the sequence.
+	--
+	-- Stages are strictly CUMULATIVE: Jackpot carries all four effects. A recast expires
+	-- all four and applies exactly one fresh, so exactly one is ever up.
+	rtbStageBuffs = {
+		[1214933] = 1,   -- One of a Kind    +20% SS double-strike / Opportunity chance
+		[1214934] = 2,   -- Double Trouble   +1 CP on SS & Ambush, +15% their damage
+		[1214935] = 3,   -- Triple Threat    +30% Restless Blades CDR
+		[1214937] = 4,   -- Jackpot          +10% crit
+	},
+	rtbDuration = 30,
+	-- Keep It Rolling adds 30s but cannot push total remaining past 60s (server bug,
+	-- modelled in SimC since 2022-12-12).
+	rtbExtendCap = 60,
+
+	-- Run these through C_Secrets.GetSpellAuraSecrecy at load. If a stage buff comes
+	-- back NeverSecret it can be read in full IN COMBAT -- stacks, expiry and all --
+	-- which would close the Roll the Bones hole outright rather than approximating it.
+	auraProbeList = { 1214933, 1214934, 1214935, 1214937 },
+
+	-- SPELL IDS THAT MAY HAVE BEEN RENUMBERED. SimC resolves Roll the Bones by NAME
+	-- because the ID moved in Midnight: SpecializationSpells has zero rows for 315508,
+	-- while 1214909 is row 7256 under spec 260 (Outlaw). Six spells still share the
+	-- name "Roll the Bones", so a name lookup alone is ambiguous.
+	--
+	-- Rather than swap blindly on secondary evidence, list the candidates and let the
+	-- client decide at load: whichever the character actually KNOWS wins. That is
+	-- correct whichever ID this build really uses, and it self-heals if Blizzard moves
+	-- it again.
+	spellAliases = {
+		rollTheBones = { 1214909, 315508 },
+	},
 
 	-- Buff spellIDs the state tracker should follow for this spec.
 	trackedAuras = {

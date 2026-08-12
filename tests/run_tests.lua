@@ -3640,6 +3640,10 @@ test("spec-priority: rule 1 (RtB) fires at stage 0", function()
   stub.state.stealthed = false
   Tuono.State.stealthed = false
   Tuono.State.buffs.rtb.stage = 0
+  -- Stage 0 must be POSITIVELY KNOWN for the reroll rule to fire. Unknown-and-zero is
+  -- exactly the state that made this rule reroll a Jackpot every 45s, so the guard
+  -- refuses it and the test has to say which of the two it means.
+  Tuono.State.buffs.rtb.stageKnown = true
   Tuono.State.energy = 100
   Tuono.State.comboPoints = 0
   Tuono.State.knownSpells[Tuono.SpellIDs.rollTheBones] = true

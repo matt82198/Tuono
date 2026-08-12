@@ -194,6 +194,147 @@ function O.ErrorName(errorType)
 end
 
 -- ---------------------------------------------------------------------------
+-- 5. ROLL THE BONES STAGE: read it, or learn it
+-- ---------------------------------------------------------------------------
+-- The stage IS the identity of the single summary aura RtB applies. We know one ID for
+-- certain (1214933 "One of a Kind" = stage 1, captured from a live client). The other
+-- three only appear when the dice land that way, so rather than guess them, learn them.
+--
+-- Three tiers, strongest first:
+--   a) the aura is on the never-secret whitelist  -> read it, exact, even in combat
+--   b) the aura ID is in the profile's known map  -> exact stage
+--   c) an unrecognised aura appeared right after a RtB cast -> a stage buff of UNKNOWN
+--      stage. Recorded for identification, and treated as "present but unknown", which
+--      is the safe answer: unknown never satisfies "stage < 2", so we do not reroll.
+--
+-- (c) is what makes this self-completing: play normally and the map fills in.
+
+local pendingRollAt = 0
+local ROLL_WINDOW = 1.5
+local knownBuffIDs = nil     -- everything seen on the player before the roll
+
+local function snapshotBuffIDs()
+	local set = {}
+	local api = C_UnitAuras
+	if not (api and api.GetAuraDataByIndex) then return nil end
+	for i = 1, 40 do
+		local ok, a = pcall(api.GetAuraDataByIndex, "player", i, "HELPFUL")
+		if not ok then return nil end       -- index path raises while auras are secret
+		if not a then break end
+		local id = Tuono.readNum(a.spellId)
+		if id then set[id] = true end
+	end
+	return set
+end
+
+-- Persist a newly-discovered stage aura so it survives the session and I can read it
+-- off disk without anyone transcribing anything.
+local function recordCandidate(spellID, name)
+	TuonoDiagDB = TuonoDiagDB or {}
+	TuonoDiagDB.rtbCandidates = TuonoDiagDB.rtbCandidates or {}
+	if TuonoDiagDB.rtbCandidates[tostring(spellID)] then return end
+	TuonoDiagDB.rtbCandidates[tostring(spellID)] = name or "?"
+	Tuono.print("Learned a new Roll the Bones aura: " .. tostring(spellID) ..
+		" (" .. tostring(name) .. "). Saved -- /reload to persist.")
+end
+
+-- Returns stage, stageKnown.
+function O.ResolveRtbStage()
+	local profile = Tuono.Profiles and Tuono.Profiles.Active()
+	local map = profile and profile.rtbStageBuffs
+	if not map then return 0, false end
+
+	-- (a)/(b): a known stage aura that we can actually detect.
+	for spellID, stage in pairs(map) do
+		local aura = O.ReadAura(spellID)              -- whitelist path, works in combat
+		if aura then return stage, true end
+		-- Out of combat the ordinary query works even without the whitelist.
+		if not (Tuono.State and Tuono.State.inCombat) then
+			local api = C_UnitAuras
+			if api and api.GetPlayerAuraBySpellID then
+				local ok, a = pcall(api.GetPlayerAuraBySpellID, spellID)
+				if ok and a then return stage, true end
+			end
+		end
+	end
+
+	-- (c): a roll landed and we could not identify the resulting aura. Presence is real,
+	-- the stage is not -- refuse, so the reroll rule cannot fire.
+	if O.rtbUnknownPresent then return 0, false end
+
+	-- Nothing found and no unidentified roll outstanding: report stage 0 as KNOWN, so
+	-- Roll the Bones can actually be recommended when there is genuinely no buff up.
+	--
+	-- RESIDUAL RISK, stated plainly: we can only positively rule out the stage auras
+	-- whose IDs we hold, and right now that is one of four. If the player is carrying an
+	-- unidentified stage buff that this session never saw land -- reloading mid-buff, or
+	-- zoning -- this answers "stage 0, known" and the reroll rule will fire.
+	--
+	-- That risk is bounded and shrinking: rtbUnknownPresent covers every roll we DO see,
+	-- and the learner adds each new ID permanently the first time it appears. The
+	-- alternative -- never recommending RtB at all -- breaks a core ability outright,
+	-- which is a certain harm rather than a conditional one.
+	return 0, true
+end
+
+O.rtbUnknownPresent = false
+
+Tuono.RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player", function(event, unit, castGUID, spellID)
+	local id = Tuono.readNum(spellID)
+	local profile = Tuono.Profiles and Tuono.Profiles.Active()
+	if not (id and profile and profile.spells) then return end
+	if id ~= profile.spells.rollTheBones and id ~= profile.spells.keepItRolling then return end
+	pendingRollAt = GetTime()
+	-- Out of combat we can diff the buff list; in combat the index scan raises, so the
+	-- learner simply does not run and we fall back to "unknown".
+	knownBuffIDs = snapshotBuffIDs()
+	O.rtbUnknownPresent = true
+end)
+
+-- Shortly after a roll, look for an aura that was not there before.
+function O.PollRtbLearner()
+	if pendingRollAt == 0 then return end
+	if (GetTime() - pendingRollAt) < 0.4 then return end
+	pendingRollAt = 0
+
+	-- If the roll produced an aura we DO recognise, the stage is resolvable and there is
+	-- nothing unidentified outstanding.
+	local prof = Tuono.Profiles and Tuono.Profiles.Active()
+	if prof and prof.rtbStageBuffs then
+		for spellID in pairs(prof.rtbStageBuffs) do
+			local api = C_UnitAuras
+			if api and api.GetPlayerAuraBySpellID then
+				local ok, a = pcall(api.GetPlayerAuraBySpellID, spellID)
+				if ok and a then O.rtbUnknownPresent = false end
+			end
+		end
+	end
+
+	if not knownBuffIDs then return end
+	local after = snapshotBuffIDs()
+	if not after then return end
+
+	local profile = Tuono.Profiles and Tuono.Profiles.Active()
+	local map = (profile and profile.rtbStageBuffs) or {}
+	local api = C_UnitAuras
+
+	for id in pairs(after) do
+		if not knownBuffIDs[id] and not map[id] then
+			local name = nil
+			if api and api.GetPlayerAuraBySpellID then
+				local ok, a = pcall(api.GetPlayerAuraBySpellID, id)
+				if ok and a then
+					local s = a.name
+					if type(s) == "string" and not Tuono.isSecret(s) then name = s end
+				end
+			end
+			recordCandidate(id, name)
+		end
+	end
+	knownBuffIDs = nil
+end
+
+-- ---------------------------------------------------------------------------
 Tuono.RegisterEvent("PLAYER_LOGIN", function()
 	Tuono.safe(O.BuildErrorMap)
 	Tuono.safe(O.ProbeAuraSecrecy)
