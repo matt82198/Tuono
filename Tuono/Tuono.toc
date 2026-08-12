@@ -18,6 +18,7 @@ StateTracker.lua
 AssistReader.lua
 Rotation.lua
 CooldownModel.lua
+Observers.lua
 EnergyModel.lua
 IntelligenceLayer.lua
 Display.lua

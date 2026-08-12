@@ -171,6 +171,7 @@ local TOC = {
   "Tuono/AssistReader.lua",
   "Tuono/Rotation.lua",
   "Tuono/CooldownModel.lua",
+  "Tuono/Observers.lua",
   "Tuono/EnergyModel.lua",
   "Tuono/IntelligenceLayer.lua",
   "Tuono/Config.lua",   -- owns Tuono.defaults; without it Tuono.db is nil
@@ -794,6 +795,76 @@ if errHandlers and failHandlers then
   check("an unrelated cast failure is NOT read as an energy bound",
     hi5 == 100, "hi=" .. tostring(hi5) .. " (out-of-range/LoS must not imply low energy)")
 end
+
+-- ===========================================================================
+-- OBSERVATION CHANNELS FOR AURA STATE
+-- ===========================================================================
+-- Aura payloads are secret in combat, so procs were invisible. These channels recover
+-- them without reading a protected value.
+
+-- 1. ACTIVATION OVERLAY. SpellActivationOverlayDocumentation.lua carries no Secret*
+-- flags at all, so the glow events are an exact per-spellID proc signal that survives
+-- combat -- strictly better than an aura read.
+local showH = Tuono.eventHandlers["SPELL_ACTIVATION_OVERLAY_GLOW_SHOW"]
+local hideH = Tuono.eventHandlers["SPELL_ACTIVATION_OVERLAY_GLOW_HIDE"]
+check("overlay proc channel is wired",
+  showH and #showH > 0 and hideH and #hideH > 0, "missing overlay handlers")
+
+if showH and hideH then
+  Tuono.State.buffs.opportunity.up = false
+  for _, h in ipairs(showH) do pcall(h, "SPELL_ACTIVATION_OVERLAY_GLOW_SHOW", Tuono.SpellIDs.pistolShot) end
+  check("a proc glow on Pistol Shot marks Opportunity up",
+    Tuono.State.buffs.opportunity.up == true,
+    "opportunity.up=" .. tostring(Tuono.State.buffs.opportunity.up))
+
+  for _, h in ipairs(hideH) do pcall(h, "SPELL_ACTIVATION_OVERLAY_GLOW_HIDE", Tuono.SpellIDs.pistolShot) end
+  check("the glow clearing marks Opportunity down",
+    Tuono.State.buffs.opportunity.up == false,
+    "opportunity.up=" .. tostring(Tuono.State.buffs.opportunity.up))
+
+  -- Presence is exact; STACKS are not. The channel says a proc exists, never how many,
+  -- and a rule that needs stacks must keep treating them as unknown.
+  for _, h in ipairs(showH) do pcall(h, "SPELL_ACTIVATION_OVERLAY_GLOW_SHOW", Tuono.SpellIDs.pistolShot) end
+  check("overlay gives presence but explicitly NOT stack count",
+    Tuono.State.buffs.opportunity.stacksKnown == false,
+    "stacksKnown=" .. tostring(Tuono.State.buffs.opportunity.stacksKnown))
+
+  -- An unmapped spell must not silently mark some unrelated buff.
+  for _, h in ipairs(showH) do pcall(h, "SPELL_ACTIVATION_OVERLAY_GLOW_SHOW", 999999) end
+  check("an unmapped overlay spell changes no tracked buff",
+    Tuono.Observers.overlayed[999999] == true,
+    "unmapped overlay not recorded")
+end
+
+-- 2. NEVER-SECRET AURA WHITELIST via C_Secrets.GetSpellAuraSecrecy.
+_G.Enum.SecrecyLevel = { NeverSecret = 0, AlwaysSecret = 1, ContextuallySecret = 2 }
+_G.C_Secrets = {
+  GetSpellAuraSecrecy = function(id)
+    -- Pretend Adrenaline Rush is never-secret and everything else is not.
+    if id == Tuono.SpellIDs.adrenalineRush then return 0 end
+    return 2
+  end,
+}
+Tuono.Observers.ProbeAuraSecrecy()
+check("aura secrecy probe finds the never-secret subset",
+  Tuono.Observers.readableAuras[Tuono.SpellIDs.adrenalineRush] == true
+    and Tuono.Observers.readableAuras[Tuono.SpellIDs.rollTheBones] == nil,
+  "whitelist wrong")
+
+check("ReadAura refuses to read an aura not on the whitelist",
+  Tuono.Observers.ReadAura(Tuono.SpellIDs.rollTheBones) == nil,
+  "read a non-whitelisted aura")
+
+-- 3. Patch-correct error names, so the out-of-power channel does not depend on
+-- errorType indices that shift every patch.
+_G.GetGameMessageInfo = function(i)
+  if i == 50 then return "ERR_OUT_OF_ENERGY" end
+  return nil
+end
+Tuono.Observers.BuildErrorMap()
+check("error map resolves index to a stable name",
+  Tuono.Observers.ErrorName(50) == "ERR_OUT_OF_ENERGY",
+  "got " .. tostring(Tuono.Observers.ErrorName(50)))
 
 print("")
 print(string.format("SECRETS REGRESSION: %d passed, %d failed", results.passed, results.failed))

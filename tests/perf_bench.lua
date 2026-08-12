@@ -99,7 +99,8 @@ for _, file in ipairs({
   "Tuono/Core.lua", "Tuono/Migration.lua", "Tuono/Profiles.lua", "Tuono/UserRules.lua",
   "Tuono/profiles/OutlawRogue.lua", "Tuono/data/rules.lua", "Tuono/StateTracker.lua",
   "Tuono/AssistReader.lua", "Tuono/Rotation.lua",
-  "Tuono/CooldownModel.lua", "Tuono/EnergyModel.lua",
+  "Tuono/CooldownModel.lua",
+  "Tuono/Observers.lua", "Tuono/EnergyModel.lua",
   "Tuono/IntelligenceLayer.lua", "Tuono/Display.lua", "Tuono/Highlight.lua",
   "Tuono/Config.lua",
 }) do

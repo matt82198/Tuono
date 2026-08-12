@@ -395,6 +395,25 @@ Tuono.Profiles.Register({
 		primary = (Enum and Enum.PowerType and Enum.PowerType.Energy) or 3,
 		secondary = (Enum and Enum.PowerType and Enum.PowerType.ComboPoints) or 4,
 	},
+	-- PROC GLOW -> TRACKED BUFF. The spell activation overlay carries no secrecy flags
+	-- at all, so when Blizzard lights up a button we get an exact, per-spellID proc
+	-- signal that survives combat -- which is the only reliable way to see Opportunity
+	-- and Audacity now that aura payloads are secret.
+	--
+	-- Keyed by the spellID whose BUTTON glows, valued by the buff key it implies.
+	-- Opportunity glows Pistol Shot; Audacity glows Ambush.
+	overlayAuras = {
+		[SPELLS.pistolShot] = "opportunity",
+		[SPELLS.ambush]     = "audacity",
+	},
+
+	-- Extra spell IDs to run through C_Secrets.GetSpellAuraSecrecy at load, on the
+	-- chance they are flagged never-secret and can therefore be read in full even in
+	-- combat. The Roll the Bones stage buffs belong here once their IDs are known --
+	-- 315508 is the castable ability, NOT the aura, so this list is deliberately empty
+	-- rather than populated with a guess.
+	auraProbeList = {},
+
 	-- Buff spellIDs the state tracker should follow for this spec.
 	trackedAuras = {
 		{ key = "adrenalineRush", spellID = SPELLS.adrenalineRush },
