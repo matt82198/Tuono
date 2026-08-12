@@ -459,6 +459,11 @@ function Tuono.Display.Render(result)
 		anchor.lastCount = visibleCount
 		-- Width formula: 6 + 50 + sum(6 + 42) for each additional icon + 6
 		local width = 6 + 50 + math.max(0, visibleCount - 1) * (6 + 42) + 6
+		-- The ready rail sits under the strip and is ~190px wide no matter how many
+		-- icons are shown. With the default now a SINGLE icon the strip is only ~62px,
+		-- so without a floor the rail would draw outside its own frame.
+		local RAIL_MIN_WIDTH = 196
+		if width < RAIL_MIN_WIDTH then width = RAIL_MIN_WIDTH end
 		local height = 6 + 50 + 6 + 14
 		anchor:SetSize(width, height)
 	end

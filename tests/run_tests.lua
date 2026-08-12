@@ -3012,8 +3012,12 @@ test("display-clarity: dynamic strip resize wraps actual entries, not iconCount"
 
   local anchor = Tuono.Display.anchor
   local width, height = anchor:GetSize()
-  -- With 2 entries: width = 6 + 50 + 1*(6+42) + 6 = 110
-  assert_true(width >= 105 and width <= 115, "strip width wraps 2 entries (~110), got " .. tostring(width))
+  -- The strip still sizes to its ENTRIES (2 entries = 6 + 50 + 1*(6+42) + 6 = 110), but
+  -- the frame now has a floor so the ready rail fits: the rail is ~190px wide however
+  -- many icons are shown, and with the default down to a single icon the strip alone
+  -- would be ~62px and the rail would draw outside its own frame.
+  assert_true(width >= 196, "frame is at least rail-width, got " .. tostring(width))
+  assert_true(width <= 260, "frame does not grow unboundedly, got " .. tostring(width))
 
   -- Render with 4 entries
   result.queue = {

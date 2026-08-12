@@ -78,3 +78,57 @@ Guards added: ability-data assertions, placeholder-value rejection, no-back-to-b
 in predicted sequences, TOC-version-vs-CHANGELOG gate.
 Lesson reinforced: agent-reported green was wrong 4x today; every merge was independently
 re-run before release. One lane merged red while claiming the Lua runtime was unavailable.
+
+---
+
+## 2026-08-11 — Midnight secret-values rebuild (OutlawAssist → Tuono 2.0)
+
+Started from a single user report: "the first icon is just static, pressing it does
+nothing." Ended with a spec-agnostic framework whose position-1 recommendation reads as
+optimal in live play.
+
+**Root cause of the reported bug — two stacking secret-value failures.**
+`C_AssistedCombat.IsAvailable()` returns a boolean that goes secret in instanced combat;
+`if not isAvailable then` on a secret RAISES, and Core wraps the call in a pcall, so
+every in-combat tick aborted before `nextSpellID` was reassigned. Blizzard's pick froze
+at combat entry. Simultaneously `OA.num(UnitPower(...), 0)` turned unreadable energy into
+a confident zero, so every affordability gate failed and the simulator returned an empty
+sequence — which fell through to that frozen pick. Mutation-tested: 8 of 20 assertions
+fail against the old code.
+
+**The systemic defect.** Unknown-as-zero appeared in at least five places: energy, the
+cooldown timer, RtB stage, `IsVisible()` in my own taint fix, and `isFullUpdate` absent
+vs secret. Fixed structurally with tri-state reads rather than case by case.
+
+**Substrate.** Energy carried as an interval bounded by the never-secret `IsSpellUsable`
+ladder, tightened by threshold crossings (exact readings) and by the player's own casts
+and failures. Cooldown remaining reconstructed from cast time + static duration + CDR
+derived from readable combo points. Procs recovered from spell activation overlay events,
+which carry no secrecy flags at all. GCD modelled from casts and haste, corrected by the
+never-secret `isOnGCD`.
+
+**Framework.** Outlaw extracted to `profiles/OutlawRogue.lua` behind a registry; engine is
+spec-agnostic. User-editable priority rows compile to predicates (no stored Lua). Two
+rotations selected on live enemy count with hysteresis.
+
+**Feedback loop.** `Recorder.lua` writes a structured trace to SavedVariables;
+`tools/read_trace.lua` reads it straight off disk. One `/reload` applies new code and
+flushes the previous run. This is what diagnosed the GCD bug: 31 Sinister Strike failures
+against exactly 31 "Ability is not ready yet".
+
+**Corrected data.** Preparation was the CLASSIC spell ID with a 30s cooldown (retail is
+1277933, 240s). Ambush cost 0 instead of 50. Blade Rush had a fabricated combo point.
+Killing Spree — a finisher — spent none. Adrenaline Rush was +60%/20s instead of
++75%/15s. Roll the Bones' cast ID had moved to 1214909. The table's
+"verified against Wowhead" comment was false and was removed.
+
+**Performance.** 461.5 → 55.7 API calls per combat tick, measured by `tests/perf_bench.lua`
+against two checkouts. Slot index replaced a 120-slot sweep that ran uncached every tick;
+scratch state replaced a per-tick deep copy; `forceNext` was bypassing the throttle
+entirely rather than shortening it.
+
+**Verification.** 169 bundled tests, 73 secret-value regressions, 8 migration tests, TOC
+lint, Lua 5.1 check. Mutation-tested throughout — several suites initially passed against
+broken code and were sharpened until they did not. One test was found to be entirely
+vacuous and is now documented as such where the harness cannot reproduce a client
+behaviour.
