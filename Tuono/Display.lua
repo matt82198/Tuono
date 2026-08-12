@@ -38,6 +38,10 @@ local function InvalidateKeybindCache()
 	end
 end
 
+-- Exposed so tests can clear it: the cache short-circuits the entire lookup, which makes
+-- any test of the lookup itself silently vacuous once an earlier test has populated it.
+Tuono.Display.InvalidateKeybindCache = InvalidateKeybindCache
+
 local function AbbreviateKey(keyStr)
 	if not keyStr or keyStr == "" then return nil end
 	-- Single pass string operations to create abbreviated form once
@@ -132,6 +136,16 @@ local function safeActionInfo(slot)
 	return actionType, id
 end
 
+-- GetBindingKey returns a STRING, and AbbreviateKey runs gsub on it. A secret string
+-- would raise inside gsub, so it is read before use like everything else.
+local function readBindingKey(bindingName)
+	if not bindingName or not GetBindingKey then return nil end
+	local ok, key = pcall(GetBindingKey, bindingName)
+	if not ok or key == nil then return nil end
+	if Tuono.isSecret(key) or type(key) ~= "string" or key == "" then return nil end
+	return AbbreviateKey(key)
+end
+
 local function actionMatches(actionType, actionID, spellID)
 	if not actionType or not actionID then return false end
 	if actionType ~= "spell" and actionType ~= "talent" and actionType ~= "action" then
@@ -168,14 +182,23 @@ local function GetKeybindText(spellID)
 	-- 120-slot scan below. pcall directly instead.
 	if C_ActionBar and C_ActionBar.FindSpellActionButtons then
 		local ok, buttons = pcall(C_ActionBar.FindSpellActionButtons, spellID)
-		if ok and buttons and #buttons > 0 then
-			local slot = buttons[1]
-			local bindingName = bindingNameForSlot(slot)
-
-			if bindingName and GetBindingKey then
-				local key = GetBindingKey(bindingName)
-				if key then
-					foundKey = AbbreviateKey(key)
+		-- The call is pcall'd but its RESULT was not guarded, which is the same hole that
+		-- was just closed in tiers 2 and 3 -- and the more damaging one, because tier 1
+		-- runs for every icon. An unreadable slot flows straight into bindingNameForSlot,
+		-- where `CurrentMainBarSlot(i) == slot` and `slot >= 1` raise on a secret. The
+		-- render loop then dies partway through the strip, leaving whatever icon 1 drew
+		-- last frozen on screen while nothing behind it updates: "Q is just overlaying on
+		-- the first icon constantly".
+		--
+		-- #buttons on a secret-bearing table can raise too, so length is taken inside the
+		-- guard rather than in the condition.
+		if ok and type(buttons) == "table" then
+			local okLen, count = pcall(function() return #buttons end)
+			if okLen and (count or 0) > 0 then
+				local slot = Tuono.readNum(buttons[1])
+				local bindingName = slot and bindingNameForSlot(slot) or nil
+				if bindingName then
+					foundKey = readBindingKey(bindingName)
 				end
 			end
 		end
@@ -191,13 +214,8 @@ local function GetKeybindText(spellID)
 			local actionType, actionID = safeActionInfo(slot)
 			if actionMatches(actionType, actionID, spellID) then
 				local bindingName = bindingNameForSlot(slot)
-				if bindingName and GetBindingKey then
-					local key = GetBindingKey(bindingName)
-					if key then
-						foundKey = AbbreviateKey(key)
-						break
-					end
-				end
+				foundKey = bindingName and readBindingKey(bindingName) or nil
+				if foundKey then break end
 			end
 		end
 	end
@@ -209,15 +227,9 @@ local function GetKeybindText(spellID)
 		for slot = 1, 120 do
 			local actionType, actionID = safeActionInfo(slot)
 			if actionMatches(actionType, actionID, spellID) then
-			local bindingName = bindingNameForSlot(slot)
-
-				if bindingName and GetBindingKey then
-					local key = GetBindingKey(bindingName)
-					if key then
-						foundKey = AbbreviateKey(key)
-						break
-					end
-				end
+				local bindingName = bindingNameForSlot(slot)
+				foundKey = bindingName and readBindingKey(bindingName) or nil
+				if foundKey then break end
 			end
 		end
 	end

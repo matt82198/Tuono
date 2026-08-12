@@ -3675,6 +3675,80 @@ test("a failed cast forces an immediate re-evaluate (out of range recovery)", fu
     "failed cast with an unreadable spellID was suppressed instead of refreshing")
 end)
 
+test("a secret action slot does not take the render down with it", function()
+  -- REPORTED SYMPTOM: "Q is just overlaying on the first icon constantly."
+  --
+  -- Keybind resolution compares actionID against spellID. An unreadable actionID makes
+  -- that comparison raise, and the lookup runs inside the render loop -- so one secret
+  -- action slot kills the rest of the strip and leaves whatever icon 1 last drew frozen
+  -- on screen. Every path into the action bar has to survive a secret.
+  -- Render bails immediately without an anchor, and bails again if the class/spec gate
+  -- does not match -- so without these the test passes by never reaching the keybind path
+  -- at all. It did exactly that on the first attempt, and three mutations of the guards
+  -- it was meant to cover all stayed green.
+  Tuono.Display.Init()
+  assert_true(Tuono.Display.anchor ~= nil, "display anchor exists, so Render will proceed")
+  Tuono.db.show = Tuono.db.show or {}
+  Tuono.db.show.queue = true
+  Tuono.db.display.iconCount = 4
+
+  local realGetActionInfo = _G.GetActionInfo
+  local realFind = C_ActionBar and C_ActionBar.FindSpellActionButtons
+  local realBinding = _G.GetBindingKey
+  local secret = stub.makeSecret(7)
+
+  -- The cache short-circuits the whole lookup, and earlier tests have populated it.
+  Tuono.Display.InvalidateKeybindCache()
+
+  -- Every route poisoned at once: the modern lookup hands back a secret slot, the scan
+  -- hands back a secret actionID, and the binding name resolves to a secret string.
+  if C_ActionBar then
+    C_ActionBar.FindSpellActionButtons = function() return { secret } end
+  end
+  _G.GetActionInfo = function() return "spell", secret end
+  _G.GetBindingKey = function() return secret end
+
+  local ok, err = pcall(Tuono.Display.Render, {
+    queue = { { spellID = 193315, isSequence = true, confidence = "certain" } },
+    advisories = {},
+  })
+
+  _G.GetActionInfo = realGetActionInfo
+  _G.GetBindingKey = realBinding
+  if C_ActionBar then C_ActionBar.FindSpellActionButtons = realFind end
+
+  assert_true(ok, "Render raised on a secret action slot: " .. tostring(err))
+
+  -- Second case: the slot resolves fine, but the BINDING STRING is secret. AbbreviateKey
+  -- runs gsub on it, which raises on a secret, and that is a different code path from the
+  -- one above -- with only the first case, removing the guard in readBindingKey stayed
+  -- green because no tier ever got far enough to call it.
+  if C_ActionBar then
+    C_ActionBar.FindSpellActionButtons = function() return { 1 } end
+  end
+  _G.GetActionInfo = function() return "spell", 193315 end
+  _G.GetBindingKey = function() return secret end
+  Tuono.Display.InvalidateKeybindCache()
+
+  local ok2, err2 = pcall(Tuono.Display.Render, {
+    queue = { { spellID = 193315, isSequence = true, confidence = "certain" } },
+    advisories = {},
+  })
+
+  _G.GetActionInfo = realGetActionInfo
+  _G.GetBindingKey = realBinding
+  if C_ActionBar then C_ActionBar.FindSpellActionButtons = realFind end
+  Tuono.Display.InvalidateKeybindCache()
+
+  assert_true(ok2, "Render raised on a secret binding string: " .. tostring(err2))
+
+  -- HARNESS LIMITATION, stated rather than papered over: the stub cannot reproduce a raise
+  -- on `secretTable == number`. Lua 5.1 only consults __eq when both operands are tables of
+  -- the same type, so a secret compared against a plain spellID returns false instead of
+  -- raising. The readNum guard in safeActionInfo is therefore correct-by-construction here
+  -- but not provable by this suite -- the same gap already documented for `if secret then`.
+end)
+
 test("the rendered queue is a coherent sequence, not a rule-spliced list", function()
   -- THE BUG BEHIND "the rest of the display seems completely useless".
   --
