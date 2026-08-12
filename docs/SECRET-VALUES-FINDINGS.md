@@ -85,19 +85,39 @@ Stated plainly, because a writeup that only lists wins is marketing:
 - **Aura stack counts** for procs detected via overlay glow. The glow proves a proc
   exists; it never says how many.
 
-## On reverse engineering generally
+## Why this exists
 
-The client has to show the player what is happening, so information the player can see
-is in principle recoverable. That is true of any client-side game, and it is why
-approaches like this exist at all.
+Not as a demonstration that restrictions can be beaten. They largely cannot, and the
+section above says so plainly.
 
-But "therefore secrets are pointless" does not follow, and this project is not evidence
-for it. Blizzard removed a great deal permanently, and what survives does so because
-they chose to leave it — the readable set is a deliberate line, not an oversight. Every
-technique here depends on APIs that are documented, unflagged, and could be flagged
-tomorrow. If they are, this degrades rather than breaks: intervals widen, confidence
-drops, and the addon falls back to cooldown-driven logic on its own. That is by design,
-and it is the honest posture to build in.
+It exists because **the replacement is not good enough yet, and something had to fill
+the gap.** Blizzard removed the old generation of helpers and shipped Assisted Combat in
+their place. That system:
+
+- covers **damage abilities only** — no defensives, no interrupts, no utility, which is
+  most of what actually kills you in a keystone
+- is reported to **stall**, repeating an AoE suggestion against a single target and
+  refusing to advance until you obey it — the most trust-destroying behaviour a
+  recommender can have
+- costs some specs a great deal of throughput, Outlaw among the worst, because a flat
+  priority ignores Roll the Bones entirely
+- and is rendered on the action bar, which is exactly where players said they did not
+  want to be looking
+
+Meanwhile the players hit hardest were not parse-chasers. They were people using these
+tools for accessibility, who went from playing to not playing.
+
+That is the gap. When a company's own answer falls short, someone builds the missing
+piece — and the healthy version of that is built **inside the rules**, published in the
+open, honest about what it cannot do. That is the whole intent here. The techniques in
+this document are not clever evasions; they are what is left when you take the
+restrictions seriously and still try to make something useful.
+
+Two consequences worth stating. Every channel used here is documented, unflagged, and
+could be flagged tomorrow — if that happens this degrades rather than breaks, which is
+deliberate. And none of it would be needed if the built-in assistant handled defensives,
+stopped stalling, and stopped being a flat list. That is a product problem, and product
+problems get solved by whoever is willing to solve them.
 
 ## Compliance
 
