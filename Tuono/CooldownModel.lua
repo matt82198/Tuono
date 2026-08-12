@@ -51,6 +51,71 @@ local prevCP = 0
 local CDR_PER_CP = 1.0
 local CDR_PER_CP_TRIPLE = 1.3
 
+-- ============================================================================
+-- GLOBAL COOLDOWN
+-- ============================================================================
+-- Found in a live trace: Sinister Strike failed 31 times against 14 successes, with
+-- exactly 31 "Ability is not ready yet." errors. Sinister Strike has NO cooldown, so
+-- "not ready" could only mean the GCD -- and the addon did not model the GCD at all.
+-- Worse, cooldownKeys() skips any ability with cd == 0, so SS was never even polled.
+--
+-- The recommendation was RIGHT. It just was not pressable yet. That distinction is the
+-- whole fix: suppressing it would blank the bar for most of every GCD, which is worse.
+-- It renders as waiting instead.
+--
+-- The GCD is derivable without reading anything secret: it starts on a cast we observe,
+-- and its length is 1.0s scaled by haste with a 0.75s floor. Haste read live in the
+-- trace at 17.8%, and EnergyModel already caches it across the combat boundary where it
+-- goes secret.
+local GCD_BASE = 1.0
+local GCD_FLOOR = 0.75
+local gcdUntil = 0
+
+local function currentGCD()
+	local haste = 0
+	if Tuono.Energy and Tuono.Energy.lastKnownHaste then
+		haste = Tuono.Energy.lastKnownHaste or 0
+	end
+	local d = GCD_BASE / (1 + (haste / 100))
+	if d < GCD_FLOOR then d = GCD_FLOOR end
+	return d
+end
+
+-- Seconds until the GCD ends; 0 when free.
+function CM.GCDRemaining()
+	local r = gcdUntil - GetTime()
+	if r <= 0 then return 0 end
+	return r
+end
+
+function CM.GCDActive()
+	return CM.GCDRemaining() > 0
+end
+
+function CM.NoteGCDFromCast(spellID)
+	local abilities = Tuono.Rotation and Tuono.Rotation.ABILITIES
+	local ability = abilities and abilities[spellID]
+	-- Off-GCD abilities (Adrenaline Rush, Preparation) must not start one.
+	if not ability or ability.gcd == false then return end
+	gcdUntil = GetTime() + currentGCD()
+end
+
+-- Ground truth beats the model: isOnGCD is flagged NeverSecret, so when the client
+-- says a spell is merely GCD-blocked we can trust it directly.
+function CM.NoteGCDFromCooldownInfo(isActive, isOnGCD)
+	local active = Tuono.readBool(isActive)
+	local onGCD = Tuono.readBool(isOnGCD)
+	if active == true and onGCD == true then
+		if gcdUntil <= GetTime() then
+			gcdUntil = GetTime() + currentGCD()
+		end
+	elseif onGCD == false and active == false then
+		gcdUntil = 0
+	end
+end
+
+Tuono.RegisterEvent("PLAYER_REGEN_ENABLED", function() gcdUntil = 0 end)
+
 function CM.NoteTick()
 	local cp = Tuono.State and Tuono.State.comboPoints
 	if type(cp) == "number" and (Tuono.State.comboPointsKnown ~= false) then
@@ -97,6 +162,8 @@ function CM.OnCast(spellID)
 			started[key] = { at = GetTime(), duration = ability.cd }
 		end
 	end
+
+	CM.NoteGCDFromCast(spellID)
 end
 
 -- Predicted remaining for a key. Returns (remaining, known).

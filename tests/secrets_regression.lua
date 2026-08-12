@@ -866,6 +866,56 @@ check("error map resolves index to a stable name",
   Tuono.Observers.ErrorName(50) == "ERR_OUT_OF_ENERGY",
   "got " .. tostring(Tuono.Observers.ErrorName(50)))
 
+-- ===========================================================================
+-- GLOBAL COOLDOWN  (from a live trace: 31 Sinister Strike failures, 14 successes,
+-- and exactly 31 "Ability is not ready yet")
+-- ===========================================================================
+-- SS has no cooldown, so "not ready" could only be the GCD -- and cooldownKeys() skips
+-- anything with cd == 0, so it was never polled. The recommendation was correct; the
+-- addon just never said it was not pressable yet.
+local CM = Tuono.CooldownModel
+check("GCD model exists",
+  CM and CM.GCDActive and CM.GCDRemaining, "CooldownModel GCD API missing")
+
+if CM and CM.GCDActive then
+  Tuono.Energy.lastKnownHaste = 0        -- 1.0s GCD at zero haste
+  clock = clock + 10
+  CM.NoteGCDFromCast(Tuono.SpellIDs.sinisterStrike)
+  check("a GCD ability starts the global cooldown",
+    CM.GCDActive() == true, "GCD not active after a cast")
+
+  clock = clock + 0.5
+  check("the GCD is still running halfway through",
+    CM.GCDActive() == true and CM.GCDRemaining() > 0,
+    "remaining=" .. tostring(CM.GCDRemaining()))
+
+  clock = clock + 0.75
+  check("the GCD expires on schedule",
+    CM.GCDActive() == false, "remaining=" .. tostring(CM.GCDRemaining()))
+
+  -- Haste shortens it. 17.8% was the live reading from the trace.
+  Tuono.Energy.lastKnownHaste = 17.8
+  CM.NoteGCDFromCast(Tuono.SpellIDs.sinisterStrike)
+  local hasted = CM.GCDRemaining()
+  check("haste shortens the GCD",
+    hasted < 1.0 and hasted > 0.8, "hasted GCD=" .. tostring(hasted))
+
+  -- Off-GCD abilities must not start one. Adrenaline Rush is gcd=false.
+  clock = clock + 5
+  CM.NoteGCDFromCast(Tuono.SpellIDs.adrenalineRush)
+  check("an off-GCD ability does not start a GCD",
+    CM.GCDActive() == false, "off-GCD ability started one")
+
+  -- isOnGCD is NeverSecret, so the client's word beats the model.
+  CM.NoteGCDFromCooldownInfo(true, true)
+  check("client-reported isOnGCD drives the model",
+    CM.GCDActive() == true, "isOnGCD ground truth ignored")
+
+  CM.NoteGCDFromCooldownInfo(false, false)
+  check("client reporting no cooldown clears the GCD",
+    CM.GCDActive() == false, "GCD not cleared")
+end
+
 print("")
 print(string.format("SECRETS REGRESSION: %d passed, %d failed", results.passed, results.failed))
 os.exit(results.failed == 0 and 0 or 1)

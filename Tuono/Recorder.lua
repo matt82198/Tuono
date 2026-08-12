@@ -212,6 +212,9 @@ function R.Snapshot()
 		mode = Tuono.Rotation and Tuono.Rotation.mode,
 		regen = Tuono.Energy and Tuono.Energy.measuredRegen,
 		stall = Tuono.Engine and Tuono.Engine.stallCount,
+		gcd = Tuono.CooldownModel and Tuono.CooldownModel.GCDRemaining
+			and math.floor(Tuono.CooldownModel.GCDRemaining() * 100) / 100,
+		rec1 = Tuono.Engine and Tuono.Engine.lastPos1,
 	})
 end
 
@@ -258,7 +261,19 @@ Tuono.RegisterUnitEvent("UNIT_SPELLCAST_FAILED", "player", function(event, unit,
 end)
 
 Tuono.RegisterEvent("UI_ERROR_MESSAGE", function(event, errorType, message)
-	push({ k = "uierr", errorType = obs(errorType), msg = obs(message) })
+	-- Record the STABLE error name alongside the localized message: errorType indices
+	-- shift between patches and messages differ per locale, so neither alone is a
+	-- durable key for analysis.
+	push({
+		k = "uierr", errorType = obs(errorType), msg = obs(message),
+		name = Tuono.Observers and Tuono.Observers.ErrorName and Tuono.Observers.ErrorName(errorType),
+		-- What we were recommending when it failed. This is the pairing that turns a
+		-- pile of errors into an actionable defect: 31 "not ready" against a Sinister
+		-- Strike recommendation is the GCD bug, stated outright.
+		rec = Tuono.Engine and Tuono.Engine.lastPos1,
+		gcd = Tuono.CooldownModel and Tuono.CooldownModel.GCDRemaining
+			and math.floor(Tuono.CooldownModel.GCDRemaining() * 100) / 100,
+	})
 end)
 
 -- The one that found the last bug. Record the SHAPE of the payload, not its contents:

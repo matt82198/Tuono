@@ -640,6 +640,24 @@ function Tuono.Display.Render(result)
 						end
 					end
 
+					-- GLOBAL COOLDOWN on position 1. A live trace showed Sinister Strike
+					-- failing 31 times against 14 successes, every failure paired with
+					-- "Ability is not ready yet" -- i.e. the player pressing a correct
+					-- recommendation during the GCD and getting nothing. The advice was
+					-- right; the timing was not, and the bar said nothing about it.
+					--
+					-- Deliberately a sweep rather than a fade: fading reads as "we are
+					-- unsure", and we are not unsure at all. It is the correct next
+					-- button, it just is not pressable for another fraction of a second.
+					if i == 1 and Tuono.CooldownModel and Tuono.CooldownModel.GCDActive
+						and Tuono.CooldownModel.GCDActive() then
+						local rem = Tuono.CooldownModel.GCDRemaining()
+						if icon.cooldownWidget and rem > 0 then
+							icon.cooldownWidget:SetCooldown(GetTime() - 0.001, rem)
+							icon.cooldownWidget:Show()
+						end
+					end
+
 					-- Icon transparency follows confidence
 					icon:SetAlpha(baseAlpha)
 					icon:Show()

@@ -189,6 +189,12 @@ local function RefreshCooldowns()
 			if C_Spell and C_Spell.GetSpellCooldown then
 				local ok, cd = pcall(C_Spell.GetSpellCooldown, spellID)
 				if ok and type(cd) == "table" then
+					-- isOnGCD is flagged NeverSecret, so the client tells us outright
+					-- when a "cooldown" is merely the global one. Ground truth for the
+					-- GCD model, which otherwise runs on haste-derived dead reckoning.
+					if Tuono.CooldownModel and Tuono.CooldownModel.NoteGCDFromCooldownInfo then
+						Tuono.CooldownModel.NoteGCDFromCooldownInfo(cd.isActive, cd.isOnGCD)
+					end
 					Tuono.State.cooldowns[key] =
 						NormalizeCooldown(cd.startTime, cd.duration, cd.isEnabled, cd.isActive, key)
 					handled = true
