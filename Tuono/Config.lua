@@ -18,6 +18,13 @@ Tuono.defaults = {
 		point = "CENTER",
 		x = 0,
 		y = -180,
+		-- Four slots, but the queue truncates ITSELF. This nearly became 1 after "the rest
+		-- of the display seems completely useless" -- and one icon turned out to be "too
+		-- hard to react to with 0 prediction", which is right: lead time is what a rotation
+		-- helper is for. The wheel was never useless because it was long; it was useless
+		-- because step 4 was drawn with step 1's authority while resting on an energy
+		-- interval and unreadable aura state. IntelligenceLayer now cuts the sequence at
+		-- the first step whose provenance is "unknown", so the LENGTH itself is a signal.
 		iconCount = 4
 	},
 	highlight = {

@@ -859,7 +859,14 @@ test("pistol shot rule resolves spellID lazily at evaluate time", function()
   stub.state.stealthed = false
   Tuono.State.stealthed = false
   Tuono.State.buffs.opportunity.up = true
+  -- Opportunity is a proc, so in real play its presence comes from the never-secret
+  -- overlay-glow channel. Say so, or the step rates "unknown" and the confidence
+  -- truncation legitimately cuts it before this test can see it -- which would make this
+  -- test a test of truncation rather than of lazy spellID resolution.
+  Tuono.State.buffs.opportunity.fromOverlay = true
   Tuono.State.energy = 30
+  Tuono.State.energyKnown = true
+  Tuono.State.energySource = "measured"
 
   local psRule = nil
   for _, rule in ipairs(Tuono.Rules or {}) do
@@ -3579,12 +3586,129 @@ test("a failed cast forces an immediate re-evaluate (out of range recovery)", fu
   local handlers = Tuono.eventHandlers and Tuono.eventHandlers["UNIT_SPELLCAST_FAILED"]
   assert_true(handlers ~= nil and #handlers > 0,
     "UNIT_SPELLCAST_FAILED is not registered - a failed cast would never refresh the bar")
-  local ran = false
   local realRequest = Tuono.RequestImmediateUpdate
-  Tuono.RequestImmediateUpdate = function() ran = true end
-  for _, fn in ipairs(handlers) do fn("UNIT_SPELLCAST_FAILED", "player") end
-  Tuono.RequestImmediateUpdate = realRequest
-  assert_true(ran, "failed cast did not request an immediate update")
+  local function fireFailure(spellID)
+    local ran = false
+    Tuono.RequestImmediateUpdate = function() ran = true end
+    for _, fn in ipairs(handlers) do fn("UNIT_SPELLCAST_FAILED", "player", "cast-1", spellID) end
+    Tuono.RequestImmediateUpdate = realRequest
+    return ran
+  end
+
+  -- A rotation ability failing is exactly the case this handler exists for.
+  assert_true(fireFailure(Tuono.SpellIDs.sinisterStrike),
+    "failed cast of a rotation ability did not request an immediate update")
+
+  -- But a spell we never reason about must NOT. A live trace had 125 failed casts of one
+  -- trinket the player was mashing; each forced a full re-evaluate and the churn is what
+  -- made the icon strobe. 345739 is that trinket -- deliberately not in ABILITIES.
+  assert_true(not fireFailure(345739),
+    "failed cast of an unrelated spell forced a re-evaluate (this is the icon-strobe bug)")
+
+  -- An UNREADABLE spellID is not evidence of irrelevance. Unknown is never "no", so the
+  -- filter is only allowed to suppress on positive knowledge.
+  assert_true(fireFailure(nil),
+    "failed cast with an unreadable spellID was suppressed instead of refreshing")
+end)
+
+-- === confidence-gated lookahead ===
+-- One icon is "too hard to react to with 0 prediction"; four icons where step 4 is a guess
+-- is "completely useless". The queue therefore ends at the first sequence step it cannot
+-- justify, so the LENGTH of the strip is itself the confidence signal.
+-- Isolate the truncation from the legacy rule engine. PIN/PREFER reorder the queue and the
+-- castability filter drops spells the stub has marked unknown -- neither is what these
+-- tests are about, and both would make the assertions read as truncation failures.
+local function evaluateSteps(steps, rules)
+  local realPredict, realRules = Tuono.Rotation.Predict, Tuono.Rules
+  Tuono.Rotation.Predict = function() return steps end
+  Tuono.Rules = rules or {}
+  Tuono.State.knownUnavailable = false
+  Tuono.State.knownSpells = Tuono.State.knownSpells or {}
+  for _, s in ipairs(steps) do Tuono.State.knownSpells[s.spellID] = true end
+  local ok, r = pcall(Tuono.Engine.Evaluate)
+  Tuono.Rotation.Predict, Tuono.Rules = realPredict, realRules
+  assert_true(ok, "Evaluate completed without error")
+  local seq = {}
+  for _, e in ipairs(r.queue) do
+    if e.isSequence then table.insert(seq, e.spellID) end
+  end
+  return seq, r
+end
+
+test("lookahead stops at the first sequence step rated unknown", function()
+  local seq = evaluateSteps({
+    { spellID = 193315, confidence = "certain", reason = "s1" },
+    { spellID = 8676,   confidence = "bounded", reason = "s2" },
+    { spellID = 185763, confidence = "unknown", reason = "s3" },
+    { spellID = 2098,   confidence = "certain", reason = "s4" },
+  })
+  assert_eq(#seq, 2, "sequence truncated at the unknown step")
+  assert_true(seq[1] == 193315 and seq[2] == 8676, "the two justified steps survive in order")
+end)
+
+test("a certain lookahead is not truncated", function()
+  local seq = evaluateSteps({
+    { spellID = 193315, confidence = "certain", reason = "s1" },
+    { spellID = 8676,   confidence = "certain", reason = "s2" },
+    { spellID = 185763, confidence = "bounded", reason = "s3" },
+    { spellID = 2098,   confidence = "certain", reason = "s4" },
+  })
+  assert_eq(#seq, 4, "bounded steps are shown - only unknown ends the sequence")
+end)
+
+test("position 1 is never truncated, however uncertain it is", function()
+  -- Refusing to answer "what do I press now" is strictly worse than answering it with a
+  -- visible uncertainty tint. Only the lookahead has to earn its place.
+  local seq = evaluateSteps({
+    { spellID = 193315, confidence = "unknown", reason = "s1" },
+    { spellID = 8676,   confidence = "unknown", reason = "s2" },
+  })
+  assert_eq(#seq, 1, "an unknown position 1 still renders; the unknown step 2 does not")
+  assert_eq(seq[1], 193315, "position 1 survived")
+end)
+
+test("truncation does not delete the cooldown and trinket reminders behind it", function()
+  -- Those entries are not predicting the future -- they report a cooldown that is ready
+  -- NOW -- so an uncertain step 2 must not silently take them with it.
+  -- One deterministic reminder rule, rather than whichever of the 24 shipped rules happens
+  -- to fire under the ambient state -- that made this test a hostage to unrelated rule
+  -- edits, and it broke the first time one of them was corrected.
+  Tuono.State.cooldowns.bladeFlurry = { known = true, ready = true, remaining = 0 }
+  Tuono.State.knownSpells = Tuono.State.knownSpells or {}
+  Tuono.State.knownSpells[13877] = true
+  local reminder = { {
+    name = "test_reminder", desc = "", action = "ADVISE", kind = "cooldown",
+    spellID = 13877, when = function() return true end,
+  } }
+  local seq, r = evaluateSteps({
+    { spellID = 193315, confidence = "certain", reason = "s1" },
+    { spellID = 8676,   confidence = "unknown", reason = "s2" },
+  }, reminder)
+  assert_eq(#seq, 1, "the unknown step 2 was cut")
+  local found = false
+  for _, e in ipairs(r.queue) do
+    if not e.isSequence and e.spellID == 13877 then found = true end
+  end
+  assert_true(found, "the cooldown reminder behind the cut survived truncation")
+end)
+
+test("a buff observed via the overlay channel is certain even while auras are degraded", function()
+  -- The failure this guards: `degraded` is nearly always true in combat (aura payloads are
+  -- secret), so rating every buff-gated step off that one flag made the whole rotation
+  -- "unknown" -- and with truncation live, the lookahead would collapse to one icon in
+  -- every real fight. The proc glow is a never-secret both-edges signal; trust it.
+  local S = Tuono.State
+  S.buffs.degraded = true
+  S.buffs.opportunity.fromOverlay = nil
+  local rule = { conditions = { { type = "buffUp", spell = "opportunity" } } }
+  assert_eq(Tuono.Rotation.RateRule(rule, S), "unknown",
+    "without the overlay channel a degraded buff read is unknown")
+
+  S.buffs.opportunity.fromOverlay = true
+  assert_eq(Tuono.Rotation.RateRule(rule, S), "certain",
+    "an overlay-observed buff is certain despite the global degraded flag")
+  S.buffs.opportunity.fromOverlay = nil
+  S.buffs.degraded = false
 end)
 
 -- === combo-point-max tests ===

@@ -27,7 +27,12 @@ accessibility lost them with no substitute. See `docs/SECRET-VALUES-FINDINGS.md`
    and intervals widen to `[0,max]`, every answer becomes "maybe", and the rotation
    degrades to cooldown+combo-point logic on its own.
 5. **Provenance, not index, sets confidence.** A step derived from exact inputs is solid
-   in slot 4; one gated on hidden aura state is uncertain in slot 1.
+   in slot 4; one gated on hidden aura state is uncertain in slot 1. Provenance is
+   per-input, never a global "degraded" flag — and it must survive into the simulator's
+   scratch state, or every predicted step inherits the worst case.
+8. **The length of the queue is a signal.** The lookahead stops at the first step whose
+   provenance is `unknown`. One icon is too little to react to; four icons where the
+   fourth is a guess is worse than none.
 6. **One rotation on the bar.** Blizzard's pick is a sensor, never an icon.
 7. **The gate is not overridden.** `secret_scan.py --staged` before every push; a false
    positive is fixed in the code, not waived.
@@ -55,8 +60,9 @@ accessibility lost them with no substitute. See `docs/SECRET-VALUES-FINDINGS.md`
    the stage within ~2 globals. 4-vs-3 differs only by crit and is unresolvable.
 4. **Learn the other three RtB stage auras.** IDs are in the profile from SimC; the
    learner confirms them from play and writes candidates to SavedVariables.
-5. **UI rework.** Default is now 1 icon + ready rail. The rail needs real design work;
-   the escalation slot for defensives/interrupts is unbuilt.
+5. **UI rework.** Default is 4 icons, self-truncating at the first `unknown` step, plus
+   the ready rail. The rail needs real design work; the escalation slot for
+   defensives/interrupts is unbuilt.
 6. **SimC APL importer.** The rule schema is already APL-shaped. Blocked on nothing but
    effort; value depends on how much of an imported APL is evaluable under secrets.
 7. **`C_RestrictedActions.IsAddOnRestrictionActive` returns CALL_FAILED** for all six
@@ -70,5 +76,11 @@ accessibility lost them with no substitute. See `docs/SECRET-VALUES-FINDINGS.md`
 - RtB stage 4 vs 3 has no deterministic observable.
 - Proc detection via overlay gives presence only, never stack count.
 - `Tuono.Rules` (data/rules.lua) and profile priority lists are two engines, the former
-  post-processing the latter. This caused several bugs and should be folded in.
+  post-processing the latter. This caused several bugs and should be folded in. Two more
+  found since: `preparation_ready` still carried the dead Classic spell ID 14185 after the
+  profile was corrected, and `rtb_reroll_stage2` advised a six-minute cooldown at a stage
+  the profile explicitly gates against. Both fixed; the underlying duplication is not.
+- Overlay-glow provenance only exists for procs Blizzard glows, and only while the spell
+  is on an action bar. Un-barred, no event fires, `fromOverlay` is never set, and the
+  affected steps rate `unknown` — the lookahead shortens rather than going stale.
 - Nothing has been validated in a mythic keystone; all live data so far is open world.

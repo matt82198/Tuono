@@ -148,16 +148,23 @@ Tuono.Rules = {
 
   -- Additional Rule 10: RtB maintenance during stage progression
   {
-    name = "rtb_reroll_stage2",
-    desc = "Consider Keep It Rolling at stage 2+ to progress toward stage 4",
+    name = "rtb_reroll_stage3",
+    desc = "Consider Keep It Rolling at stage 3+ to progress toward stage 4",
     action = "ADVISE",
     kind = "rtb",
     spellID = nil,
     itemSlot = nil,
     when = function(S, A)
-      return S.buffs.rtb.stage >= 2 and S.buffs.rtb.stage < 4
+      -- STAGE 3, NOT 2. This rule contradicted the profile, which gates Keep It Rolling at
+      -- rtb_buffs >= 3 following SimC and Maxroll ("Stage 3 or higher"). At stage 2 this
+      -- advised burning a SIX MINUTE cooldown to lock in Double Trouble.
+      -- stageKnown matters: stage defaults to 0, and "we could not read it" must not read
+      -- as "you are at stage 0" -- that is the failure mode this project keeps hitting.
+      local rtb = S.buffs.rtb
+      if not rtb.stageKnown then return false end
+      return rtb.stage >= 3 and rtb.stage < 4
     end,
-    source = "outlaw-rotation.md §1 (Reroll Mechanics: 'Use Keep It Rolling at Stage 2 or higher to continue rolling and progress toward Stage 4')"
+    source = "SimC sc_rogue.cpp APL (rtb_buffs>=3) and Maxroll Outlaw guide ('Stage 3 or higher'); matches profiles/OutlawRogue.lua"
   },
 
   -- Additional Rule 11: Preparation cooldown tracking
@@ -166,7 +173,14 @@ Tuono.Rules = {
     desc = "Preparation cooldown available to reset major abilities",
     action = "ADVISE",
     kind = "cooldown",
-    spellID = 14185,
+    -- Was hardcoded to 14185 -- the CLASSIC Preparation, which does not exist on retail.
+    -- The profile was corrected to 1277933 and this file was not, so an icon for a spell
+    -- the character cannot have was being rendered into the wheel. Resolve from the
+    -- profile instead of restating the ID, so the two cannot drift again.
+    spellID = nil,
+    resolveSpellID = function()
+      return Tuono.SpellIDs and Tuono.SpellIDs.preparation or nil
+    end,
     itemSlot = nil,
     when = function(S, A)
       return S.cooldowns.preparation.ready and S.cooldowns.adrenalineRush.remaining > 5

@@ -2,10 +2,93 @@
 
 All notable changes to Tuono are documented here.
 
+## [2.1.0] - 2026-08-11
+
+Everything below 2.0.0's rename landed against a live 12.1.0 client, via a flight
+recorder built for the purpose. Position 1 now reads as optimal in play. Still **not**
+validated inside a mythic keystone — all live data so far is open world.
+
+### The display
+
+- **The icon stopped strobing.** Two independent causes, both real:
+  - The GCD sweep was re-armed from its *remaining* time on every tick, so `SetCooldown`
+    restarted the animation ten times a second. `CooldownModel` now exposes `GCDStart()`
+    and `GCDLength()`, and the sweep anchors on the absolute start — the same GCD arms it
+    exactly once. The haste formula that Display had duplicated is gone with it; two GCD
+    models that disagree by milliseconds would have made the anchor jitter anyway.
+  - A trace showed 125 failed casts of a single trinket the player was mashing on
+    cooldown. Every one forced a full re-evaluation. Cast failures for spells outside the
+    active profile are now ignored — but only on positive knowledge: an unreadable spellID
+    still refreshes, because unknown is never "no".
+- **The lookahead is back, and it truncates itself.** One icon turned out to be too hard
+  to react to; four icons where the fourth is a guess is worse than none. The queue now
+  ends at the first step whose provenance is `unknown`, so a clean combo-point-and-cooldown
+  sequence shows its full depth and one that hits a hidden dependency stops there. Position
+  1 is exempt — refusing to answer "what do I press now" is strictly worse than answering it
+  with a visible uncertainty tint.
+- Confidence is provenance-based (`certain` / `bounded` / `unknown` / `pooling`), not
+  index-based. A step from exact inputs is solid in slot 4; one gated on hidden aura state
+  is uncertain in slot 1.
+- Ready rail beneath the strip; blocked entries tint red; stall detection fades the panel
+  when the player keeps ignoring it rather than continuing to insist.
+
+### The substrate
+
+- **Interval energy model.** Energy is carried as `[lo, hi]` and bounded by never-secret
+  `IsSpellUsable` threshold crossings rather than read. Time widens the interval,
+  observation tightens it; affordability answers yes / no / **maybe**. Holds to ~0.5 width
+  in live play on a value the client refuses to return.
+- **Cooldown reconstruction** from the cast stream: `remaining = (castAt + duration − CDR) − now`.
+- **GCD modelling.** A trace had Sinister Strike failing 31 times against 14 successes,
+  every failure paired with "Ability is not ready yet" — the advice was right, the timing
+  was not, and the bar said nothing. That error dropped out of the top errors after the fix.
+- **Three aura observation channels**: activation-overlay glow (exact proc presence, zero
+  secrecy flags), a never-secret aura whitelist via `C_Secrets.GetSpellAuraSecrecy`, and
+  aura cardinality. All four Roll the Bones stage auras, sourced from SimC; stage 1
+  (1214933, "One of a Kind") independently confirmed live.
+- **Per-buff provenance.** Rating a buff-gated step off the global `degraded` flag made the
+  entire rotation `unknown` in combat, since aura payloads are secret there. A proc observed
+  through the overlay channel is now `certain` on its own merits — and that provenance is
+  copied into the simulator's scratch state, without which the fix would have been dead in
+  the one place it matters.
+- **Flight recorder** (`/tuono record`) writing to SavedVariables, plus `tools/read_trace.lua`
+  to load a session back as a sandboxed Lua chunk. Every claim above that says "a trace
+  showed" came from it.
+- Cast-success and cast-failure observation channels; `UNIT_AURA` secret-in-combat handling
+  (`full=SECRET` ×21 and `full=INDEX_THREW` ×13 in one session, each previously a silent
+  crash of the aura layer).
+
+### Also fixed
+
+- Glow overlays no longer taint secure action buttons.
+- Haste is cached from the last out-of-combat read — `GetHaste` carries
+  `SecretWhenUnitStatsRestricted` and was locked down in 12.0.5. It was previously assumed
+  to be zero.
+- 461 → 56 API calls per combat tick.
+- Corrected ability data: Preparation `1277933` (14185 is Classic and does not exist on
+  retail) with a 240s cooldown, Ambush cost 50, Blade Rush generates no combo points,
+  Killing Spree spends all combo points, Blade Flurry is on the GCD.
+- Roll the Bones cast ID 315508 → 1214909, resolved through profile spell aliases.
+- `data/rules.lua`'s `preparation_ready` still carried the dead 14185 after the profile was
+  corrected, rendering an icon for a spell the character cannot have. It resolves from the
+  profile now.
+- `data/rules.lua` advised Keep It Rolling at Roll the Bones stage 2, against the profile's
+  own gate of stage 3+ — burning a six-minute cooldown to lock in Double Trouble.
+- Two-bar login warning during migration from OutlawAssist.
+
+### Known limitations
+
+- Enemy state is gone permanently: no health, debuffs, or casts. No interrupt planning.
+- Energy is bounded, never known. Roll the Bones stage 4 vs 3 has no deterministic
+  observable. Proc detection gives presence only, never stack count.
+- `Tuono.Rules` and the profile priority lists are still two engines, the former
+  post-processing the latter. Two more bugs from that duplication are fixed above; the
+  duplication is not.
+
 ## [2.0.0] - 2026-08-11
 
 Renamed from **OutlawAssist** to **Tuono**, and turned from one spec's rotation
-helper into a framework. Not yet validated against a live 12.x client.
+helper into a framework.
 
 ### Fixed
 - **The first icon was frozen in combat and pressing it did nothing.** Two stacking

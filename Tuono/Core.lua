@@ -299,21 +299,28 @@ Tuono.RegisterEvent("PLAYER_LOGIN", function()
     end
   end)
 
-  -- UNIT_SPELLCAST_INTERRUPTED: recover from interrupt, force re-poll for next viable spell
-  -- A cast that FAILS (out of range, line of sight, moving, not facing) must force a
-  -- re-evaluate. Without this the bar keeps glowing the same unusable button forever --
-  -- and a levelling rogue is out of melee range constantly while questing and kiting.
-  Tuono.RegisterUnitEvent("UNIT_SPELLCAST_FAILED", "player", function(event, unit, ...)
-    if unit == "player" then
-      Tuono.RequestImmediateUpdate()
-    end
-  end)
+  -- A cast that FAILS (out of range, line of sight, moving, not facing) should force a
+  -- re-evaluate, or the bar keeps pointing at the same unusable button.
+  --
+  -- BUT ONLY FOR SPELLS WE ACTUALLY REASON ABOUT. A live trace showed 125 failed casts
+  -- of a single trinket the player was mashing on cooldown -- none of them anything we
+  -- ever recommended. Each one forced a full re-evaluation, and the resulting churn is
+  -- what made the icon strobe. Failures of spells outside the profile tell us nothing
+  -- about our own recommendation, so they are ignored.
+  --
+  -- The filter is only allowed to SUPPRESS on positive knowledge. An unreadable spellID
+  -- is not evidence of irrelevance, so it refreshes -- unknown is never "no", the same
+  -- rule that governs every other read in this addon.
+  local function onRelevantCastFailure(event, unit, castGUID, spellID)
+    if unit ~= "player" then return end
+    local id = Tuono.readNum(spellID)
+    local abilities = Tuono.Rotation and Tuono.Rotation.ABILITIES
+    if id and abilities and abilities[id] == nil then return end
+    Tuono.RequestImmediateUpdate()
+  end
 
-  Tuono.RegisterUnitEvent("UNIT_SPELLCAST_FAILED_QUIET", "player", function(event, unit, ...)
-    if unit == "player" then
-      Tuono.RequestImmediateUpdate()
-    end
-  end)
+  Tuono.RegisterUnitEvent("UNIT_SPELLCAST_FAILED", "player", onRelevantCastFailure)
+  Tuono.RegisterUnitEvent("UNIT_SPELLCAST_FAILED_QUIET", "player", onRelevantCastFailure)
 
   Tuono.RegisterUnitEvent("UNIT_SPELLCAST_INTERRUPTED", "player", function(event, unit, ...)
     if unit == "player" then

@@ -459,9 +459,10 @@ function Tuono.Display.Render(result)
 		anchor.lastCount = visibleCount
 		-- Width formula: 6 + 50 + sum(6 + 42) for each additional icon + 6
 		local width = 6 + 50 + math.max(0, visibleCount - 1) * (6 + 42) + 6
-		-- The ready rail sits under the strip and is ~190px wide no matter how many
-		-- icons are shown. With the default now a SINGLE icon the strip is only ~62px,
-		-- so without a floor the rail would draw outside its own frame.
+		-- The ready rail sits under the strip and is ~190px wide no matter how many icons
+		-- are shown. The queue now truncates itself at the first uncertain step, so a
+		-- single-icon strip (~62px) is a normal state, not an edge case -- without a floor
+		-- the rail would draw outside its own frame every time the lookahead collapses.
 		local RAIL_MIN_WIDTH = 196
 		if width < RAIL_MIN_WIDTH then width = RAIL_MIN_WIDTH end
 		local height = 6 + 50 + 6 + 14
@@ -656,10 +657,27 @@ function Tuono.Display.Render(result)
 					-- button, it just is not pressable for another fraction of a second.
 					if i == 1 and Tuono.CooldownModel and Tuono.CooldownModel.GCDActive
 						and Tuono.CooldownModel.GCDActive() then
-						local rem = Tuono.CooldownModel.GCDRemaining()
-						if icon.cooldownWidget and rem > 0 then
-							icon.cooldownWidget:SetCooldown(GetTime() - 0.001, rem)
-							icon.cooldownWidget:Show()
+						-- SET THE SWEEP ONCE PER GCD, NOT ONCE PER TICK.
+						-- Calling SetCooldown every tick restarts the animation from full
+						-- ten times a second, which reads as the icon strobing. The model
+						-- knows when the GCD started, and an absolute start is idempotent,
+						-- so the same GCD arms the sweep exactly once.
+						local start = Tuono.CooldownModel.GCDStart and Tuono.CooldownModel.GCDStart()
+						if icon.cooldownWidget and start then
+							if icon.gcdStart ~= start then
+								icon.gcdStart = start
+								icon.cooldownWidget:SetCooldown(start, Tuono.CooldownModel.GCDLength())
+								icon.cooldownWidget:Show()
+							end
+						end
+					elseif i == 1 then
+						-- GCD over: clear the sweep so a stale one cannot linger on an icon
+						-- that has since been replaced. Guarded, or this would fire 10x/sec.
+						if icon.gcdStart then
+							icon.gcdStart = nil
+							if icon.cooldownWidget then
+								icon.cooldownWidget:SetCooldown(0, 0)
+							end
 						end
 					end
 

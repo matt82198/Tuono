@@ -266,14 +266,23 @@ local function deepCopyState(state)
 	S.buffs.rtb.expires = rtb.expires
 	S.buffs.rtb.names = rtb.names          -- read-only; not copied
 
+	-- fromOverlay and stacksKnown are PROVENANCE, and rateRule runs against this scratch
+	-- copy, not against the live state. Omitting them meant every simulated step rated its
+	-- buff dependency off the global `degraded` flag -- which is nearly always true in
+	-- combat -- so the whole lookahead came back "unknown" no matter how well the overlay
+	-- channel was actually tracking the proc.
 	local opp = srcBuffs.opportunity or {}
 	S.buffs.opportunity.up = opp.up
 	S.buffs.opportunity.stacks = opp.stacks
 	S.buffs.opportunity.expires = opp.expires
+	S.buffs.opportunity.fromOverlay = opp.fromOverlay
+	S.buffs.opportunity.stacksKnown = opp.stacksKnown
 
 	local ar = srcBuffs.adrenalineRush or {}
 	S.buffs.adrenalineRush.up = ar.up
 	S.buffs.adrenalineRush.expires = ar.expires
+	S.buffs.adrenalineRush.fromOverlay = ar.fromOverlay
+	S.buffs.adrenalineRush.stacksKnown = ar.stacksKnown
 
 	return S
 end
@@ -375,6 +384,27 @@ local function inputConfidence(cond, S, ownKey)
 	elseif t == "energy" then
 		return energyKnown(S) and "bounded" or "unknown"
 	elseif t == "buffUp" then
+		-- PER-BUFF PROVENANCE, not the global degraded flag.
+		--
+		-- `degraded` means "some aura read failed", which in combat is nearly always true
+		-- -- payloads are secret. Rating every buff-gated step "unknown" off that flag made
+		-- the entire Outlaw rotation unknown in live play, which matters much more now that
+		-- the queue TRUNCATES at the first unknown step: the lookahead would have collapsed
+		-- to one icon in every real fight, silently reproducing the complaint it was built
+		-- to answer.
+		--
+		-- The overlay channel is the reason it does not have to. A proc glow is a
+		-- never-secret event that fires on BOTH edges, so once it has fired for a buff, that
+		-- buff's presence is tracked by a live channel regardless of what the aura payload
+		-- is doing. Observers already records this as `fromOverlay` and its comment already
+		-- claims it "lifts the degraded flag for that specific buff" -- nothing was reading
+		-- it. Now something does.
+		--
+		-- Residual risk: glow events only fire for spells on an action bar. If the spell is
+		-- un-barred, no event ever fires and `fromOverlay` is never set, so this degrades to
+		-- the flag below rather than going stale -- which is the safe direction.
+		local b = S.buffs and cond.spell and S.buffs[cond.spell]
+		if type(b) == "table" and b.fromOverlay then return "certain" end
 		return (S.buffs and S.buffs.degraded) and "unknown" or "certain"
 	elseif t == "rtbStage" then
 		local rtb = S.buffs and S.buffs.rtb

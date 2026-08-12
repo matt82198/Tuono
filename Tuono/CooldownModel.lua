@@ -92,6 +92,24 @@ function CM.GCDActive()
 	return CM.GCDRemaining() > 0
 end
 
+-- Nominal GCD length and the absolute time the current one STARTED.
+--
+-- Display needs the start, not the remainder. Re-arming a sweep from "0.4s left" on every
+-- tick restarts the animation ten times a second, which reads as the icon strobing; an
+-- absolute start is idempotent, so the same GCD sets the sweep exactly once.
+--
+-- These live here rather than in Display because Display was recomputing the haste
+-- formula itself, and two GCD models that disagree by a few milliseconds would make the
+-- reconstructed start jitter -- defeating the idempotence they exist to provide.
+function CM.GCDLength()
+	return currentGCD()
+end
+
+function CM.GCDStart()
+	if gcdUntil <= 0 then return nil end
+	return gcdUntil - currentGCD()
+end
+
 function CM.NoteGCDFromCast(spellID)
 	local abilities = Tuono.Rotation and Tuono.Rotation.ABILITIES
 	local ability = abilities and abilities[spellID]

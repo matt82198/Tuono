@@ -29,7 +29,9 @@ This is the third option: **a framework for building rotation helpers out of the
 that is still legally readable**, with your own priority logic layered on top.
 
 - **A rolling wheel of your next four presses**, including repeats. If the honest answer
-  is "builder four times", you see four icons.
+  is "builder four times", you see four icons — and if the fourth step depends on
+  something Midnight hides, the wheel ends before it. The length of the strip is itself
+  the confidence signal.
 - **Two rotations, one bar.** Single-target and AoE lists switch automatically on live
   enemy count, with hysteresis so the bar cannot strobe.
 - **An in-game rule editor.** Ordered priority rows, first match wins, no Lua required.
@@ -38,8 +40,10 @@ that is still legally readable**, with your own priority logic layered on top.
   measurements.
 
 > **Status:** the engine and its degradation behaviour are covered by an automated suite
-> that emulates secret values (20/20 passing). It has **not yet been validated against a
-> live 12.x client** — see [Help wanted](#help-wanted).
+> that emulates secret values — 174 behavioural tests plus 77 secret-value regressions,
+> all passing. Validated against a live 12.1.0 client in open-world play, where position 1
+> reads as optimal. **Not** yet validated inside a mythic keystone — see
+> [Help wanted](#help-wanted).
 
 ---
 
@@ -185,12 +189,16 @@ Issues and PRs: <https://github.com/matt82198/Tuono/issues>
 ## Development
 
 ```bash
-lua tests/secrets_regression.lua    # 20 assertions, emulated secret values
+lua tests/run_tests.lua           # 174 behavioural tests (also runs the two lints)
+lua tests/secrets_regression.lua  #  77 assertions against emulated secret values
+lua tests/migration_test.lua      #   8 tests for the OutlawAssist import path
+lua tests/toc_check.lua           #   TOC / CHANGELOG / file-manifest drift gate
+lua tests/lua51_check.lua         #   Lua 5.1 syntax gate (the WoW runtime)
 ```
 
-The suite is **mutation-checked**: 8 of its assertions fail against the pre-fix code. A
-test that only passes proves nothing — if you add one, break the thing it covers and
-confirm it goes red first.
+The suite is **mutation-checked**: every fix above was confirmed to go red against the
+broken code before being called done. A test that only passes proves nothing — if you add
+one, break the thing it covers and confirm it fails first.
 
 ---
 

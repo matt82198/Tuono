@@ -914,6 +914,30 @@ if CM and CM.GCDActive then
   CM.NoteGCDFromCooldownInfo(false, false)
   check("client reporting no cooldown clears the GCD",
     CM.GCDActive() == false, "GCD not cleared")
+
+  -- THE ICON-STROBE FIX. Display arms its sweep from GCDStart, not from the remaining
+  -- time, because an absolute start is IDEMPOTENT: the same GCD observed at successive
+  -- ticks yields the same start, so SetCooldown is called once instead of ten times a
+  -- second. If this ever starts drifting, the icon flashes again.
+  CM.NoteGCDFromCast(193315)
+  local s1 = CM.GCDStart()
+  check("GCDStart is available while the GCD is running", s1 ~= nil, "no start reported")
+  local castAt = clock
+  clock = clock + 0.1
+  local s2 = CM.GCDStart()
+  clock = clock + 0.1
+  local s3 = CM.GCDStart()
+  check("GCDStart does not move as the GCD elapses",
+    s1 == s2 and s2 == s3,
+    string.format("start drifted across ticks: %s / %s / %s",
+      tostring(s1), tostring(s2), tostring(s3)))
+  check("GCDStart is anchored to the cast that began it",
+    math.abs(s1 - castAt) < 0.001,
+    string.format("expected start %s, got %s", tostring(castAt), tostring(s1)))
+
+  CM.NoteGCDFromCooldownInfo(false, false)
+  check("GCDStart reports nil once the GCD is over",
+    CM.GCDStart() == nil, "a stale start would leave a sweep frozen on the icon")
 end
 
 print("")

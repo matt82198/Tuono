@@ -171,6 +171,16 @@ local function runTocCheck()
     if not changelog:find(needle) then
       error("TOC version " .. version .. " has no [" .. version .. "] entry in CHANGELOG.md")
     end
+
+    -- ...and it must be the TOPMOST entry. Merely existing is too weak a gate: thirteen
+    -- commits of user-visible behaviour once shipped under an unchanged TOC version while
+    -- this check stayed green, because the old [2.0.0] heading was still present.
+    local newest = changelog:match("##%s*%[([%d%.]+)%]")
+    if not newest then error("no ## [x.y.z] heading in CHANGELOG.md") end
+    if newest ~= version then
+      error("TOC version " .. version .. " is not the newest CHANGELOG entry ([" ..
+            newest .. "]) -- one of the two has drifted")
+    end
   end)
 
   return testCount, passCount

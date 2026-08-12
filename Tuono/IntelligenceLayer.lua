@@ -379,6 +379,42 @@ function Tuono.Engine.Evaluate()
     Tuono.Engine.lastPos1 = newPos1
   end
 
+  -- CONFIDENCE TRUNCATION: show lookahead only as far as we can stand behind it.
+  --
+  -- Removing the wheel entirely was an over-correction. "Position 1 is optimal but it is
+  -- too hard to react to with zero prediction" is the correct complaint: lead time is
+  -- the thing a rotation helper is FOR, and one icon gives none.
+  --
+  -- But the reason the wheel was useless was never its length -- it was that step 4 was
+  -- rendered with the same authority as step 1 while resting on an energy interval and
+  -- unreadable aura state. Now that every step carries its provenance, the sequence can
+  -- simply STOP at the first step we cannot justify.
+  --
+  -- The result is self-adjusting: a clean combo-point-and-cooldown sequence shows its
+  -- full depth, and one that hits a hidden dependency ends there. The player learns to
+  -- trust the length, because the length means something.
+  -- Position 1 is exempt: it is the answer to "what do I press now", and refusing to
+  -- answer that is strictly worse than answering it with a visible uncertainty tint.
+  -- Only the LOOKAHEAD has to earn its place.
+  --
+  -- Only sequence steps are cut. The cooldown and trinket reminders appended after them
+  -- are independently sourced -- they are not predicting the future, they are reporting a
+  -- cooldown that is ready now -- so an uncertain step 2 must not silently delete them.
+  local cut = nil
+  for i, entry in ipairs(resultQueue) do
+    if i > 1 and entry.isSequence and entry.confidence == "unknown" then
+      cut = i
+      break
+    end
+  end
+  if cut then
+    for i = #resultQueue, cut, -1 do
+      if resultQueue[i].isSequence then
+        table.remove(resultQueue, i)
+      end
+    end
+  end
+
   -- Step 5: Truncate queue to 8
   while #resultQueue > 8 do
     table.remove(resultQueue)
