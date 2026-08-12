@@ -163,54 +163,40 @@ function Tuono.Engine.Evaluate()
           ruleSpellID = Tuono.safe(rule.resolveSpellID)
         end
 
-        -- Handle rule action
-        if rule.action == "PIN" then
-          if not pinApplied and ruleSpellID then
-            -- First PIN wins: move or insert at position 1
-            -- MOVE the existing entry, never rebuild it. Rebuilding dropped every field
-            -- the rule does not know about -- `isSequence`, so Step 3 dedup then
-            -- collapsed a legitimate "Sinister Strike x4" back into one icon, and
-            -- `confidence`, so Display defaulted it to "high" and a pooling pick
-            -- rendered at full alpha as though it were castable now. Three separately
-            -- documented fixes were being silently undone here.
-            local existingPos = queueSet[ruleSpellID]
-            local pinEntry
-            if existingPos then
-              pinEntry = table.remove(resultQueue, existingPos)
-              pinEntry.source = rule.name
-              if rule.kind then pinEntry.kind = rule.kind end
-              if rule.itemSlot then pinEntry.itemSlot = rule.itemSlot end
-            else
-              pinEntry = { spellID = ruleSpellID, source = rule.name,
-                           kind = rule.kind or "rotation", itemSlot = rule.itemSlot }
-            end
-            table.insert(resultQueue, 1, pinEntry)
-            rebuildQueueSet()
-            pinApplied = true
-          end
-
-        elseif rule.action == "PREFER" then
-          if ruleSpellID then
-            local pos = queueSet[ruleSpellID]
-            if pos and pos > 1 then
-              -- Move the existing entry forward; see the PIN branch above for why
-              -- rebuilding it here silently destroyed isSequence and confidence.
-              local moved = table.remove(resultQueue, pos)
-              moved.source = rule.name
-              if rule.kind then moved.kind = rule.kind end
-              if rule.itemSlot then moved.itemSlot = rule.itemSlot end
-              table.insert(resultQueue, pos - 1, moved)
-              rebuildQueueSet()
-            elseif not pos then
-              -- Not in queue: insert at position 2 (if room)
-              if #resultQueue >= 1 then
-                table.insert(resultQueue, 2, { spellID = ruleSpellID, source = rule.name, kind = rule.kind or "rotation", itemSlot = rule.itemSlot })
-              else
-                table.insert(resultQueue, { spellID = ruleSpellID, source = rule.name, kind = rule.kind or "rotation", itemSlot = rule.itemSlot })
-              end
-              rebuildQueueSet()
-            end
-          end
+        -- THE SEQUENCE IS NOT A LIST. PIN AND PREFER MAY NOT TOUCH IT.
+        --
+        -- `Rotation.Predict` returns a CAUSAL CHAIN: step 3 is only correct if steps 1 and
+        -- 2 actually happened, because the simulator spent their energy, banked their
+        -- combo points and started their cooldowns. Reordering it, or splicing a foreign
+        -- entry into the middle of it, produces a list that is not a valid sequence of
+        -- anything -- while still being read by the player as "press these in order".
+        --
+        -- That is what was actually wrong with the wheel. Reproduced offline against the
+        -- state from a live trace, at 3 combo points the bar read:
+        --
+        --     Sinister Strike | Blade Flurry | Dispatch | Adrenaline Rush | Sinister Strike
+        --
+        -- Blade Flurry wedged into a SINGLE-TARGET rotation against one enemy, Adrenaline
+        -- Rush pinned into the middle as a fourth icon duplicating one already shown, and
+        -- Dispatch promoted above the builder that was supposed to feed it. Only position
+        -- 1 survived intact -- which is exactly what the display looked like in play.
+        --
+        -- Every PIN/PREFER spell here (Adrenaline Rush, Between the Eyes, Blade Flurry,
+        -- Blade Rush, Sinister Strike, Pistol Shot, Stealth, Ambush) already has a rule in
+        -- the profile's priority list, individually sourced against SimC. These are the
+        -- pre-framework duplicates of those, and they were overriding the sourced version
+        -- from outside the simulation. Nothing user-facing depends on them: the in-game
+        -- editor compiles into the profile priority list, not into Tuono.Rules.
+        --
+        -- So the rotation is the profile's, and this layer is advisory only. ADVISE still
+        -- appends cooldown, trinket and Roll the Bones reminders AFTER the sequence, where
+        -- Display already renders them as a visibly different kind of thing.
+        --
+        -- The remaining duplication -- two rule schemas, one of which is now half inert --
+        -- is tracked in STATE.md. The fix is to fold this file into the profiles; this is
+        -- the part of it that was actively corrupting the bar.
+        if rule.action == "PIN" or rule.action == "PREFER" then
+          -- deliberately inert; see above
 
         elseif rule.action == "ADVISE" then
           -- Fold certain advisories into queue entries based on kind

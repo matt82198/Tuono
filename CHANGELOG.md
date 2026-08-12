@@ -2,6 +2,67 @@
 
 All notable changes to Tuono are documented here.
 
+## [2.2.0] - 2026-08-11
+
+Three live reports — "it only suggested Sinister Strike the whole time", "it adds a 4th
+duplicate Adrenaline Rush", "it still never recommends RtB" — turned out to share two
+root causes. Both are fixed, and the flight recorder that found them got better at it.
+
+### The bar is the rotation now
+
+- **The legacy rule layer no longer reorders or splices the sequence.** `Rotation.Predict`
+  returns a *causal chain* — step 3 is only correct if steps 1 and 2 happened, because the
+  simulator spent their energy, banked their combo points and started their cooldowns. The
+  pre-framework `PIN`/`PREFER` rules in `data/rules.lua` were rewriting that chain from
+  outside the simulation. Reproduced offline against state from a live trace, at 3 combo
+  points the bar read `Sinister Strike | Blade Flurry | Dispatch | Adrenaline Rush |
+  Sinister Strike`: Blade Flurry wedged into a **single-target** rotation against one
+  enemy, Adrenaline Rush duplicating an icon already shown, and the finisher promoted above
+  the builder meant to feed it. Only position 1 survived intact — exactly what the display
+  looked like in play. Every one of those spells already had an individually SimC-sourced
+  rule in the profile; nothing user-facing depended on the duplicates, since the in-game
+  editor compiles into the profile priority list. `ADVISE` still appends cooldown, trinket
+  and Roll the Bones reminders *behind* the sequence.
+- **Stealth before the pull** moved from a PIN into the profile priority list, where it is
+  simulated like everything else. The simulator now models Stealth applying, and marks
+  combat after the first offensive cast — without those, the opener degenerated into
+  `Stealth ×4` and then `Stealth → Ambush → Stealth → Ambush`.
+- **Blizzard's own list is an AoE signal again.** If `C_AssistedCombat`'s rotation contains
+  Blade Flurry, its engine — which can see enemy state Midnight hides from us — has decided
+  this is a cleave. The old rule OR-ed that with nameplate count; the mode selector was
+  written against count alone and silently dropped it.
+
+### Roll the Bones was never recommended
+
+- **The default spell ID was the dead one.** 315508 has zero `SpecializationSpells` rows in
+  Midnight; the live cast is 1214909. The alias list resolved against the client at load,
+  but the *default* is what survives when that resolution cannot run — and the engine's
+  known-spell filter then deleted every Roll the Bones recommendation as a spell the
+  character does not have. A stale ID fails silently in every direction.
+- **Alias resolution asked one probe and stopped.** It picked `C_SpellBook.IsSpellKnown` if
+  it existed and only fell back to `IsPlayerSpell` when it was *absent* — never when it was
+  present and answered false. The two disagree on spec-granted spells. It now asks every
+  available probe and takes the first yes.
+- **Cast correlation accepts any known alias.** Recommending is a choice; recognising is
+  not. A cast arriving under a renumbered sibling was being treated as an unrelated spell,
+  breaking the channel that reconstructs aura state from casts.
+- `data/rules.lua` no longer restates spell IDs the profile owns, and its Keep It Rolling
+  advice now matches the profile's stage-3 gate instead of firing at stage 2.
+
+### Also
+
+- The simulator fails open when the known-spell API is unavailable, matching the exemption
+  the engine's own castability filter already had. The gap was unreachable while the legacy
+  rules were re-inserting suppressed spells from outside.
+- Per-buff provenance now reaches the simulator's scratch state, so an overlay-observed
+  proc rates `certain` where it used to inherit the global `degraded` flag.
+- `tools/read_trace.lua` reports UI errors, failed and successful casts by spell name, and
+  a combo-point histogram with an explicit warning when CP never rises — the three things
+  needed to diagnose "it only ever suggests the builder" from a trace.
+
+180 behavioural tests, 77 secret-value regressions. Ten mutations run against the new
+assertions; each was confirmed to turn its covering test red.
+
 ## [2.1.0] - 2026-08-11
 
 Everything below 2.0.0's rename landed against a live 12.1.0 client, via a flight

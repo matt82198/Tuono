@@ -93,23 +93,69 @@ end
 -- spell ID fails quietly in every direction, so guessing one is worse than asking.
 local function resolveAliases(profile)
 	if not profile.spellAliases then return end
-	local check = nil
+	-- ASK EVERY PROBE, NOT THE FIRST ONE THAT EXISTS.
+	--
+	-- This used to pick C_SpellBook.IsSpellKnown if it was present and fall back to
+	-- IsPlayerSpell only when it was ABSENT -- never when it was present and answered
+	-- false. The two disagree in practice: spec-granted spells can be IsPlayerSpell-true
+	-- and IsSpellKnown-false. So every candidate was rejected, the profile kept its
+	-- declared default, and with that default being the dead pre-Midnight Roll the Bones
+	-- ID the engine's known-spell filter deleted every Roll the Bones recommendation. The
+	-- player's report was simply "it never recommends RtB".
+	--
+	-- A "no" from one probe is not evidence when another probe has not been asked.
+	local checks = {}
 	if C_SpellBook and C_SpellBook.IsSpellKnown then
-		check = function(id) return C_SpellBook.IsSpellKnown(id) end
-	elseif _G.IsPlayerSpell then
-		check = function(id) return _G.IsPlayerSpell(id) end
+		checks[#checks + 1] = function(id) return C_SpellBook.IsSpellKnown(id) end
 	end
-	if not check then return end   -- cannot tell; keep whatever the profile declared
-
-	for key, candidates in pairs(profile.spellAliases) do
-		for _, id in ipairs(candidates) do
-			local ok, known = pcall(check, id)
-			if ok and known then
-				profile.spells[key] = id
-				break
-			end
+	if _G.IsPlayerSpell then
+		checks[#checks + 1] = function(id) return _G.IsPlayerSpell(id) end
+	end
+	if C_Spell and C_Spell.IsSpellDataCached and C_Spell.GetSpellInfo then
+		-- Weakest of the three: proves the ID EXISTS, not that the character has it. Only
+		-- consulted when the two ownership probes have both declined, where the choice is
+		-- otherwise between a live ID and a dead one.
+		checks[#checks + 1] = function(id)
+			local info = C_Spell.GetSpellInfo(id)
+			return info and info.name ~= nil
 		end
 	end
+	if #checks == 0 then return end   -- cannot tell; keep whatever the profile declared
+
+	for key, candidates in pairs(profile.spellAliases) do
+		local resolved = nil
+		-- Probe-major, candidate-minor: a strong probe's answer for the SECOND candidate
+		-- must still beat a weak probe's answer for the first.
+		for _, check in ipairs(checks) do
+			for _, id in ipairs(candidates) do
+				local ok, known = pcall(check, id)
+				if ok and known then resolved = id break end
+			end
+			if resolved then break end
+		end
+		if resolved then profile.spells[key] = resolved end
+	end
+end
+
+-- Does `spellID` refer to the profile's `key` ability, under ANY of its known IDs?
+--
+-- Cast CORRELATION has to be more permissive than recommendation. We recommend exactly one
+-- ID -- the one the client says the character knows -- but the cast we observe may arrive
+-- under a renumbered sibling, and treating that as "some other spell" silently breaks the
+-- correlation channel that reconstructs aura state. Recommending is a choice; recognising
+-- is not, so recognise all of them.
+function P.MatchesSpell(key, spellID)
+	if not key or not spellID then return false end
+	local profile = P.Active and P.Active()
+	if not profile then return false end
+	if profile.spells and profile.spells[key] == spellID then return true end
+	local candidates = profile.spellAliases and profile.spellAliases[key]
+	if candidates then
+		for _, id in ipairs(candidates) do
+			if id == spellID then return true end
+		end
+	end
+	return false
 end
 
 function P.Activate(id)

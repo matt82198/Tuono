@@ -206,18 +206,67 @@ test("adrenaline rush PIN when CP<=2 and ready", function()
 end)
 
 -- Test 3: BtE PIN at high CP
-test("between the eyes PIN when CP>=6", function()
-  -- Self-sufficient state setup
+-- Cross-test state pollution used to be invisible here: the legacy PIN rules forced
+-- position 1 from outside the simulation, so whatever earlier tests had left in
+-- Tuono.State could not change the answer. With the rotation coming from the profile,
+-- it can. This puts the ambient state back to a known baseline; each caller then sets
+-- only the thing it is actually testing.
+-- `keepEnemyCount` is for the threat-detector tests, which drive the count from stub
+-- nameplates and must not have it overwritten. Everything else wants a fixed single target.
+local function pinSingleTarget()
+  Tuono.db.aoeMode = "off"
+  Tuono.Rotation.ResetMode()
+end
+
+local function resetRotationState(keepEnemyCount)
+  if not keepEnemyCount then
+    Tuono.Assist.Update()
+    Tuono.State.RefreshFast()
+  end
+  local S = Tuono.State
+  S.energy, S.energyMax, S.energyKnown = 100, 100, true
+  S.energySource = "measured"
+  S.comboPoints = 0
+  S.comboPointsMax, S.comboPointsKnown = 6, true
+  S.buffs.degraded = false
+  S.buffs.rtb.stage, S.buffs.rtb.stageKnown = 4, true
+  S.buffs.opportunity.up, S.buffs.opportunity.stacks = false, 0
+  S.buffs.opportunity.fromOverlay = nil
+  S.buffs.adrenalineRush.up = false
+  if not keepEnemyCount then
+    S.enemyCount, S.enemyCountKnown = 1, true
+  end
+  -- Both of these are STICKY across tests and now select an entirely different priority
+  -- list. In game Assist.Update recomputes aoeDetected every tick, so leaving it set is a
+  -- harness-only hazard -- but it silently ran three later tests against the AoE rotation.
+  Tuono.Assist.aoeDetected = false
+  Tuono.db.aoeMode = "auto"
+  Tuono.Rotation.ResetMode()
+  S.knownUnavailable = false
+  S.knownSpells = S.knownSpells or {}
+  for _, id in pairs(Tuono.SpellIDs) do
+    if type(id) == "number" then S.knownSpells[id] = true end
+  end
+  for k in pairs(S.cooldowns) do
+    S.cooldowns[k] = { known = true, ready = false, remaining = 60 }
+  end
+  for _, k in ipairs({"ambush", "sinisterStrike", "dispatch", "pistolShot", "stealth"}) do
+    S.cooldowns[k] = { known = true, ready = true, remaining = 0 }
+  end
+end
+
+test("between the eyes leads at max combo points", function()
+  resetRotationState()
   Tuono.State.inCombat = true
   stub.state.stealthed = false
   Tuono.State.stealthed = false
-  stub.state.comboPoints = 6
-  stub.state.cooldowns[13750] = {startTime = 100, duration = 10}
-  Tuono.Assist.Update()
-  Tuono.State.RefreshFast()
+  Tuono.State.comboPoints = 6
+  Tuono.State.cooldowns.betweenTheEyes = { known = true, ready = true, remaining = 0 }
   local r = Tuono.Engine.Evaluate()
   assert_true(r.queue[1] ~= nil, "queue has first entry")
-  assert_eq(r.queue[1].spellID, 315341, "BtE pinned to position 1")
+  assert_eq(r.queue[1].spellID, 315341, "Between the Eyes leads at max CP")
+  assert_true(r.queue[1].isSequence,
+    "position 1 comes from the simulated sequence, not a rule splice")
 end)
 
 -- Test 4: Engine.Evaluate validates actual logic
@@ -911,12 +960,12 @@ test("unified queue: cooldown entry when AR ready + rule fires", function()
   local r = Tuono.Engine.Evaluate()
   local foundCooldown = false
   for _, entry in ipairs(r.queue) do
-    if entry.spellID == 13750 and entry.kind == "cooldown" then
+    if entry.spellID == 13750 then
       foundCooldown = true
       break
     end
   end
-  assert_true(foundCooldown, "AR cooldown entry in queue with kind=cooldown")
+  assert_true(foundCooldown, "a ready Adrenaline Rush is recommended")
 end)
 
 -- TEST: Trinket entry with itemSlot during AR window
@@ -979,18 +1028,19 @@ test("unified queue: RtB entry at stage 0", function()
 end)
 
 -- TEST: Opener pins when OOC+unstealthed
-test("unified queue: opener stealth pins when OOC + unstealthed", function()
+test("stealth leads when out of combat and unstealthed", function()
+  resetRotationState()
   Tuono.State.inCombat = false
   stub.state.stealthed = false
   Tuono.State.stealthed = false
-  Tuono.Assist.Update()
-  Tuono.State.RefreshFast()
 
   local r = Tuono.Engine.Evaluate()
-  if #r.queue > 0 then
-    assert_eq(r.queue[1].spellID, Tuono.SpellIDs.stealth, "stealth pinned at position 1 when OOC+unstealthed")
-    assert_eq(r.queue[1].kind, "opener", "stealth entry has kind=opener")
-  end
+  assert_true(#r.queue > 0, "queue is not empty out of combat")
+  assert_eq(r.queue[1].spellID, Tuono.SpellIDs.stealth,
+    "Stealth leads when out of combat and unstealthed")
+  -- It is a simulated priority rule now, not a PIN spliced in from outside the sequence,
+  -- so it carries the sequence's kind rather than the rule file's "opener" label.
+  assert_true(r.queue[1].isSequence, "the stealth opener is part of the simulated sequence")
 end)
 
 -- TEST: Queue dedup by spellID
@@ -1219,6 +1269,8 @@ test("threat detector: blade_flurry_aoe rule fires when enemyCount >= 2", functi
   Tuono.State.RefreshFast()
 
   assert_false(Tuono.Assist.aoeDetected, "aoeDetected false (blade flurry not in queue)")
+  resetRotationState(true)
+  Tuono.State.cooldowns.bladeFlurry = { known = true, ready = true, remaining = 0 }
 
   local r = Tuono.Engine.Evaluate()
   local foundBladeFlurry = false
@@ -1257,6 +1309,12 @@ test("threat detector: single plate gives enemyCount=1, rule doesn't fire", func
   end
   Tuono.Assist.Update()  -- Now aoeDetected should be false
   _G.C_AssistedCombat.GetRotationSpells = originalGetRotationSpells
+  -- The Assist.Update on line 1291 saw Blade Flurry in the default rotation and put the
+  -- mode into AoE. Dropping the signal does not drop the mode immediately -- there is a
+  -- 2s dwell so the bar cannot strobe between two rotations -- and stub.Tick only advanced
+  -- 0.5s. This test is about the steady state with all three signals off, not the dwell,
+  -- so clear it explicitly. (The dwell itself is covered by its own tests.)
+  Tuono.Rotation.ResetMode()
 
   local r = Tuono.Engine.Evaluate()
   local foundBladeFlurry = false
@@ -1321,11 +1379,13 @@ end)
 test("threat detector: blade_flurry fires when ANY signal true (aoeMode=true)", function()
   stub.ClearNamePlates()
   stub.AddNamePlate("nameplate1", 3)
-  Tuono.db.aoeMode = true
-  Tuono.Assist.aoeDetected = false
-
   Tuono.Assist.Update()
   Tuono.State.RefreshFast()
+  resetRotationState(true)
+  Tuono.State.cooldowns.bladeFlurry = { known = true, ready = true, remaining = 0 }
+  -- After the reset, or the reset clears the very signal under test.
+  Tuono.db.aoeMode = true
+  Tuono.Assist.aoeDetected = false
 
   local r = Tuono.Engine.Evaluate()
   local foundBladeFlurry = false
@@ -1336,16 +1396,22 @@ test("threat detector: blade_flurry fires when ANY signal true (aoeMode=true)", 
     end
   end
   assert_true(foundBladeFlurry, "blade flurry fires when aoeMode=true (even with single enemy)")
+  -- Restore: both signals are sticky and now select a different priority list entirely.
+  Tuono.db.aoeMode = "auto"
+  Tuono.Assist.aoeDetected = false
+  Tuono.Rotation.ResetMode()
 end)
 
 -- Threat Test 8: blade_flurry composite signal - aoeDetected true
 test("threat detector: blade_flurry fires when ANY signal true (aoeDetected=true)", function()
   stub.ClearNamePlates()
-  Tuono.db.aoeMode = false
-  Tuono.Assist.aoeDetected = true
-
   Tuono.Assist.Update()
   Tuono.State.RefreshFast()
+  resetRotationState(true)
+  Tuono.State.cooldowns.bladeFlurry = { known = true, ready = true, remaining = 0 }
+  -- After the reset, or the reset clears the very signal under test.
+  Tuono.db.aoeMode = false
+  Tuono.Assist.aoeDetected = true
 
   local r = Tuono.Engine.Evaluate()
   local foundBladeFlurry = false
@@ -1356,6 +1422,10 @@ test("threat detector: blade_flurry fires when ANY signal true (aoeDetected=true
     end
   end
   assert_true(foundBladeFlurry, "blade flurry fires when aoeDetected=true")
+  -- Restore: both signals are sticky and now select a different priority list entirely.
+  Tuono.db.aoeMode = "auto"
+  Tuono.Assist.aoeDetected = false
+  Tuono.Rotation.ResetMode()
 end)
 
 -- === aura-infra tests ===
@@ -1542,37 +1612,31 @@ end)
 -- === v1-outlaw tests ===
 
 -- P0 TEST 1: AR does NOT pin OOC - opener wins instead
-test("P0-1: AR does not pin before opener (OOC+unstealthed)", function()
+test("P0-1: AR does not lead before the opener (OOC+unstealthed)", function()
+  resetRotationState()
   Tuono.State.inCombat = false
   stub.state.stealthed = false
   Tuono.State.stealthed = false
   Tuono.State.comboPoints = 0
-  Tuono.State.cooldowns.adrenalineRush.ready = true  -- AR is ready
-
-  Tuono.Assist.Update()
-  Tuono.State.RefreshFast()
+  Tuono.State.cooldowns.adrenalineRush = { known = true, ready = true, remaining = 0 }
 
   local r = Tuono.Engine.Evaluate()
   assert_true(#r.queue > 0, "queue has entries")
-  -- Position 1 must be Stealth (opener), NOT AR
-  assert_eq(r.queue[1].spellID, Tuono.SpellIDs.stealth, "Stealth opener pins at position 1 OOC, beating AR")
-  assert_eq(r.queue[1].kind, "opener", "Stealth entry is kind=opener")
+  assert_eq(r.queue[1].spellID, Tuono.SpellIDs.stealth,
+    "Stealth leads out of combat, beating a ready Adrenaline Rush")
 end)
 
 -- P0 TEST 2: Ambush recommended when stealthed
 test("P0-2: Ambush recommended when stealthed", function()
+  resetRotationState()
   Tuono.State.inCombat = true
   stub.state.stealthed = true  -- RefreshFast reads IsStealthed(), so drive the source
   Tuono.State.stealthed = true
 
-  Tuono.Assist.Update()
-  Tuono.State.RefreshFast()
-
   local r = Tuono.Engine.Evaluate()
   assert_true(#r.queue > 0, "queue has entries")
-  -- First entry should be Ambush when stealthed
-  assert_eq(r.queue[1].spellID, Tuono.SpellIDs.ambush, "Ambush pins at position 1 when stealthed")
-  assert_eq(r.queue[1].kind, "opener", "Ambush entry is kind=opener")
+  assert_eq(r.queue[1].spellID, Tuono.SpellIDs.ambush, "Ambush leads at position 1 when stealthed")
+  assert_true(r.queue[1].isSequence, "Ambush comes from the simulated sequence")
 end)
 
 -- P0 TEST 3: ar_energy_management rule removed
@@ -1602,7 +1666,7 @@ test("P0-4: No queue entry for spell whose cooldown is not ready (ghost icon gua
   local r = Tuono.Engine.Evaluate()
   -- No entry should have spellID=13750 (AR) when AR buff is up (cooldown not ready)
   for _, entry in ipairs(r.queue) do
-    if entry.spellID == 13750 and entry.kind == "cooldown" then
+    if entry.spellID == 13750 then
       -- If AR is in queue, its cooldown MUST be ready
       assert_true(Tuono.State.cooldowns.adrenalineRush.ready,
         "AR cooldown entry in queue but cooldown not ready - this is the ghost icon bug")
@@ -1968,7 +2032,7 @@ test("v1.1.0: continuous recalculation - queue changes between ticks", function(
   local r1 = Tuono.Engine.Evaluate()
   local hasARinTick1 = false
   for _, entry in ipairs(r1.queue) do
-    if entry.spellID == Tuono.SpellIDs.adrenalineRush and entry.kind == "cooldown" then
+    if entry.spellID == Tuono.SpellIDs.adrenalineRush then
       hasARinTick1 = true
       break
     end
@@ -1981,7 +2045,7 @@ test("v1.1.0: continuous recalculation - queue changes between ticks", function(
   local r2 = Tuono.Engine.Evaluate()
   local hasARinTick2 = false
   for _, entry in ipairs(r2.queue) do
-    if entry.spellID == Tuono.SpellIDs.adrenalineRush and entry.kind == "cooldown" then
+    if entry.spellID == Tuono.SpellIDs.adrenalineRush then
       hasARinTick2 = true
       break
     end
@@ -3611,6 +3675,137 @@ test("a failed cast forces an immediate re-evaluate (out of range recovery)", fu
     "failed cast with an unreadable spellID was suppressed instead of refreshing")
 end)
 
+test("the rendered queue is a coherent sequence, not a rule-spliced list", function()
+  -- THE BUG BEHIND "the rest of the display seems completely useless".
+  --
+  -- Rotation.Predict returns a causal chain: step 3 is only correct if steps 1 and 2
+  -- happened. The legacy PIN/PREFER rules reordered it and spliced foreign entries into
+  -- the middle from outside the simulation, producing a list that was not a valid
+  -- sequence of anything -- while the player read it as "press these in order".
+  --
+  -- Two invariants keep it honest: the sequence appears in simulation order, and every
+  -- advisory entry sits BEHIND it rather than wedged inside it.
+  resetRotationState()
+  pinSingleTarget()
+  Tuono.State.inCombat = true
+  stub.state.stealthed = false
+  Tuono.State.stealthed = false
+  Tuono.State.comboPoints = 2
+  Tuono.State.cooldowns.adrenalineRush = { known = true, ready = true, remaining = 0 }
+
+  local predicted = Tuono.Rotation.Predict(Tuono.State, 4)
+  local r = Tuono.Engine.Evaluate()
+
+  local seenNonSequence = false
+  local seq = {}
+  for i, e in ipairs(r.queue) do
+    if e.isSequence then
+      assert_false(seenNonSequence,
+        "sequence step at position " .. i .. " sits behind an advisory entry")
+      seq[#seq + 1] = e.spellID
+    else
+      seenNonSequence = true
+    end
+  end
+
+  assert_true(#seq > 0, "the queue contains the simulated sequence")
+  for i, spellID in ipairs(seq) do
+    assert_eq(spellID, predicted[i].spellID,
+      "queue step " .. i .. " matches the simulation, in order")
+  end
+end)
+
+-- === spell-ID liveness and the opener sequence ===
+-- These cover the report "it still never recommends RtB", whose cause was a dead spell ID
+-- reaching the engine's known-spell filter and being deleted as a spell the character does
+-- not have. A stale ID fails silently in every direction, so it gets direct tests.
+
+test("the Roll the Bones default is the live Midnight ID, not the dead one", function()
+  -- 315508 has zero SpecializationSpells rows in Midnight; 1214909 is the live cast.
+  -- The alias list resolves against the client at load, but the DEFAULT is what survives
+  -- when that resolution cannot run -- and it was the dead one.
+  local profile = Tuono.Profiles.Active()
+  assert_eq(profile.spells.rollTheBones, 1214909,
+    "profile default is the live Roll the Bones ID")
+  assert_true(Tuono.SpellIDs.rollTheBones ~= 315508,
+    "the shared spell table does not carry the dead pre-Midnight ID")
+end)
+
+test("a renumbered spell is still RECOGNISED under its old ID", function()
+  -- Recommending is a choice, recognising is not. The cast we observe may arrive under a
+  -- sibling ID, and treating that as "some other spell" breaks the correlation channel
+  -- that reconstructs aura state from casts.
+  assert_true(Tuono.Profiles.MatchesSpell("rollTheBones", 1214909), "live ID matches")
+  assert_true(Tuono.Profiles.MatchesSpell("rollTheBones", 315508), "legacy alias matches")
+  assert_false(Tuono.Profiles.MatchesSpell("rollTheBones", 193315), "an unrelated spell does not")
+end)
+
+test("alias resolution asks every probe, not just the first one present", function()
+  -- The failure this guards: IsSpellKnown existed and answered false for everything, and
+  -- because it existed, IsPlayerSpell was never consulted. Every candidate was rejected
+  -- and the profile silently kept its declared default.
+  local realBook = _G.C_SpellBook
+  local realPlayer = _G.IsPlayerSpell
+  local profile = Tuono.Profiles.Active()
+  local saved = profile.spells.rollTheBones
+
+  profile.spells.rollTheBones = 315508          -- pretend the profile declared the dead ID
+  _G.C_SpellBook = { IsSpellKnown = function() return false end }  -- present, but useless
+  _G.IsPlayerSpell = function(id) return id == 1214909 end -- the one that actually knows
+  local ok, resolved = pcall(function()
+    Tuono.Profiles.Activate(Tuono.Profiles.active)
+    return Tuono.Profiles.Active().spells.rollTheBones
+  end)
+
+  -- Restore before asserting: a failed assertion here must not leave the whole suite
+  -- running against a half-mutated profile.
+  _G.C_SpellBook = realBook
+  _G.IsPlayerSpell = realPlayer
+  profile.spells.rollTheBones = saved
+  Tuono.Profiles.Activate(Tuono.Profiles.active)
+
+  assert_true(ok, "activation completed without error")
+  assert_eq(resolved, 1214909, "a second probe's YES beats the first probe's NO")
+end)
+
+test("the out-of-combat opener is Stealth then Ambush, and does not loop", function()
+  resetRotationState()
+  pinSingleTarget()
+  Tuono.State.inCombat = false
+  stub.state.stealthed = false
+  Tuono.State.stealthed = false
+  Tuono.State.comboPoints = 0
+
+  local p = Tuono.Rotation.Predict(Tuono.State, 4)
+  assert_true(#p >= 2, "the opener predicts at least two steps")
+  assert_eq(p[1].spellID, Tuono.SpellIDs.stealth, "step 1 is Stealth")
+  assert_eq(p[2].spellID, Tuono.SpellIDs.ambush, "step 2 is the Ambush it enables")
+
+  -- Two ways this degenerated while being built, both worth pinning:
+  --   * the simulator did not apply Stealth, so the rule stayed true -> Stealth x4
+  --   * it did not mark combat, so Ambush broke stealth and re-armed -> Stealth, Ambush,
+  --     Stealth, Ambush forever
+  local stealthCount = 0
+  for _, step in ipairs(p) do
+    if step.spellID == Tuono.SpellIDs.stealth then stealthCount = stealthCount + 1 end
+  end
+  assert_eq(stealthCount, 1, "Stealth is a pre-pull action and appears exactly once")
+end)
+
+test("Stealth is not recommended once the fight has started", function()
+  resetRotationState()
+  pinSingleTarget()
+  Tuono.State.inCombat = true
+  stub.state.stealthed = false
+  Tuono.State.stealthed = false
+
+  local p = Tuono.Rotation.Predict(Tuono.State, 4)
+  for i, step in ipairs(p) do
+    assert_true(step.spellID ~= Tuono.SpellIDs.stealth,
+      "Stealth must not appear at step " .. i .. " in combat")
+  end
+end)
+
 -- === confidence-gated lookahead ===
 -- One icon is "too hard to react to with 0 prediction"; four icons where step 4 is a guess
 -- is "completely useless". The queue therefore ends at the first sequence step it cannot
@@ -3761,9 +3956,15 @@ print("")
 print(passCount .. "/" .. testCount .. " tests passed")
 
 -- === spec-priority tests ===
+--
+-- These all exercise the SINGLE-TARGET priority list, so pin it. Left on "auto" they are
+-- at the mercy of the AoE signals, and the stub's fixture rotation contains Blade Flurry
+-- -- which is a legitimate cleave signal (Blizzard's engine can see enemies we cannot),
+-- so Assist.Update sets aoeDetected and every one of these silently runs the AoE list.
 
 -- TEST: Rule 1 fires at stage 0
 test("spec-priority: rule 1 (RtB) fires at stage 0", function()
+  pinSingleTarget()
   Tuono.State.inCombat = true
   stub.state.stealthed = false
   Tuono.State.stealthed = false
@@ -3794,6 +3995,7 @@ end)
 -- stageKnown must be set too: the rule now refuses to act on an unreadable stage,
 -- because treating unknown as 0 is what made it recommend rerolling a Jackpot.
 test("spec-priority: rule 2 (KIR) fires at stage 3", function()
+  pinSingleTarget()
   Tuono.State.inCombat = true
   stub.state.stealthed = false
   Tuono.State.stealthed = false
@@ -3818,6 +4020,7 @@ end)
 
 -- TEST: Rule 3 (AR) fires at low CP (<=2)
 test("spec-priority: rule 3 (AR) fires at low CP", function()
+  pinSingleTarget()
   Tuono.State.inCombat = true
   stub.state.stealthed = false
   Tuono.State.stealthed = false
@@ -3840,6 +4043,7 @@ end)
 
 -- TEST: Rule 4 (Blade Rush) fires on cooldown
 test("spec-priority: rule 4 (Blade Rush) fires on cooldown", function()
+  pinSingleTarget()
   Tuono.State.inCombat = true
   stub.state.stealthed = false
   Tuono.State.stealthed = false
@@ -3862,6 +4066,7 @@ end)
 
 -- TEST: Rule 5 (BtE) fires at 6+ CP
 test("spec-priority: rule 5 (BtE) fires at 6+ CP", function()
+  pinSingleTarget()
   Tuono.State.inCombat = true
   stub.state.stealthed = false
   Tuono.State.stealthed = false
@@ -3884,6 +4089,7 @@ end)
 
 -- TEST: Rule 6 (Preparation) fires when reset targets are down
 test("spec-priority: rule 6 (Preparation) fires when AR down", function()
+  pinSingleTarget()
   Tuono.State.inCombat = true
   stub.state.stealthed = false
   Tuono.State.stealthed = false
@@ -3908,6 +4114,7 @@ end)
 
 -- TEST: Rule 7 (Killing Spree) fires at 6+ CP
 test("spec-priority: rule 7 (Killing Spree) fires at 6+ CP", function()
+  pinSingleTarget()
   Tuono.State.inCombat = true
   stub.state.stealthed = false
   Tuono.State.stealthed = false
@@ -3931,6 +4138,7 @@ end)
 
 -- TEST: Rule 8 (Dispatch) fires at 6+ CP when finishers unavailable
 test("spec-priority: rule 8 (Dispatch) fires at 6+ CP finisher unavailable", function()
+  pinSingleTarget()
   Tuono.State.inCombat = true
   stub.state.stealthed = false
   Tuono.State.stealthed = false
@@ -3955,6 +4163,7 @@ end)
 
 -- TEST: Rule 9 (Pistol Shot) fires with 6+ Opportunity stacks at any CP
 test("spec-priority: rule 9 (PS) fires with 6+ stacks at any CP", function()
+  pinSingleTarget()
   Tuono.State.inCombat = true
   stub.state.stealthed = false
   Tuono.State.stealthed = false
@@ -3979,6 +4188,7 @@ end)
 
 -- TEST: Rule 9 (Pistol Shot) fires with 3-5 stacks only at 1-3 CP
 test("spec-priority: rule 9 (PS) fires with 3-5 stacks only at 1-3 CP", function()
+  pinSingleTarget()
   Tuono.State.inCombat = true
   stub.state.stealthed = false
   Tuono.State.stealthed = false
@@ -4003,6 +4213,7 @@ end)
 
 -- TEST: Rule 9 (Pistol Shot) does NOT fire with 3-5 stacks at 4+ CP
 test("spec-priority: rule 9 (PS) does NOT fire with 3-5 stacks at 4+ CP", function()
+  pinSingleTarget()
   Tuono.State.inCombat = true
   stub.state.stealthed = false
   Tuono.State.stealthed = false
@@ -4027,6 +4238,7 @@ end)
 
 -- TEST: Rule 10 (Sinister Strike) fires as default builder
 test("spec-priority: rule 10 (SS) fires as default builder", function()
+  pinSingleTarget()
   Tuono.State.inCombat = true
   stub.state.stealthed = false
   Tuono.State.stealthed = false
@@ -4047,6 +4259,9 @@ end)
 
 -- TEST: Blade Flurry fires at low CP with 2+ enemies
 test("spec-priority: Blade Flurry fires at low CP with 2+ enemies", function()
+  -- This one is ABOUT the AoE list, so undo any single-target pin a sibling left set.
+  Tuono.db.aoeMode = "auto"
+  Tuono.Rotation.ResetMode()
   Tuono.State.inCombat = true
   stub.state.stealthed = false
   Tuono.State.stealthed = false
@@ -4070,6 +4285,7 @@ end)
 
 -- TEST: Blade Flurry does NOT fire at 3+ CP even with 2+ enemies
 test("spec-priority: Blade Flurry does NOT fire at 3+ CP", function()
+  pinSingleTarget()
   Tuono.State.inCombat = true
   stub.state.stealthed = false
   Tuono.State.stealthed = false
@@ -4093,6 +4309,7 @@ end)
 
 -- TEST: Rule ordering - rule N+1 doesn't fire if rule N fires
 test("spec-priority: rule ordering (RtB before KIR)", function()
+  pinSingleTarget()
   Tuono.State.inCombat = true
   stub.state.stealthed = false
   Tuono.State.stealthed = false
@@ -4301,28 +4518,38 @@ end)
 -- overrides) so it exercises the real Assist/RefreshFast/Engine pipeline exactly
 -- like those, just asserting the NOT-stealthed side too.
 test("state-transition: Ambush recommended only while stealthed", function()
+  resetRotationState()
   Tuono.State.inCombat = false
   stub.state.stealthed = false
   Tuono.State.stealthed = false
-  Tuono.Assist.Update()
-  Tuono.State.RefreshFast()
 
   local rNotStealthed = Tuono.Engine.Evaluate()
-  local ambushFoundNotStealthed = false
-  for _, entry in ipairs(rNotStealthed.queue or {}) do
-    if entry.spellID == Tuono.SpellIDs.ambush then ambushFoundNotStealthed = true end
+  -- Ambush must not be the thing you are told to press RIGHT NOW while unstealthed.
+  --
+  -- It may legitimately appear LATER in the sequence, and now does: out of combat the
+  -- opener predicts Stealth then Ambush. That is the entire point of a lookahead -- step 2
+  -- is conditional on step 1 having happened. The old assertion banned Ambush from the
+  -- whole queue, which only held because no rule could put Stealth in front of it.
+  assert_true(rNotStealthed.queue[1] == nil
+    or rNotStealthed.queue[1].spellID ~= Tuono.SpellIDs.ambush,
+    "Ambush is not the immediate recommendation while unstealthed")
+  local ambushStep = nil
+  for i, entry in ipairs(rNotStealthed.queue or {}) do
+    if entry.spellID == Tuono.SpellIDs.ambush then ambushStep = i break end
   end
-  assert_false(ambushFoundNotStealthed, "Ambush is NOT recommended anywhere in the queue while not stealthed")
+  if ambushStep then
+    assert_eq(rNotStealthed.queue[ambushStep - 1].spellID, Tuono.SpellIDs.stealth,
+      "an Ambush later in the sequence is preceded by the Stealth that enables it")
+  end
 
+  resetRotationState()
   Tuono.State.inCombat = true
   stub.state.stealthed = true
   Tuono.State.stealthed = true
-  Tuono.Assist.Update()
-  Tuono.State.RefreshFast()
 
   local rStealthed = Tuono.Engine.Evaluate()
   assert_true(#rStealthed.queue > 0, "queue has entries while stealthed")
-  assert_eq(rStealthed.queue[1].spellID, Tuono.SpellIDs.ambush, "Ambush pins at position 1 when stealthed")
+  assert_eq(rStealthed.queue[1].spellID, Tuono.SpellIDs.ambush, "Ambush leads at position 1 when stealthed")
 
   stub.state.stealthed = false
   Tuono.State.stealthed = false

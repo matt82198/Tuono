@@ -399,7 +399,7 @@ local function ProcessAuraDelta(updateInfo)
 					Tuono.State.buffs.adrenalineRush.up = true
 					Tuono.State.buffs.adrenalineRush.expires = Tuono.num(auraData.expirationTime, now)
 					Tuono.State.buffs.degraded = false
-				elseif spellID == Tuono.SpellIDs.rollTheBones then
+				elseif Tuono.Profiles.MatchesSpell("rollTheBones", spellID) then
 					instanceMap[instanceID] = "rtb"
 					Tuono.State.buffs.rtb.stage = Tuono.num(auraData.applications, 1)
 					Tuono.State.buffs.rtb.stageKnown = true
@@ -423,7 +423,7 @@ local function ProcessAuraDelta(updateInfo)
 							Tuono.State.buffs.adrenalineRush.up = true
 							Tuono.State.buffs.adrenalineRush.expires = Tuono.num(auraData.expirationTime, now)
 							Tuono.State.buffs.degraded = false
-						elseif lastCast.spellID == Tuono.SpellIDs.rollTheBones then
+						elseif Tuono.Profiles.MatchesSpell("rollTheBones", lastCast.spellID) then
 							instanceMap[instanceID] = "rtb"
 							Tuono.State.buffs.rtb.stage = Tuono.num(auraData.applications, 1)
 							Tuono.State.buffs.rtb.stageKnown = true

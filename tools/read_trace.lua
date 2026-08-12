@@ -156,4 +156,92 @@ if #ticks > 0 then
   end
 end
 
+-- Spell IDs alone are unreadable at a glance, and the whole point of this tool is that a
+-- human can skim the output. Names come from the shipped profile, so this stays correct
+-- when the profile's IDs are corrected.
+local SPELL_NAMES = {
+  [13750] = "Adrenaline Rush", [271877] = "Blade Rush",   [1277933] = "Preparation",
+  [315341] = "Between the Eyes", [315508] = "Roll the Bones (old ID)",
+  [1214909] = "Roll the Bones", [193315] = "Sinister Strike", [13877] = "Blade Flurry",
+  [1784] = "Stealth", [185763] = "Pistol Shot", [195627] = "Opportunity",
+  [8676] = "Ambush", [51690] = "Killing Spree", [2098] = "Dispatch",
+  [381989] = "Keep It Rolling", [315496] = "Slice and Dice", [14185] = "Preparation (CLASSIC - wrong ID)",
+}
+local function spellName(id)
+  local n = SPELL_NAMES[tonumber(id) or -1]
+  return n and ("  " .. n) or ""
+end
+
+-- What the client REFUSED, and why. These are the ground truth on a bad recommendation:
+-- a UI error paired with a failed cast is the client telling us our advice was wrong.
+local function tally(pred, keyfn)
+  local counts, order = {}, {}
+  for _, s in pairs(samples) do
+    if pred(s) then
+      local key = keyfn(s)
+      if counts[key] == nil then order[#order + 1] = key counts[key] = 0 end
+      counts[key] = counts[key] + 1
+    end
+  end
+  table.sort(order, function(a, b)
+    if counts[a] ~= counts[b] then return counts[a] > counts[b] end
+    return tostring(a) < tostring(b)
+  end)
+  return counts, order
+end
+
+local errs, errOrder = tally(function(s) return s.k == "uierr" end,
+  function(s) return tostring(s.msg) end)
+if #errOrder > 0 then
+  print("\n  UI errors the client raised (what it refused to do):")
+  for _, k in ipairs(errOrder) do print(string.format("    %5dx  %s", errs[k], k)) end
+end
+
+local fails, failOrder = tally(function(s) return s.k == "castfail" end,
+  function(s) return tostring(s.id) end)
+if #failOrder > 0 then
+  print("\n  failed casts by spell (id -> count):")
+  for _, k in ipairs(failOrder) do
+    print(string.format("    %5dx  %s%s", fails[k], k, spellName(k)))
+  end
+end
+
+local casts, castOrder = tally(function(s) return s.k == "cast" end,
+  function(s) return tostring(s.id) end)
+if #castOrder > 0 then
+  print("\n  successful casts by spell (id -> count):")
+  for _, k in ipairs(castOrder) do
+    print(string.format("    %5dx  %s%s", casts[k], k, spellName(k)))
+  end
+end
+
+-- Combo points are the spine of the Outlaw rotation: no CP means no finisher, ever, and
+-- the bar degrades to "builder forever". Worth stating outright rather than leaving the
+-- reader to notice it in the tick dump.
+local cpSeen, cpUnknown, cpMax = {}, 0, 0
+for _, s in pairs(samples) do
+  if s.k == "tick" then
+    if s.cpK == false then cpUnknown = cpUnknown + 1 end
+    local n = tonumber(s.cp)
+    if n then
+      cpSeen[n] = (cpSeen[n] or 0) + 1
+      if n > cpMax then cpMax = n end
+    end
+  end
+end
+if next(cpSeen) then
+  local keys = {}
+  for n in pairs(cpSeen) do keys[#keys + 1] = n end
+  table.sort(keys)
+  local parts = {}
+  for _, n in ipairs(keys) do parts[#parts + 1] = n .. "x" .. cpSeen[n] end
+  print("\n  combo points observed across ticks: " .. table.concat(parts, "  ") ..
+    "   (unreadable on " .. cpUnknown .. " ticks)")
+  if cpMax == 0 then
+    print("    !! CP never rose above 0. No finisher can ever fire; the rotation")
+    print("       degrades to the builder on every step. Check UNIT_POWER_UPDATE and")
+    print("       whether the trace covers any real combat at all.")
+  end
+end
+
 print("")

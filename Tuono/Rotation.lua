@@ -323,12 +323,21 @@ end
 -- Exclude a rule ONLY when we explicitly probed and learned the player lacks the spell.
 -- nil means "never probed" -> fail OPEN, because hiding a player's whole rotation on a
 -- missing probe is far worse than one stray icon.
-local function buildActivePriorityList(priorityList, knownSpells, spells)
+-- FAIL OPEN WHEN THE KNOWN-SPELL API ITSELF IS UNAVAILABLE.
+--
+-- knownSpells[id] == false means "the client told us the character does not have this".
+-- But when the probe could not run at all, StateTracker sets knownUnavailable and every
+-- entry is stale -- at which point a `false` is not the client's answer, it is our own
+-- failed read looking exactly like one. Suppressing the whole rotation on that is the
+-- unknown-as-no bug in its purest form, and Evaluate's own castability filter already
+-- has this exemption. The simulator did not, so with the legacy PREFER rules gone -- they
+-- had been re-inserting the suppressed spells from outside -- the gap became reachable.
+local function buildActivePriorityList(priorityList, knownSpells, spells, knownUnavailable)
 	local active = {}
 	for _, rule in ipairs(priorityList) do
 		local reqID = rule.requiresSpell
 		if type(reqID) == "string" then reqID = spells[reqID] end
-		if not reqID or knownSpells[reqID] ~= false then
+		if not reqID or knownUnavailable or knownSpells[reqID] ~= false then
 			table.insert(active, rule)
 		end
 	end
@@ -499,6 +508,21 @@ function Tuono.Rotation.ResolveMode(S)
 		return "single"
 	end
 
+	-- BLIZZARD'S OWN LIST IS AN AOE SIGNAL. If C_AssistedCombat's rotation contains Blade
+	-- Flurry, its engine -- which can see the enemy state Midnight hides from us -- has
+	-- concluded this is a cleave. That is strictly better information than our nameplate
+	-- count, which misses anything unnameplated or out of range.
+	--
+	-- The old blade_flurry_aoe rule treated this as one of three OR-ed signals. When the
+	-- rotation moved into the profile's AoE priority list, the mode selector was written
+	-- against nameplate count alone and this signal was silently dropped, so a cleave
+	-- Blizzard could see and we could not would keep running the single-target list.
+	if Tuono.Assist and Tuono.Assist.aoeDetected then
+		belowThresholdSince = nil
+		Tuono.Rotation.mode, Tuono.Rotation.modeReason = "aoe", "Blizzard's list is cleaving"
+		return "aoe"
+	end
+
 	local count = S and S.enemyCount
 	if count == nil then
 		-- Count unreadable: HOLD the current mode rather than snapping to single-target.
@@ -564,7 +588,7 @@ function Tuono.Rotation.Predict(state, steps)
 		sourceList = Tuono.UserRules.EffectivePriority(profile, "single")
 	end
 
-	local priorityList = buildActivePriorityList(sourceList or {}, state.knownSpells or {}, spells)
+	local priorityList = buildActivePriorityList(sourceList or {}, state.knownSpells or {}, spells, state.knownUnavailable)
 	Tuono.Rotation.activeRuleCount = #priorityList
 
 	local result = {}
@@ -709,6 +733,17 @@ function Tuono.Rotation.Predict(state, steps)
 			end
 			-- Ambush breaks stealth, so later steps must not predict it again.
 			if spellID == spells.ambush then S.stealthed = false end
+				-- ...and Stealth APPLIES it. Without this the opener rule stayed true after its
+				-- own step and the simulation emitted "Stealth, Stealth, Stealth" -- the
+				-- degenerate case for any rule whose effect the simulator does not model. With
+				-- it, the predicted opener is the real one: Stealth, then Ambush.
+				if spellID == spells.stealth then S.stealthed = true end
+				-- Anything that is not Stealth STARTS THE FIGHT. Stealth is a pre-pull action,
+				-- not a rotation step, so without this the sequence cycled Ambush -> Stealth ->
+				-- Ambush forever: Ambush broke stealth, the opener rule saw an unstealthed rogue
+				-- and re-armed. Marking combat retires the opener after the pull, which is what
+				-- actually happens, and leaves the rest of the sequence to the real rotation.
+				if spellID ~= spells.stealth then S.inCombat = true end
 
 			if (ability.cd or 0) > 0 then
 				local cdKey = SPELL_TO_CDKEY[spellID]

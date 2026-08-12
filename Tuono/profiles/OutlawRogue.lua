@@ -23,7 +23,13 @@ local SPELLS = {
 	-- and SPELL_TO_CDKEY mapped a spell the client does not have.
 	preparation    = 1277933,
 	betweenTheEyes = 315341,
-	rollTheBones   = 315508,
+	-- 1214909, not 315508. SimC resolves Roll the Bones by NAME because the ID moved in
+	-- Midnight: SpecializationSpells has zero rows for 315508, while 1214909 is row 7256
+	-- under spec 260 (Outlaw). The alias list below still resolves against the client at
+	-- load and 315508 remains a candidate there -- but the DEFAULT must be the live ID,
+	-- because the alias path returns early when C_SpellBook.IsSpellKnown is unavailable,
+	-- and the default was then rendering an icon for a spell that does not exist.
+	rollTheBones   = 1214909,
 	sinisterStrike = 193315,
 	bladeFlurry    = 13877,
 	stealth        = 1784,
@@ -70,6 +76,10 @@ local ABILITIES = {
 	-- was available roughly 8x more often than it is.
 	[SPELLS.preparation]    = { cost = 0,  cpGen = 0, cpSpend = 0, cd = 240, gcd = false },
 	[SPELLS.keepItRolling]  = { cost = 0,  cpGen = 0, cpSpend = 0, cd = 360, gcd = false },
+	-- Stealth is not part of the damage rotation, but it IS the correct action when you
+	-- are stood out of combat about to pull, and the bar is shown out of combat. It has to
+	-- be in ABILITIES or the simulator cannot cost it or start its cooldown.
+	[SPELLS.stealth]        = { cost = 0,  cpGen = 0, cpSpend = 0, cd = 20,  gcd = false },
 }
 
 local LOW_CP = 2
@@ -78,6 +88,20 @@ local LOW_CP = 2
 -- below could equally be expressed as editor rows; keeping the same vocabulary means a
 -- user-edited copy of this profile stays round-trippable.
 local PRIORITY = {
+	{
+		-- STEALTH BEFORE THE PULL. This used to live in data/rules.lua as a PIN, which
+		-- forced it to position 1 from OUTSIDE the simulation -- so it also fired in the
+		-- middle of combat and shoved itself in front of the real rotation. As a priority
+		-- rule it is simulated like everything else: it wins out of combat because nothing
+		-- above it applies, and it simply never matches once the fight starts.
+		name = "Stealth before the pull",
+		spellKey = "stealth",
+		requiresSpell = "stealth",
+		conditions = { { type = "stealthed" } },
+		when = function(S, A)
+			return not S.inCombat and not S.stealthed
+		end
+	},
 	{
 		name = "Ambush from stealth",
 		spellKey = "ambush",
@@ -259,6 +283,20 @@ local PRIORITY = {
 --     because cleaved builder damage outweighs a second finisher
 --   * Killing Spree is worth more here, so it is not gated behind BtE being down
 local PRIORITY_AOE = {
+	{
+		-- STEALTH BEFORE THE PULL. This used to live in data/rules.lua as a PIN, which
+		-- forced it to position 1 from OUTSIDE the simulation -- so it also fired in the
+		-- middle of combat and shoved itself in front of the real rotation. As a priority
+		-- rule it is simulated like everything else: it wins out of combat because nothing
+		-- above it applies, and it simply never matches once the fight starts.
+		name = "Stealth before the pull",
+		spellKey = "stealth",
+		requiresSpell = "stealth",
+		conditions = { { type = "stealthed" } },
+		when = function(S, A)
+			return not S.inCombat and not S.stealthed
+		end
+	},
 	{
 		name = "Ambush from stealth",
 		spellKey = "ambush",

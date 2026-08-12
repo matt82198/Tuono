@@ -51,10 +51,14 @@ accessibility lost them with no substitute. See `docs/SECRET-VALUES-FINDINGS.md`
 
 ## NEXT STEPS (ranked)
 
-1. **Verify the range/target gate.** Just landed, unverified. Last trace had 8 "Out of
-   range" and 9 "There is nothing to attack". Re-run `/tuono record` → `/reload`.
-2. **Residual energy errors.** 10× "Not enough energy", mostly Between the Eyes. The
-   interval is good but the affordability gate still lets some through.
+1. **The energy model is running open-loop.** The 23:12 trace never once reported
+   `measured` or `bracketed` — only `estimated` and `stale` — and the interval sat pinned
+   at `[100,100]` while the client raised "Not enough energy" 13 times and refused 28 of 32
+   Sinister Strike casts. The whole tightening mechanism is `IsSpellUsable` threshold
+   crossings, and not a single edge was recorded in ~100s of play. Find out why
+   `recordEdge` never fires: this is the single largest remaining source of bad advice.
+2. **Verify the range/target gate.** Still unverified. The 23:12 trace shows 3× "Target
+   needs to be in front of you", 1× "You are facing the wrong way!".
 3. **Stage discriminators without auras.** Stage ≥2 → SS grants +1 CP (CP is readable);
    stage ≥3 → Restless Blades 1.3s/CP vs 1.0 (cooldowns are reconstructed). Collapses
    the stage within ~2 globals. 4-vs-3 differs only by crit and is unresolvable.
@@ -75,11 +79,15 @@ accessibility lost them with no substitute. See `docs/SECRET-VALUES-FINDINGS.md`
 - Energy is bounded, never known.
 - RtB stage 4 vs 3 has no deterministic observable.
 - Proc detection via overlay gives presence only, never stack count.
-- `Tuono.Rules` (data/rules.lua) and profile priority lists are two engines, the former
-  post-processing the latter. This caused several bugs and should be folded in. Two more
-  found since: `preparation_ready` still carried the dead Classic spell ID 14185 after the
-  profile was corrected, and `rtb_reroll_stage2` advised a six-minute cooldown at a stage
-  the profile explicitly gates against. Both fixed; the underlying duplication is not.
+- `Tuono.Rules` (data/rules.lua) is now **advisory only**. Its PIN/PREFER actions were
+  reordering and splicing the simulated sequence from outside the simulation, which is
+  what made positions 2+ incoherent; they are gone. ADVISE still appends reminders behind
+  the sequence. The file still duplicates profile rules and still restates spell IDs it
+  should not — folding it into the profiles remains the real fix.
+- Four bugs traced to that duplication, all fixed: `preparation_ready` carried the dead
+  Classic ID 14185; `rtb_reroll_stage2` advised a six-minute cooldown at a stage the
+  profile gates against; `blade_flurry_aoe` injected Blade Flurry into single-target; and
+  the PIN rules were masking cross-test state pollution AND a profile rule that never fired.
 - Overlay-glow provenance only exists for procs Blizzard glows, and only while the spell
   is on an action bar. Un-barred, no event fires, `fromOverlay` is never set, and the
   affected steps rate `unknown` — the lookahead shortens rather than going stale.
