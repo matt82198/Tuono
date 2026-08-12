@@ -73,6 +73,54 @@ local function showProbe(label, p)
   print("  assist avail   : " .. fmt(p.assistAvailable) .. "   <- SECRET here froze the bar")
   print("  assist pick    : " .. fmt(p.assistPick))
   print("  C_Secrets      : " .. fmt(p.cSecrets))
+
+  -- THE "MIDDLE LAYER OF INVISIBLE ICONS" QUESTION, ANSWERED BY MEASUREMENT.
+  -- If a getter returns SECRET, the widget carried the taint through and the channel is
+  -- closed. If it returns a NUMBER, that is a declassification path and a genuine finding.
+  if type(p.readBack) == "table" then
+    print("\n  widget read-back (can a secret be laundered through a UI widget?):")
+    for _, k in ipairs({ "sourceStart", "sourceDuration", "cooldownSetCooldown",
+                         "cooldownGetTimes", "cooldownGetDuration", "sourceEnergy",
+                         "statusBarSetValue", "statusBarGetValue",
+                         "fontStringSetFormatted", "fontStringGetText", "error" }) do
+      if p.readBack[k] ~= nil then
+        print(string.format("    %-24s %s", k, fmt(p.readBack[k])))
+      end
+    end
+    local leaked = {}
+    for k, v in pairs(p.readBack) do
+      if type(v) == "number" and not k:find("^source") then leaked[#leaked + 1] = k end
+    end
+    if #leaked > 0 then
+      print("    !! " .. table.concat(leaked, ", ") .. " returned a READABLE number.")
+      print("       If the source was SECRET, that is an open declassification channel.")
+    else
+      print("    -> no readable number came back out; the taint rides through the widget.")
+    end
+  end
+
+  if type(p.unusedReads) == "table" then
+    print("\n  readable? functions we do NOT currently consume:")
+    local ks = {}
+    for k in pairs(p.unusedReads) do ks[#ks + 1] = k end
+    table.sort(ks)
+    for _, k in ipairs(ks) do
+      local v = p.unusedReads[k]
+      local note = ""
+      if type(v) == "number" then note = "   <- READABLE, worth wiring up" end
+      print(string.format("    %-28s %s%s", k, fmt(v), note))
+    end
+  end
+
+  if type(p.secrecyPredicates) == "table" then
+    print("\n  what the client says about its own secrecy:")
+    local ks = {}
+    for k in pairs(p.secrecyPredicates) do ks[#ks + 1] = k end
+    table.sort(ks)
+    for _, k in ipairs(ks) do
+      print(string.format("    %-30s %s", k, fmt(p.secrecyPredicates[k])))
+    end
+  end
 end
 
 showProbe("PROBE AT START", diag.probeAtStart)

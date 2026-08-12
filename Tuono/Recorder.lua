@@ -63,6 +63,151 @@ R.Push = push
 -- One-shot environment probe: every secrecy question, answered machine-readably.
 -- This is /tuono secrets, but as data rather than chat text.
 -- ---------------------------------------------------------------------------
+-- ============================================================================
+-- CHANNEL PROBE  --  does laundering a secret through a UI widget work?
+-- ============================================================================
+-- The recurring idea, and a reasonable one: addons like TellMeWhen and WeakAuras track
+-- "everything" with a layer of icons, so build a layer of INVISIBLE ones, hand them the
+-- values the client will happily render, and read them back out. If the client can draw
+-- your energy on a status bar, the number is evidently in there somewhere.
+--
+-- It is worth measuring rather than arguing about, because the answer is a property of
+-- this build and not of anyone's opinion. Blizzard's stated design is that widgets ACCEPT
+-- secrets and their getters RETURN secrets -- the taint rides along rather than being
+-- washed off -- and string formatting of secrets was closed in 12.0.1. But "documented as
+-- closed" and "closed on the client in front of me" are different claims, and this repo's
+-- rule is that the second one is the one that counts.
+--
+-- Every call is pcall'd and no arithmetic is ever performed on a result: if a setter
+-- raises on a secret argument, that is itself the finding, and must not take the addon
+-- with it.
+--
+-- Reading a value back out is NOT the same as reading the hidden state, IF the value comes
+-- back secret -- which is the expected result. Nothing here attempts to defeat that; the
+-- point is to know, and to re-check when Blizzard changes something.
+local probeHost = nil
+
+local function tryReadBack()
+	local out = {}
+
+	if not probeHost then
+		local ok, f = pcall(CreateFrame, "Frame", nil, UIParent)
+		if not ok or not f then return { error = "NO_FRAME" } end
+		f:Hide()
+		probeHost = f
+	end
+
+	-- 1. Cooldown widget. The classic candidate: cooldown remaining is secret in combat,
+	--    but the swipe animation obviously knows how far along it is.
+	local cdInfo
+	local okInfo, info = pcall(C_Spell.GetSpellCooldown, Tuono.SpellIDs and Tuono.SpellIDs.adrenalineRush or 13750)
+	if okInfo then cdInfo = info end
+	if cdInfo then
+		out.sourceStart = obs(cdInfo.startTime)
+		out.sourceDuration = obs(cdInfo.duration)
+		local okC, cd = pcall(CreateFrame, "Cooldown", nil, probeHost, "CooldownFrameTemplate")
+		if okC and cd then
+			local okSet = pcall(cd.SetCooldown, cd, cdInfo.startTime, cdInfo.duration)
+			out.cooldownSetCooldown = okSet and "ACCEPTED" or "RAISED"
+			if okSet then
+				if cd.GetCooldownTimes then
+					local okG, a, b = pcall(cd.GetCooldownTimes, cd)
+					out.cooldownGetTimes = okG and { obs(a), obs(b) } or "RAISED"
+				end
+				if cd.GetCooldownDuration then
+					local okD, d = pcall(cd.GetCooldownDuration, cd)
+					out.cooldownGetDuration = okD and obs(d) or "RAISED"
+				end
+			end
+		else
+			out.cooldownGetTimes = "NO_WIDGET"
+		end
+	end
+
+	-- 2. StatusBar. The direct form of the idea: hand it the secret power value.
+	local energyType = (Enum and Enum.PowerType and Enum.PowerType.Energy) or 3
+	local energy = UnitPower("player", energyType)
+	out.sourceEnergy = obs(energy)
+	local okB, bar = pcall(CreateFrame, "StatusBar", nil, probeHost)
+	if okB and bar then
+		local okSet = pcall(bar.SetValue, bar, energy)
+		out.statusBarSetValue = okSet and "ACCEPTED" or "RAISED"
+		if okSet then
+			local okG, v = pcall(bar.GetValue, bar)
+			out.statusBarGetValue = okG and obs(v) or "RAISED"
+		end
+	else
+		out.statusBarGetValue = "NO_WIDGET"
+	end
+
+	-- 3. FontString. Formatting was closed in 12.0.1; confirm on this build.
+	local okF, fs = pcall(probeHost.CreateFontString, probeHost, nil, "OVERLAY", "GameFontNormal")
+	if okF and fs then
+		local okSet = pcall(fs.SetFormattedText, fs, "%s", energy)
+		out.fontStringSetFormatted = okSet and "ACCEPTED" or "RAISED"
+		if okSet then
+			local okG, t = pcall(fs.GetText, fs)
+			out.fontStringGetText = okG and obs(t) or "RAISED"
+		end
+	end
+
+	return out
+end
+
+-- Functions we do NOT currently consume, each of which would matter if readable.
+-- GetPowerRegenForPowerType is the interesting one: MaxDps (a live 12.x rotation addon)
+-- calls it, and if it is never-secret it hands over the regen rate directly -- the exact
+-- quantity EnergyModel currently reconstructs from two threshold crossings.
+local function tryUnusedReads()
+	local out = {}
+	local energyType = (Enum and Enum.PowerType and Enum.PowerType.Energy) or 3
+
+	local candidates = {
+		{ "GetPowerRegenForPowerType", function() return _G.GetPowerRegenForPowerType(energyType) end },
+		{ "GetPowerRegen",             function() return _G.GetPowerRegen() end },
+		{ "UnitPowerDisplayMod",       function() return _G.UnitPowerDisplayMod(energyType) end },
+		{ "UnitSpellHaste",            function() return _G.UnitSpellHaste("player") end },
+		{ "GetHaste",                  function() return _G.GetHaste() end },
+		{ "GetMeleeHaste",             function() return _G.GetMeleeHaste() end },
+		{ "UnitAttackSpeed",           function() return _G.UnitAttackSpeed("player") end },
+	}
+	for _, c in ipairs(candidates) do
+		local name, fn = c[1], c[2]
+		if type(_G[name]) ~= "function" then
+			out[name] = "ABSENT"
+		else
+			local ok, v = pcall(fn)
+			out[name] = ok and obs(v) or "RAISED"
+		end
+	end
+	return out
+end
+
+-- Ask the client what it considers secret, instead of inferring it from behaviour.
+local function trySecrecyPredicates()
+	local out = {}
+	local S = _G.C_Secrets
+	if not S then return { error = "NO_C_SECRETS" } end
+	local energyType = (Enum and Enum.PowerType and Enum.PowerType.Energy) or 3
+	local cpType = (Enum and Enum.PowerType and Enum.PowerType.ComboPoints) or 4
+
+	local queries = {
+		{ "GetPowerTypeSecrecy.energy", function() return S.GetPowerTypeSecrecy(energyType) end },
+		{ "GetPowerTypeSecrecy.combo",  function() return S.GetPowerTypeSecrecy(cpType) end },
+		{ "ShouldUnitPowerBeSecret",    function() return S.ShouldUnitPowerBeSecret("player", energyType) end },
+		{ "ShouldUnitStatsBeSecret",    function() return S.ShouldUnitStatsBeSecret("player") end },
+		{ "ShouldAurasBeSecret",        function() return S.ShouldAurasBeSecret("player") end },
+		{ "ShouldCooldownsBeSecret",    function() return S.ShouldCooldownsBeSecret() end },
+		{ "HasSecretRestrictions",      function() return S.HasSecretRestrictions() end },
+	}
+	for _, q in ipairs(queries) do
+		local name, fn = q[1], q[2]
+		local ok, v = pcall(fn)
+		out[name] = ok and obs(v) or "CALL_FAILED"
+	end
+	return out
+end
+
 function R.Probe()
 	local p = { at = date and date("%Y-%m-%d %H:%M:%S") or nil }
 
@@ -162,6 +307,14 @@ function R.Probe()
 		end
 		table.sort(p.cSecrets)
 	end
+
+	-- Three measurements, not three opinions. See the block comments above each.
+	local okR, readBack = pcall(tryReadBack)
+	p.readBack = okR and readBack or "PROBE_RAISED"
+	local okU, unused = pcall(tryUnusedReads)
+	p.unusedReads = okU and unused or "PROBE_RAISED"
+	local okS, secrecy = pcall(trySecrecyPredicates)
+	p.secrecyPredicates = okS and secrecy or "PROBE_RAISED"
 
 	return p
 end
