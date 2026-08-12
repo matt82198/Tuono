@@ -131,14 +131,44 @@ end
 -- nothing castable. See the pooling fallback in Predict. Never leave this true.
 local ignoreEnergy = false
 
-local function canAfford(S, spellID)
-	if not spellID then return true end
+-- Affordability is a THREE-VALUED question, and the rotation only ever needed the
+-- answer -- never the underlying number.
+--
+--   "yes"   provably affordable
+--   "no"    provably not
+--   "maybe" the interval straddles the cost
+--
+-- Live state defers to the interval model, whose bounds come from the never-secret
+-- IsSpellUsable oracle. Simulated steps carry their own interval forward
+-- arithmetically. Nothing here reads a hidden value, and nothing branches on WHICH
+-- values are hidden: starve it of observations and the interval widens to [0, max],
+-- every answer becomes "maybe", and the priority list degrades to cooldown-driven
+-- logic on its own.
+function Tuono.Rotation.AffordState(S, spellID)
+	if not spellID then return "yes" end
 	local ability = ABILITIES[spellID]
-	if not ability then return false end
-	if (ability.cost or 0) == 0 then return true end
-	if ignoreEnergy then return true end
-	if not energyKnown(S) then return true end
-	return S.energy >= ability.cost
+	if not ability then return "no" end
+	if (ability.cost or 0) == 0 then return "yes" end
+	if ignoreEnergy then return "yes" end
+
+	if S and S.energyLo and S.energyHi then
+		if S.energyLo >= ability.cost then return "yes" end
+		if S.energyHi < ability.cost then return "no" end
+		return "maybe"
+	end
+
+	if Tuono.Energy and Tuono.Energy.AffordState then
+		return Tuono.Energy.AffordState(ability.cost)
+	end
+	return "maybe"
+end
+
+-- Boolean face for rule closures. "maybe" PASSES: an unprovable answer must not
+-- suppress a recommendation -- that is exactly what emptied the bar when secret energy
+-- read as zero. The uncertainty is not discarded, it is carried into the confidence
+-- rating, so a maybe-affordable step renders as "bounded" rather than solid.
+local function canAfford(S, spellID)
+	return Tuono.Rotation.AffordState(S, spellID) ~= "no"
 end
 
 Tuono.RuleHelpers = {
@@ -184,6 +214,16 @@ local function deepCopyState(state)
 	-- Scalars the simulation mutates.
 	S.energy = state.energy
 	S.energyMax = state.energyMax
+
+	-- Seed the simulation's energy INTERVAL from the live model. Steps then carry it
+	-- forward with interval arithmetic rather than pretending to a point value, so a
+	-- later step whose affordability genuinely straddles the bound is reported as
+	-- uncertain instead of guessed.
+	if Tuono.Energy and Tuono.Energy.Interval then
+		S.energyLo, S.energyHi = Tuono.Energy.Interval()
+	else
+		S.energyLo, S.energyHi = nil, nil
+	end
 	S.energyKnown = state.energyKnown
 	S.energySource = state.energySource
 	S.comboPoints = state.comboPoints
@@ -247,6 +287,22 @@ end
 
 local function calcGCD(hasteBuffUp)
 	return hasteBuffUp and 0.8 or 1.0
+end
+
+-- Interval regen for the simulation. Regen is itself only known within bounds (haste is
+-- secret since 12.0.5, Combat Potency is stochastic), so elapsed time makes the interval
+-- WIDER, not merely higher. That widening IS the honest representation of a forward
+-- prediction losing certainty the further out it reaches -- and it is why a step-4
+-- affordability question can legitimately answer "maybe" while step 1 answers "yes".
+local function widenSim(S, maxEnergy, dt)
+	if not (S and S.energyLo and S.energyHi) then return end
+	local lo, hi = 8, 40
+	if Tuono.Energy then
+		lo = Tuono.Energy.regenLo or lo
+		hi = Tuono.Energy.regenHi or hi
+	end
+	S.energyLo = math.min(maxEnergy, S.energyLo + lo * dt)
+	S.energyHi = math.min(maxEnergy, S.energyHi + hi * dt)
 end
 
 local function calcEnergyRegen(hasteBuffUp)
@@ -523,6 +579,7 @@ function Tuono.Rotation.Predict(state, steps)
 			if not spellID and poolAttempts < maxPoolAttempts then
 				local gcd = calcGCD(hasteBuff)
 				S.energy = math.min(maxEnergy, S.energy + calcEnergyRegen(hasteBuff) * gcd)
+				widenSim(S, maxEnergy, gcd)
 				for _, cdData in pairs(S.cooldowns) do
 					if cdData.remaining and cdData.remaining > 0 then
 						cdData.remaining = math.max(0, cdData.remaining - gcd)
@@ -581,6 +638,11 @@ function Tuono.Rotation.Predict(state, steps)
 		local ability = ABILITIES[spellID]
 		if ability then
 			S.energy = math.max(0, S.energy - (ability.cost or 0))
+			-- Spend moves BOTH bounds; the interval keeps its width.
+			if S.energyLo then
+				S.energyLo = math.max(0, S.energyLo - (ability.cost or 0))
+				S.energyHi = math.max(0, S.energyHi - (ability.cost or 0))
+			end
 
 			-- SPEND THEN GENERATE, as two independent steps. This was if/elseif, which
 			-- cannot express an ability that does both -- and Killing Spree does: it is a
@@ -630,6 +692,7 @@ function Tuono.Rotation.Predict(state, steps)
 			if ability.gcd then
 				local gcd = calcGCD(hasteBuff)
 				S.energy = math.min(maxEnergy, S.energy + calcEnergyRegen(hasteBuff) * gcd)
+				widenSim(S, maxEnergy, gcd)
 				for _, cdData in pairs(S.cooldowns) do
 					if cdData.remaining and cdData.remaining > 0 then
 						cdData.remaining = math.max(0, cdData.remaining - gcd)

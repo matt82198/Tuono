@@ -668,6 +668,80 @@ if auraHandlers and #auraHandlers > 0 then
     "adrenalineRush.up=" .. tostring(Tuono.State.buffs.adrenalineRush.up))
 end
 
+-- ===========================================================================
+-- INTERVAL MODEL: the secret-agnostic core
+-- ===========================================================================
+-- The invariant that matters is not accuracy, it is HONESTY: the true value must
+-- always lie inside [lo, hi]. A point estimate can be wrong; an interval can only be
+-- wide. Everything else here follows from that.
+scenario.energySecret = true
+scenario.cooldownSecret = false
+Tuono.Energy.intervalSeeded = false
+Tuono.Energy.lo, Tuono.Energy.hi = 0, 0
+
+-- Outlaw ladder: Blade Flurry 15, RtB/BtE 25, Dispatch 35, Pistol Shot 40, SS/KS 45,
+-- Ambush 50. At 42 the oracle can afford 40 but not 45.
+scenario.energy = 42
+Tuono.Energy.Observe()
+local lo, hi = Tuono.Energy.Interval()
+check("interval brackets the true value from both sides",
+  lo and hi and lo <= 42 and 42 < hi,
+  "got [" .. tostring(lo) .. "," .. tostring(hi) .. ") for true value 42")
+
+check("affordability is three-valued, not a guess",
+  Tuono.Energy.AffordState(40) == "yes"
+    and Tuono.Energy.AffordState(45) == "no"
+    and Tuono.Energy.AffordState(43) == "maybe",
+  "40=" .. Tuono.Energy.AffordState(40)
+    .. " 45=" .. Tuono.Energy.AffordState(45)
+    .. " 43=" .. Tuono.Energy.AffordState(43))
+
+-- A THRESHOLD CROSSING IS AN EXACT MEASUREMENT. Going from "cannot afford 45" to
+-- "can afford 45" means energy passed exactly 45 at that instant -- the tightest
+-- observation available anywhere, and it needs no cooperation from Blizzard.
+scenario.energy = 44
+Tuono.Energy.Observe()
+scenario.energy = 46
+Tuono.Energy.Observe()
+local elo, ehi = Tuono.Energy.Interval()
+check("crossing a cost threshold collapses the interval to that exact value",
+  elo and ehi and elo <= 45 and ehi <= 46 and (ehi - elo) <= 1,
+  "got [" .. tostring(elo) .. "," .. tostring(ehi) .. ") after crossing 45")
+
+-- TIME WIDENS, OBSERVATION TIGHTENS. Without new information the interval must grow,
+-- never stay artificially tight.
+local beforeW = select(2, Tuono.Energy.Interval()) - select(1, Tuono.Energy.Interval())
+clock = clock + 1.0
+Tuono.Energy.Advance()
+local a, b = Tuono.Energy.Interval()
+check("elapsed time widens the interval rather than pretending to precision",
+  (b - a) >= beforeW,
+  "width " .. tostring(beforeW) .. " -> " .. tostring(b - a))
+
+-- SECRET-AGNOSTIC: remove the oracle entirely. Nothing should branch on "is energy
+-- hidden" -- the interval simply stops being tightened and every answer degrades to
+-- "maybe", which the rotation treats as passable and the UI renders as uncertain.
+local savedUsable = _G.C_Spell.IsSpellUsable
+_G.C_Spell.IsSpellUsable = nil
+Tuono.Energy.intervalSeeded = false
+local ok = Tuono.Energy.Observe()
+check("losing the oracle degrades gracefully instead of erroring",
+  ok == false, "Observe returned " .. tostring(ok))
+check("with no observations at all, every answer is 'maybe'",
+  Tuono.Energy.AffordState(45) == "maybe",
+  "got " .. Tuono.Energy.AffordState(45))
+_G.C_Spell.IsSpellUsable = savedUsable
+
+-- And the rotation still produces a sequence with no energy information whatsoever,
+-- driven by cooldowns and combo points alone.
+scenario.cdActive = {}
+scenario.comboPoints = 0
+tick(0.1)
+local blind = Tuono.Rotation.Predict(Tuono.State, 4)
+check("rotation still works with zero energy information",
+  blind and #blind >= 1,
+  "got " .. tostring(blind and #blind) .. " steps")
+
 print("")
 print(string.format("SECRETS REGRESSION: %d passed, %d failed", results.passed, results.failed))
 os.exit(results.failed == 0 and 0 or 1)

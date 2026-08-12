@@ -234,6 +234,175 @@ for _, evt in ipairs({ "TRAIT_CONFIG_UPDATED", "SPELLS_CHANGED", "PLAYER_SPECIAL
 	end)
 end
 
+-- ============================================================================
+-- INTERVAL STATE  --  the secret-agnostic core
+-- ============================================================================
+-- The point estimate above is retained for compatibility, but this is the real model.
+--
+-- A single number for a hidden value is a lie with a decimal point on it. Carry an
+-- INTERVAL instead: energy is somewhere in [lo, hi). Time WIDENS it (regen is itself
+-- only known within bounds); observations TIGHTEN it. The interval can never be wrong,
+-- only wide -- and "wide" is a state the UI can render honestly.
+--
+-- Nothing here asks WHICH values are secret. Feed it whatever observations exist and
+-- it tightens; starve it and it widens to [0, max] and the rotation falls back to
+-- cooldown-driven logic on its own. That is what makes it secret-agnostic: no branch
+-- anywhere says "if energy is hidden then". Blizzard can hide or unhide anything and
+-- the only consequence is interval width.
+--
+-- THRESHOLD EDGES ARE EXACT MEASUREMENTS.
+-- IsSpellUsable's insufficientPower flag flips at the moment energy crosses that
+-- ability's cost. Outlaw's ladder is 15/25/35/40/45/50, so there are six tripwires
+-- across the range. A flip from unaffordable to affordable means energy passed exactly
+-- that cost, at that instant -- lo == hi == cost. This is the same idea as the Feral
+-- "Waiting for Energy" sentinel, except it exists for every spec and needs no
+-- cooperation from Blizzard's rotation table.
+--
+-- AND TWO EDGES SOLVE REGEN.
+-- Between two upward crossings with a known spend ledger, everything but the rate is
+-- observed: regen = (cost2 - cost1 + spent) / dt. That retires the haste read (secret
+-- since 12.0.5) and the Combat Potency guess in one move.
+-- ============================================================================
+
+E.lo = 0
+E.hi = 0
+E.intervalSeeded = false
+
+-- Regen carried as an interval too, because it is inferred rather than read. Seeded
+-- wide enough to cover unhasted-no-procs through Adrenaline-Rush-with-haste, then
+-- narrowed by measurement.
+E.regenLo = 8
+E.regenHi = 40
+
+local lastUsable = {}          -- spellID -> insufficientPower on the previous sample
+local lastEdge = nil           -- { cost, at, spentSince }
+
+function Tuono.Energy.Interval()
+	if not E.intervalSeeded then return nil, nil end
+	return E.lo, E.hi
+end
+
+-- Three-valued affordability. This, not a number, is what the rotation actually needs.
+--   "yes"   -- provably affordable
+--   "no"    -- provably not
+--   "maybe" -- the interval straddles the cost; say so rather than guessing
+-- Bounds are INCLUSIVE: energy is in [lo, hi].
+function Tuono.Energy.AffordState(cost)
+	if not cost or cost <= 0 then return "yes" end
+	if not E.intervalSeeded then return "maybe" end
+	if E.lo >= cost then return "yes" end
+	if E.hi < cost then return "no" end
+	return "maybe"
+end
+
+local function widen(dt)
+	if not E.intervalSeeded then return end
+	local cap = E.max > 0 and E.max or 100
+	E.lo = math.min(cap, E.lo + E.regenLo * dt)
+	E.hi = math.min(cap, E.hi + E.regenHi * dt)
+end
+
+local function debit(cost)
+	if not E.intervalSeeded then return end
+	E.lo = math.max(0, E.lo - cost)
+	E.hi = math.max(0, E.hi - cost)
+	if lastEdge then lastEdge.spentSince = (lastEdge.spentSince or 0) + cost end
+end
+
+-- Intersect the interval with an observed bound. This is the only thing that ever
+-- makes the estimate tighter.
+local function intersect(lo, hi)
+	local cap = E.max > 0 and E.max or 100
+	if not E.intervalSeeded then
+		E.lo, E.hi = lo or 0, hi or cap
+		E.intervalSeeded = true
+		return
+	end
+	if lo and lo > E.lo then E.lo = lo end
+	if hi and hi < E.hi then E.hi = hi end
+	-- A contradiction means an assumption broke (a cost changed under us, a proc made
+	-- something free). Trust the fresh observation and reset the width around it
+	-- rather than carrying an impossible interval forward.
+	if E.lo > E.hi then
+		E.lo = lo or 0
+		E.hi = math.max(E.lo, hi or cap)
+	end
+end
+
+-- Record an exact crossing and, if we have a previous one, solve for regen.
+local function recordEdge(cost, now)
+	if lastEdge and lastEdge.cost then
+		local dt = now - lastEdge.at
+		if dt >= 0.3 and dt <= 20 then
+			local rate = (cost - lastEdge.cost + (lastEdge.spentSince or 0)) / dt
+			if rate >= 3 and rate <= 60 then
+				-- Converge the regen interval on the measurement rather than replacing
+				-- it outright: one sample can be distorted by an unobserved proc.
+				E.regenLo = E.regenLo + (rate - E.regenLo) * 0.35
+				E.regenHi = E.regenHi + (rate - E.regenHi) * 0.35
+				if E.regenLo > E.regenHi then E.regenLo, E.regenHi = E.regenHi, E.regenLo end
+				-- Keep a floor of uncertainty; a perfectly known rate is another lie.
+				local mid = (E.regenLo + E.regenHi) / 2
+				E.regenLo = math.min(E.regenLo, mid - 0.5)
+				E.regenHi = math.max(E.regenHi, mid + 0.5)
+				E.regenSamples = (E.regenSamples or 0) + 1
+				E.measuredRegen = mid
+			end
+		end
+	end
+	lastEdge = { cost = cost, at = now, spentSince = 0 }
+	E.anchors = (E.anchors or 0) + 1
+end
+
+-- Sample every costing ability and fold the result into the interval.
+function Tuono.Energy.Observe()
+	if not (C_Spell and C_Spell.IsSpellUsable) then return false end
+	local now = GetTime()
+	local lo, hi = nil, nil
+	local sawAny = false
+
+	for _, spellID in ipairs(costingSpellList()) do
+		local cost = energyCostOf(spellID)
+		if cost then
+			local ok, usable, insufficient = pcall(C_Spell.IsSpellUsable, spellID)
+			if ok then
+				local isUsable = Tuono.readBool(usable)
+				local noPower = Tuono.readBool(insufficient)
+
+				-- BOTH BOUNDS ARE INCLUSIVE: energy is in [lo, hi].
+				-- insufficientPower at cost c proves energy < c, so the inclusive upper
+				-- bound is c-1, NOT c. Storing c made AffordState(c) answer "maybe" when
+				-- it could prove "no" -- off by exactly one, in the direction that
+				-- discards information. Energy is integral, so c-1 is exact.
+				if noPower == true then
+					sawAny = true
+					local bound = cost - 1
+					if hi == nil or bound < hi then hi = bound end
+				elseif isUsable == true then
+					sawAny = true
+					if lo == nil or cost > lo then lo = cost end
+				end
+
+				-- EDGE: unaffordable last sample, affordable now => energy just crossed
+				-- this exact cost. The tightest observation available anywhere, and it
+				-- collapses the interval to a single value.
+				local was = lastUsable[spellID]
+				if was == true and noPower == false then
+					intersect(cost, cost)
+					recordEdge(cost, now)
+				end
+				if noPower ~= nil then lastUsable[spellID] = noPower end
+			end
+		end
+	end
+
+	if not sawAny then return false end
+	intersect(lo, hi)
+	E.driftSeconds = 0
+	E.lastSyncAt = now
+	return true
+end
+
 -- Returns lower, upper (either may be nil when no ability constrains that side).
 function Tuono.Energy.Bracket()
 	if not (C_Spell and C_Spell.IsSpellUsable) then return nil, nil end
@@ -447,6 +616,11 @@ function Tuono.Energy.TrySync()
 		E.confidence = "measured"
 		E.lastSyncAt = GetTime()
 		E.driftSeconds = 0
+		-- A DIRECT READ IS THE TIGHTEST POSSIBLE OBSERVATION: collapse the interval onto
+		-- it. Without this the interval ignored the one case where we actually know the
+		-- answer exactly, and every affordability question stayed "maybe" out of combat.
+		E.lo, E.hi = cur, cur
+		E.intervalSeeded = true
 		return true
 	end
 	return false
@@ -495,7 +669,13 @@ function Tuono.Energy.Advance()
 	-- Throttled here rather than inside ApplyBracket: this is the only caller that wants
 	-- rate limiting. Usability is event-driven (SPELL_UPDATE_USABLE et al reset the
 	-- timer), so this is a safety poll, not the primary trigger.
+	-- Interval model: widen by elapsed time, then tighten on observation.
+	if last > 0 then
+		local dt = now - last
+		if dt > 0 and dt <= 5 then widen(dt) end
+	end
 	if Tuono.Energy.BracketIsDue() then
+		pcall(Tuono.Energy.Observe)
 		pcall(Tuono.Energy.ApplyBracket)
 	end
 
@@ -520,6 +700,8 @@ function Tuono.Energy.OnCast(spellID)
 		local opp = Tuono.State and Tuono.State.buffs and Tuono.State.buffs.opportunity
 		if opp and opp.up then cost = 0 end
 	end
+
+	debit(cost)
 
 	if E.confidence ~= "unknown" then
 		E.value = math.max(0, E.value - cost)
