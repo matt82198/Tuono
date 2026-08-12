@@ -606,6 +606,68 @@ check("a zero-cost reveal does not anchor",
   Tuono.Energy.confidence ~= "anchored",
   "conf=" .. tostring(Tuono.Energy.confidence))
 
+-- ===========================================================================
+-- UNIT_AURA payload is secret in combat  (reported from a live 12.1.0 client)
+-- ===========================================================================
+-- `if updateInfo.isFullUpdate then` is a BOOLEAN TEST ON A SECRET, which raises.
+-- OnUnitAura runs inside Tuono.safe, so the throw was swallowed and the whole Tier-1
+-- delta path died silently on every aura event in combat -- the same failure shape as
+-- the IsAvailable() freeze. Nothing looked broken; buffs simply stopped updating.
+--
+-- HARNESS LIMIT, STATED PLAINLY: Lua has no metamethod for a truthiness test, so this
+-- stub CANNOT make `if secretValue then` raise the way the real client does. Mutation
+-- testing confirms it: reinstating the raw boolean test leaves three of the four
+-- assertions below green. Only the fully-secret-payload case is genuinely sensitive
+-- (indexing a secret table DOES raise, and that we can emulate).
+--
+-- So treat these as verifying that the guards exist and that absent is distinguished
+-- from secret -- not as proof the client's throw is handled. That proof only comes
+-- from the live client, which is where this bug was found in the first place.
+local auraHandlers = Tuono.eventHandlers and Tuono.eventHandlers["UNIT_AURA"]
+check("UNIT_AURA has a registered handler to exercise",
+  auraHandlers and #auraHandlers > 0, "no UNIT_AURA handler")
+
+if auraHandlers and #auraHandlers > 0 then
+  local fire = function(payload)
+    for _, h in ipairs(auraHandlers) do pcall(h, "UNIT_AURA", "player", payload) end
+  end
+
+  -- A secret isFullUpdate must degrade cleanly, not throw and not corrupt state.
+  Tuono.State.buffs.degraded = false
+  fire({ isFullUpdate = secret() })
+  check("secret isFullUpdate degrades instead of throwing",
+    Tuono.State.buffs.degraded == true,
+    "degraded=" .. tostring(Tuono.State.buffs.degraded))
+
+  -- A wholly secret payload: even INDEXING it throws, so the guard must come first.
+  Tuono.State.buffs.degraded = false
+  fire(secret())
+  check("a fully secret payload degrades instead of throwing",
+    Tuono.State.buffs.degraded == true,
+    "degraded=" .. tostring(Tuono.State.buffs.degraded))
+
+  -- Secret ARRAYS: ipairs and # both throw on one.
+  Tuono.State.buffs.degraded = false
+  fire({ addedAuras = secret(), removedAuraInstanceIDs = secret() })
+  check("secret delta arrays degrade instead of throwing",
+    Tuono.State.buffs.degraded == true,
+    "degraded=" .. tostring(Tuono.State.buffs.degraded))
+
+  -- REGRESSION GUARD: absent is NOT secret. An ordinary delta omits isFullUpdate, and
+  -- treating that omission as unreadable killed every normal aura update -- which is
+  -- exactly what the first version of this fix did.
+  Tuono.State.buffs.degraded = false
+  Tuono.State.buffs.adrenalineRush.up = false
+  fire({ addedAuras = { {
+    auraInstanceID = 4242,
+    spellId = Tuono.SpellIDs.adrenalineRush,
+    expirationTime = GetTime() + 20,
+  } } })
+  check("an ordinary delta (no isFullUpdate) still applies",
+    Tuono.State.buffs.adrenalineRush.up == true,
+    "adrenalineRush.up=" .. tostring(Tuono.State.buffs.adrenalineRush.up))
+end
+
 print("")
 print(string.format("SECRETS REGRESSION: %d passed, %d failed", results.passed, results.failed))
 os.exit(results.failed == 0 and 0 or 1)

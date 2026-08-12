@@ -262,20 +262,80 @@ local function BootstrapBuffState()
 end
 
 -- TIER 1: Process UNIT_AURA delta payload (updateInfo structure)
+-- Read one field off a possibly-secret table. INDEXING a secret table throws, so even
+-- getting at the field has to be protected -- a plain `t.k` is not safe here.
+-- Returns (value, ok). ok=false means "could not read", never "the value was false".
+local function safeField(t, k)
+	local ok, v = pcall(function() return t[k] end)
+	if not ok then return nil, false end
+	return v, true
+end
+
+-- Iterate a possibly-secret array safely. ipairs and # both throw on a secret table,
+-- so the iteration itself is protected and a failure yields nothing rather than
+-- exploding the caller.
+local function safeEach(arr, fn)
+	if arr == nil then return true end
+	if Tuono.isSecret(arr) then return false end
+	return pcall(function()
+		for _, v in ipairs(arr) do fn(v) end
+	end)
+end
+
 local function ProcessAuraDelta(updateInfo)
 	if not updateInfo then return end
 
 	local now = GetTime()
 
-	-- isFullUpdate: rebuild map + Tier 2
-	if updateInfo.isFullUpdate then
-		BootstrapBuffState()
+	-- THE WHOLE UNIT_AURA PAYLOAD GOES SECRET IN COMBAT (confirmed in-game, 12.1.0:
+	-- isFullUpdate reads as a secret). This mattered far more than it looks:
+	--
+	--   `if updateInfo.isFullUpdate then`
+	--
+	-- is a BOOLEAN TEST ON A SECRET, which raises immediately. OnUnitAura runs inside
+	-- Tuono.safe, so the throw was swallowed and the entire Tier-1 delta path silently
+	-- died on every aura event in combat -- the exact same failure shape as the
+	-- IsAvailable() freeze in AssistReader. Nothing looked broken; buffs just never
+	-- updated.
+	--
+	-- Indexing a secret TABLE throws too, so the field read is protected as well as
+	-- the test.
+	if Tuono.isSecret(updateInfo) then
+		Tuono.State.buffs.degraded = true
 		return
 	end
 
-	-- removedAuraInstanceIDs: clear mapped state + remove from map
-	if updateInfo.removedAuraInstanceIDs then
-		for _, instanceID in ipairs(updateInfo.removedAuraInstanceIDs) do
+	local rawFull, gotFull = safeField(updateInfo, "isFullUpdate")
+	if not gotFull then
+		Tuono.State.buffs.degraded = true
+		return
+	end
+
+	-- ABSENT IS NOT SECRET. A normal delta payload simply omits isFullUpdate, and
+	-- readBool reports nil as "not known" -- which is correct for a secret but wrong
+	-- here. Bailing on absence killed every ordinary delta, which is the same
+	-- unknown-vs-missing conflation this file keeps having to unlearn.
+	if rawFull == nil then
+		-- omitted => this is a delta, not a rebuild. Fall through.
+	elseif Tuono.isSecret(rawFull) then
+		-- Genuinely unreadable: we cannot tell a rebuild from a delta, and applying a
+		-- delta to a map that may have just been invalidated would corrupt state.
+		-- Refuse, and let the out-of-combat bootstrap re-establish the truth.
+		Tuono.State.buffs.degraded = true
+		return
+	else
+		local isFull = Tuono.readBool(rawFull)
+		if isFull then
+			BootstrapBuffState()
+			return
+		end
+	end
+
+	-- removedAuraInstanceIDs: clear mapped state + remove from map.
+	-- Walked through safeEach: ipairs and # both throw on a secret table, and any of
+	-- these three arrays can be secret independently of the payload as a whole.
+	local removed = safeField(updateInfo, "removedAuraInstanceIDs")
+	if not safeEach(removed, function(instanceID)
 			local key = instanceMap[instanceID]
 			if key == "adrenalineRush" then
 				Tuono.State.buffs.adrenalineRush.up = false
@@ -293,12 +353,13 @@ local function ProcessAuraDelta(updateInfo)
 				Tuono.State.stealthed = false
 			end
 			instanceMap[instanceID] = nil
-		end
+		end) then
+		Tuono.State.buffs.degraded = true
 	end
 
 	-- addedAuras: match by spellId (readable-first check) or correlation
-	if updateInfo.addedAuras then
-		for _, auraData in ipairs(updateInfo.addedAuras) do
+	local added = safeField(updateInfo, "addedAuras")
+	if not safeEach(added, function(auraData)
 			local instanceID = Tuono.num(auraData.auraInstanceID, 0)
 			if instanceID > 0 then
 				-- Try to read spellId (not secret)
@@ -356,20 +417,27 @@ local function ProcessAuraDelta(updateInfo)
 					end
 				end
 			end
-		end
+		end) then
+		Tuono.State.buffs.degraded = true
 	end
 
 	-- updatedAuraInstanceIDs: refresh mapped entries via GetAuraDataByAuraInstanceID
-	if updateInfo.updatedAuraInstanceIDs then
-		if C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID then
-			for _, instanceID in ipairs(updateInfo.updatedAuraInstanceIDs) do
+	local updated = safeField(updateInfo, "updatedAuraInstanceIDs")
+	if C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID then
+		if not safeEach(updated, function(instanceID)
 				if instanceMap[instanceID] then
-					local aura = C_UnitAuras.GetAuraDataByAuraInstanceID("player", instanceID)
-					if aura then
-						Tuono.State.buffs[instanceMap[instanceID]].expires = Tuono.num(aura.expirationTime, now)
+					-- 12.1.0: the by-instance-ID path RAISES while auras are restricted,
+					-- rather than returning a secret. pcall, not a nil check.
+					local okA, aura = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, "player", instanceID)
+					if okA and aura then
+						local exp = Tuono.readNum(aura.expirationTime)
+						if exp then
+							Tuono.State.buffs[instanceMap[instanceID]].expires = exp
+						end
 					end
 				end
-			end
+			end) then
+			Tuono.State.buffs.degraded = true
 		end
 	end
 end
