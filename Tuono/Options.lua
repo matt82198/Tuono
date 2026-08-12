@@ -246,7 +246,11 @@ end
 function O.Build()
 	if O.panel then return O.panel end
 
-	local p = CreateFrame("Frame", "OutlawAssistOptions", UIParent)
+	-- Named TuonoOptionsFrame, not OutlawAssistOptions. The word-boundary rename missed
+	-- this because the old name is concatenated -- and it matters more than cosmetics:
+	-- the migration requires the OLD addon to still be installed for one login, so a
+	-- stale global name is a live collision with the very addon we are migrating from.
+	local p = CreateFrame("Frame", "TuonoOptionsFrame", UIParent)
 	p:SetSize(PANEL_W, PANEL_H)
 	p:SetPoint("CENTER")
 	p:SetMovable(true)
@@ -254,6 +258,9 @@ function O.Build()
 	p:RegisterForDrag("LeftButton")
 	p:SetScript("OnDragStart", function(self) self:StartMoving() end)
 	p:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
+	-- Escape should close it, and it should not be draggable off-screen permanently.
+	if p.SetClampedToScreen then p:SetClampedToScreen(true) end
+	if _G.UISpecialFrames then table.insert(_G.UISpecialFrames, "TuonoOptionsFrame") end
 	p:Hide()
 
 	local bg = p:CreateTexture(nil, "BACKGROUND")

@@ -69,7 +69,7 @@ function Tuono.RequestImmediateUpdate()
 end
 
 function Tuono.print(msg)
-  print("|cff00ccffOutlawAssist|r: " .. tostring(msg))
+  print("|cff00ccffTuono|r: " .. tostring(msg))
 end
 
 function Tuono.safe(fn, ...)

@@ -140,8 +140,15 @@ Tuono.RegisterEvent("PLAYER_LOGIN", function()
 	if type(carried) == "table" and #carried > 0 then
 		Tuono.print("Imported your " .. LEGACY_NAME .. " settings (" ..
 			table.concat(carried, ", ") .. ").")
-		Tuono.print("You can now delete the old Interface/AddOns/" .. LEGACY_NAME ..
-			" folder.")
+		Tuono.print("|cffffcc00Both addons are loaded right now, so you are seeing TWO " ..
+			"bars.|r Disable or delete Interface/AddOns/" .. LEGACY_NAME ..
+			" and /reload -- the import is done and will not run again.")
+	elseif Tuono.dbWasFresh and type(_G[LEGACY_GLOBAL]) == "table" then
+		-- Old addon is loaded and has data, but nothing was carried. Either it was
+		-- already migrated or the keys did not match. Say so rather than staying silent,
+		-- because the user is looking at two bars and deserves to know why.
+		Tuono.print("Found " .. LEGACY_NAME .. " but imported nothing (already migrated, " ..
+			"or no recognised settings). Safe to remove the old folder.")
 	end
 	-- Silent otherwise. A fresh install with no old addon present is the normal
 	-- first-run path; a "could not migrate" warning there would be pure noise.
