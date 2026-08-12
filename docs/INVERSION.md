@@ -102,8 +102,8 @@ local function recordEdge(cost, now) ... end
 
 The residual error is no longer the bin width. It is `r · δt`, where `δt` is the sampling
 interval — how long the flip can sit unnoticed. At a 0.1s poll and ~12/sec regen that is
-about 1.2, against a bin width of 5–10. Poll faster, measure better. Observed interval
-width in live play settles around **0.5**.
+about 1.2, against a bin width of 5–10. Poll faster, measure better. Measured across 94 in-combat
+ticks: mean width 7.1, and 0 at each crossing.
 
 ---
 

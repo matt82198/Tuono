@@ -141,7 +141,55 @@ local function arActive()
 	return GetTime() < (E.arUntil or 0)
 end
 
+-- ============================================================================
+-- THE CLIENT WILL JUST TELL YOU THE REGEN RATE
+-- ============================================================================
+-- GetPowerRegenForPowerType returns energy per second directly. Measured live at
+-- 13.7257 against a modelled 13.4 (10 base x 1.183 haste + 2.5 Combat Potency) -- close,
+-- but "close" was three separate guesses stacked: a haste read that goes secret, a base
+-- rate assumed from tooltips, and a stochastic proc averaged into a constant.
+--
+-- This was found by reading MaxDps, a live 12.x rotation addon, which calls it. It is the
+-- lesson of the whole project restated: the readable API surface is larger than anyone
+-- assumes, and the only way to know is to probe it rather than infer it from what broke.
+--
+-- IT IS STILL TREATED AS AN OBSERVATION, NOT AS TRUTH. The probe that found it readable
+-- ran OUT OF COMBAT, and the whole family of stat reads around it (GetHaste,
+-- UnitSpellHaste, UnitAttackSpeed) carry SecretWhenUnitStatsRestricted and vanish under
+-- restriction. So it goes through readNum like everything else: when it answers, it wins;
+-- when it does not, the modelled rate below carries on. No branch asks whether it is
+-- secret -- it either produced a number or it did not.
+local function readClientRegen()
+	local fn = _G.GetPowerRegenForPowerType
+	local ptype = (Enum and Enum.PowerType and Enum.PowerType.Energy) or 3
+	if type(fn) ~= "function" then
+		fn = _G.GetPowerRegen
+		if type(fn) ~= "function" then return nil end
+		local ok, base = pcall(fn)
+		if not ok then return nil end
+		return Tuono.readNum(base)
+	end
+	local ok, rate = pcall(fn, ptype)
+	if not ok then return nil end
+	local n = Tuono.readNum(rate)
+	-- Plausibility gate, same reasoning as the crossing solve: a value outside physical
+	-- bounds means an assumption broke, and a broken assumption must not reach the model.
+	if n and n >= 3 and n <= 100 then
+		E.clientRegen = n
+		E.clientRegenAt = GetTime()
+		return n
+	end
+	return nil
+end
+Tuono.Energy.ReadClientRegen = readClientRegen
+
 function Tuono.Energy.RegenPerSecond()
+	-- Adrenaline Rush is applied on top either way: the client's figure is the CURRENT
+	-- rate, so if AR is already up it is included and must not be multiplied again. Only
+	-- the modelled path needs the multiplier.
+	local direct = readClientRegen()
+	if direct then return direct end
+
 	local rate = BASE_REGEN * readHasteMultiplier()
 	if arActive() then
 		rate = rate * AR_REGEN_MULTIPLIER
@@ -301,8 +349,38 @@ function Tuono.Energy.AffordState(cost)
 	return "maybe"
 end
 
+-- Seed the regen INTERVAL from the client's own figure when it is readable.
+--
+-- Width is driven almost entirely by (regenHi - regenLo)·dt, so the [8, 40] prior is what
+-- makes the estimate coarse between observations. A direct read collapses that.
+--
+-- The band around it is deliberately ASYMMETRIC. GetPowerRegenForPowerType reports the
+-- steady regen rate; Combat Potency delivers energy in stochastic off-hand procs on top of
+-- it. Procs only ever ADD, so the honest band is a little below the reported rate and up to
+-- one Combat Potency average above it. Centring symmetrically would let the lower bound
+-- exceed the truth during a proc drought -- and a lower bound above the truth is the one
+-- error that breaks soundness permanently (see the doc: docs/INVERSION.md §6).
+local function refreshRegenBounds()
+	local direct = readClientRegen()
+	if not direct then return end
+	local lo = direct - 0.5
+	local hi = direct + COMBAT_POTENCY_AVG + 0.5
+	if arActive() then
+		-- If AR came up between the read and now, the reported rate may predate it. Widen
+		-- upward rather than assume; the buff is worth up to +75%.
+		hi = math.max(hi, direct * AR_REGEN_MULTIPLIER + COMBAT_POTENCY_AVG)
+	end
+	-- Only ever tighten toward the read; never widen a band that measurement has already
+	-- narrowed via recordEdge.
+	if lo > E.regenLo then E.regenLo = lo end
+	if hi < E.regenHi then E.regenHi = hi end
+	if E.regenLo > E.regenHi then E.regenLo, E.regenHi = lo, hi end
+	E.regenSource = "client"
+end
+
 local function widen(dt)
 	if not E.intervalSeeded then return end
+	refreshRegenBounds()
 	local cap = E.max > 0 and E.max or 100
 	E.lo = math.min(cap, E.lo + E.regenLo * dt)
 	E.hi = math.min(cap, E.hi + E.regenHi * dt)

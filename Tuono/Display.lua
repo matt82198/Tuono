@@ -111,6 +111,37 @@ local function bindingNameForSlot(slot)
 	return nil
 end
 
+-- GetActionInfo, secret-safe.
+--
+-- Every tier below compares actionID against a spellID. Under Midnight an unreadable
+-- actionID makes that comparison RAISE, and GetKeybindText is called from inside the
+-- render loop with nothing between it and the icon strip -- so one secret action slot
+-- takes out the rest of the frame's rendering, including the keybinds on every icon after
+-- it. Which is exactly the reported symptom: bindings "not showing appropriately at all".
+--
+-- Read it through the tri-state primitives and treat unreadable as "no match here", not as
+-- an error and not as a match. Skipping one slot costs at most one keybind; raising costs
+-- the whole display.
+local function safeActionInfo(slot)
+	if not GetActionInfo then return nil, nil end
+	local ok, actionType, actionID = pcall(GetActionInfo, slot)
+	if not ok then return nil, nil end
+	if Tuono.isSecret(actionType) then actionType = nil end
+	local id = Tuono.readNum(actionID)
+	if type(actionType) ~= "string" then actionType = nil end
+	return actionType, id
+end
+
+local function actionMatches(actionType, actionID, spellID)
+	if not actionType or not actionID then return false end
+	if actionType ~= "spell" and actionType ~= "talent" and actionType ~= "action" then
+		return false
+	end
+	if actionID == spellID then return true end
+	local ok, matched = pcall(Tuono.SpellMatchesAction, spellID, actionID)
+	return ok and matched or false
+end
+
 local function GetKeybindText(spellID)
 	if not spellID then return nil end
 
@@ -157,10 +188,8 @@ local function GetKeybindText(spellID)
 	if not foundKey and GetActionInfo then
 		for i = 1, 12 do
 			local slot = CurrentMainBarSlot(i)
-			local actionType, actionID = GetActionInfo(slot)
-			local matches = (actionType == "spell" or actionType == "talent" or actionType == "action")
-				and ((Tuono.SpellMatchesAction and Tuono.SpellMatchesAction(spellID, actionID)) or actionID == spellID)
-			if matches then
+			local actionType, actionID = safeActionInfo(slot)
+			if actionMatches(actionType, actionID, spellID) then
 				local bindingName = bindingNameForSlot(slot)
 				if bindingName and GetBindingKey then
 					local key = GetBindingKey(bindingName)
@@ -178,10 +207,8 @@ local function GetKeybindText(spellID)
 	-- Override-aware for the same reason as TIER 2.
 	if not foundKey and GetActionInfo then
 		for slot = 1, 120 do
-			local actionType, actionID, _ = GetActionInfo(slot)
-			local matches = (actionType == "spell" or actionType == "talent" or actionType == "action")
-				and ((Tuono.SpellMatchesAction and Tuono.SpellMatchesAction(spellID, actionID)) or actionID == spellID)
-			if matches then
+			local actionType, actionID = safeActionInfo(slot)
+			if actionMatches(actionType, actionID, spellID) then
 			local bindingName = bindingNameForSlot(slot)
 
 				if bindingName and GetBindingKey then

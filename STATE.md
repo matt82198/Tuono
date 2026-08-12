@@ -37,18 +37,19 @@ README and `docs/SECRET-VALUES-FINDINGS.md`.
    in slot 4; one gated on hidden aura state is uncertain in slot 1. Provenance is
    per-input, never a global "degraded" flag — and it must survive into the simulator's
    scratch state, or every predicted step inherits the worst case.
-8. **The length of the queue is a signal.** The lookahead stops at the first step whose
+6. **The length of the queue is a signal.** The lookahead stops at the first step whose
    provenance is `unknown`. One icon is too little to react to; four icons where the
    fourth is a guess is worse than none.
-6. **One rotation on the bar.** Blizzard's pick is a sensor, never an icon.
-7. **The gate is not overridden.** `secret_scan.py --staged` before every push; a false
+7. **One rotation on the bar.** Blizzard's pick is a sensor, never an icon.
+8. **The gate is not overridden.** `secret_scan.py --staged` before every push; a false
    positive is fixed in the code, not waived.
 
 ## Live-validated (12.1.0 client, via flight recorder)
 
 - Position 1 reads as **optimal** in play. The substrate works.
-- Energy interval holds to **~0.5** width: `[50.89, 51.39]` on a value the client refuses
-  to return. Saturates correctly at 100.
+- Energy interval: **mean width 7.13, max 103** across 94 in-combat ticks, with exact
+  0-width pins at every threshold crossing (`bracketed` on 71 of 94). The `~0.5` figure
+  quoted earlier was one cherry-picked sample, not the distribution.
 - Energy is **SECRET even out of combat in the open world** — the predicate has no
   restriction gate.
 - `UNIT_AURA` guards fire constantly: `full=SECRET` ×21, `full=INDEX_THREW` ×13 in one
@@ -58,27 +59,39 @@ README and `docs/SECRET-VALUES-FINDINGS.md`.
 
 ## NEXT STEPS (ranked)
 
-1. **The energy model is running open-loop.** The 23:12 trace never once reported
-   `measured` or `bracketed` — only `estimated` and `stale` — and the interval sat pinned
-   at `[100,100]` while the client raised "Not enough energy" 13 times and refused 28 of 32
-   Sinister Strike casts. The whole tightening mechanism is `IsSpellUsable` threshold
-   crossings, and not a single edge was recorded in ~100s of play. Find out why
-   `recordEdge` never fires: this is the single largest remaining source of bad advice.
-2. **Verify the range/target gate.** Still unverified. The 23:12 trace shows 3× "Target
+1. **RETRACTED — the energy model was never disconnected.** The previous entry here said
+   `recordEdge` never fires, "provably", from the 23:12 trace. That was wrong, and wrong in
+   an instructive way: it was read off the **last 13 ticks**, which land after the fight
+   ends, where `[100,100] stale` is the *correct* answer for a rested player. The next
+   trace showed `bracketed` on 71 of 94 ticks with exact 0-width pins at each crossing. The
+   real story was low excitation (4 casts in the whole run) — precisely the observability
+   caveat in `docs/INVERSION.md` §9. The reader now prints a source histogram and interval
+   width over ALL ticks before showing the tail, so this misreading is not repeatable.
+2. **Is the stat family readable IN COMBAT?** `GetPowerRegenForPowerType` (13.7257),
+   `GetHaste`, `UnitSpellHaste`, `UnitAttackSpeed` and `UnitPowerDisplayMod` all returned
+   plain numbers — but only in probes taken out of combat, and that whole family carries
+   `SecretWhenUnitStatsRestricted`. The recorder now re-probes on `PLAYER_REGEN_DISABLED`.
+   If regen survives restriction it replaces the two-crossing solve outright; if it does
+   not, it is still a far better out-of-combat seed than the `[8,40]` prior.
+3. **Widget read-back is CLOSED, measured.** A secret energy value fed to a `StatusBar` and
+   a `FontString` came back `SECRET` from both getters. The `Cooldown` path is still
+   inconclusive — out of combat the source cooldown is itself readable, so nothing was
+   laundered — hence the in-combat re-probe above.
+4. **Verify the range/target gate.** Still unverified. The 23:12 trace shows 3× "Target
    needs to be in front of you", 1× "You are facing the wrong way!".
-3. **Stage discriminators without auras.** Stage ≥2 → SS grants +1 CP (CP is readable);
+5. **Stage discriminators without auras.** Stage ≥2 → SS grants +1 CP (CP is readable);
    stage ≥3 → Restless Blades 1.3s/CP vs 1.0 (cooldowns are reconstructed). Collapses
    the stage within ~2 globals. 4-vs-3 differs only by crit and is unresolvable.
-4. **Learn the other three RtB stage auras.** IDs are in the profile from SimC; the
+6. **Learn the other three RtB stage auras.** IDs are in the profile from SimC; the
    learner confirms them from play and writes candidates to SavedVariables.
-5. **UI rework.** Default is 4 icons, self-truncating at the first `unknown` step, plus
+7. **UI rework.** Default is 4 icons, self-truncating at the first `unknown` step, plus
    the ready rail. The rail needs real design work; the escalation slot for
    defensives/interrupts is unbuilt.
-6. **SimC APL importer.** The rule schema is already APL-shaped. Blocked on nothing but
+8. **SimC APL importer.** The rule schema is already APL-shaped. Blocked on nothing but
    effort; value depends on how much of an imported APL is evaluable under secrets.
-7. **`C_RestrictedActions.IsAddOnRestrictionActive` returns CALL_FAILED** for all six
+9. **`C_RestrictedActions.IsAddOnRestrictionActive` returns CALL_FAILED** for all six
    contexts. Undiagnosed.
-8. **Tag a release.** Deliberately held until the above settles.
+10. **Tag a release.** Deliberately held until the above settles.
 
 ## Known limitations
 

@@ -183,6 +183,60 @@ local function tryUnusedReads()
 	return out
 end
 
+-- Keybinds went missing from the icons. There are four places that can fail and no way to
+-- tell them apart from the outside, so record all four per rotation ability:
+--   * C_ActionBar.FindSpellActionButtons returning nothing or raising
+--   * GetActionInfo returning a SECRET actionID (which makes the == comparison raise)
+--   * the slot -> binding-name mapping missing a bar
+--   * GetBindingKey itself coming back empty
+local function tryKeybinds()
+	local out = {}
+	local abilities = Tuono.Rotation and Tuono.Rotation.ABILITIES
+	if not abilities then return { error = "NO_ABILITIES" } end
+
+	-- Sample the raw action bar first: how many slots are even readable right now?
+	local readable, secretID, empty, raised = 0, 0, 0, 0
+	for slot = 1, 120 do
+		local ok, aType, aID = pcall(GetActionInfo, slot)
+		if not ok then raised = raised + 1
+		elseif aType == nil then empty = empty + 1
+		elseif Tuono.isSecret(aID) or Tuono.isSecret(aType) then secretID = secretID + 1
+		else readable = readable + 1 end
+	end
+	out.slots = { readable = readable, secret = secretID, empty = empty, raised = raised }
+
+	local n = 0
+	for spellID in pairs(abilities) do
+		if n < 8 then
+			n = n + 1
+			local row = {}
+			if C_ActionBar and C_ActionBar.FindSpellActionButtons then
+				local ok, buttons = pcall(C_ActionBar.FindSpellActionButtons, spellID)
+				if not ok then row.find = "RAISED"
+				elseif type(buttons) ~= "table" then row.find = "NOT_A_TABLE"
+				else
+					row.find = #buttons
+					if buttons[1] ~= nil then row.slot = obs(buttons[1]) end
+				end
+			else
+				row.find = "ABSENT"
+			end
+			if type(row.slot) == "number" and _G.GetBindingKey then
+				-- Mirror Display's mapping for the main 12 only; enough to tell whether the
+				-- binding lookup or the mapping is at fault.
+				local name = (row.slot >= 1 and row.slot <= 12) and ("ACTIONBUTTON" .. row.slot) or nil
+				row.bindingName = name or "UNMAPPED_HERE"
+				if name then
+					local okB, key = pcall(_G.GetBindingKey, name)
+					row.key = okB and (obs(key) or "NONE") or "RAISED"
+				end
+			end
+			out[tostring(spellID)] = row
+		end
+	end
+	return out
+end
+
 -- Ask the client what it considers secret, instead of inferring it from behaviour.
 local function trySecrecyPredicates()
 	local out = {}
@@ -315,6 +369,8 @@ function R.Probe()
 	p.unusedReads = okU and unused or "PROBE_RAISED"
 	local okS, secrecy = pcall(trySecrecyPredicates)
 	p.secrecyPredicates = okS and secrecy or "PROBE_RAISED"
+	local okK, keys = pcall(tryKeybinds)
+	p.keybinds = okK and keys or "PROBE_RAISED"
 
 	return p
 end
@@ -453,6 +509,30 @@ Tuono.RegisterEvent("PLAYER_REGEN_DISABLED", function()
 	push({ k = "combat", v = true })
 	-- Auto-start on first combat so a trace exists even if the user forgets.
 	if not recording and TuonoDiagDB and TuonoDiagDB.autoRecord then R.Start() end
+
+	-- RE-PROBE THE CHANNELS IN COMBAT. This is the only question that matters about them.
+	--
+	-- The start/stop probes both run out of combat, where GetHaste, UnitSpellHaste,
+	-- UnitAttackSpeed and GetPowerRegenForPowerType all return plain numbers -- which
+	-- proves nothing, because the whole family carries SecretWhenUnitStatsRestricted and
+	-- the restriction is exactly what combat turns on. A value that is readable at the
+	-- target dummy and secret in the pull is worse than one that is always secret, because
+	-- it invites a model built on a reading that evaporates when it is needed.
+	--
+	-- Same for the widget read-back: an out-of-combat cooldown is 0/0 and genuinely not
+	-- secret, so feeding it to a Cooldown frame tests nothing at all.
+	if recording then
+		local ok, unused = pcall(tryUnusedReads)
+		local okR, readBack = pcall(tryReadBack)
+		local okS, secrecy = pcall(trySecrecyPredicates)
+		push({
+			k = "probe", where = "combat-start",
+			unusedReads = ok and unused or "PROBE_RAISED",
+			readBack = okR and readBack or "PROBE_RAISED",
+			secrecyPredicates = okS and secrecy or "PROBE_RAISED",
+			keybinds = select(2, pcall(tryKeybinds)),
+		})
+	end
 end)
 Tuono.RegisterEvent("PLAYER_REGEN_ENABLED", function() push({ k = "combat", v = false }) end)
 

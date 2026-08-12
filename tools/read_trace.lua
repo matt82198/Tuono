@@ -87,15 +87,44 @@ local function showProbe(label, p)
         print(string.format("    %-24s %s", k, fmt(p.readBack[k])))
       end
     end
-    local leaked = {}
-    for k, v in pairs(p.readBack) do
-      if type(v) == "number" and not k:find("^source") then leaked[#leaked + 1] = k end
+    -- A readable number coming back out only means something if the value going IN was
+    -- secret. The first version of this check flagged any readable getter, and duly cried
+    -- leak on a cooldown probe taken out of combat where startTime/duration were a
+    -- perfectly readable 0/0 -- nothing was laundered because nothing was hidden.
+    local pairsToCheck = {
+      { src = "sourceDuration", got = "cooldownGetDuration", what = "Cooldown" },
+      { src = "sourceStart",    got = "cooldownGetTimes",    what = "Cooldown" },
+      { src = "sourceEnergy",   got = "statusBarGetValue",   what = "StatusBar" },
+      { src = "sourceEnergy",   got = "fontStringGetText",   what = "FontString" },
+    }
+    local leaked, tested, untested = {}, 0, {}
+    for _, c in ipairs(pairsToCheck) do
+      local src, got = p.readBack[c.src], p.readBack[c.got]
+      if got ~= nil then
+        if src ~= "SECRET" then
+          untested[#untested + 1] = c.what .. " (source was readable: " .. fmt(src) .. ")"
+        else
+          tested = tested + 1
+          local leakedHere = type(got) == "number" or type(got) == "string" and got ~= "SECRET"
+            and got ~= "RAISED" and got ~= "NO_WIDGET"
+          if type(got) == "table" then
+            leakedHere = false
+            for _, v in pairs(got) do if v ~= "SECRET" then leakedHere = true end end
+          end
+          if leakedHere then leaked[#leaked + 1] = c.what .. "." .. c.got end
+        end
+      end
     end
     if #leaked > 0 then
-      print("    !! " .. table.concat(leaked, ", ") .. " returned a READABLE number.")
-      print("       If the source was SECRET, that is an open declassification channel.")
-    else
-      print("    -> no readable number came back out; the taint rides through the widget.")
+      print("    !! LEAK: " .. table.concat(leaked, ", "))
+      print("       A SECRET went in and a readable value came out. Open channel.")
+    elseif tested > 0 then
+      print(string.format("    -> %d of %d widget path(s) tested with a genuinely SECRET input;",
+        tested, #pairsToCheck))
+      print("       every one returned SECRET. The taint rides through. Channel closed.")
+    end
+    for _, u in ipairs(untested) do
+      print("    -- inconclusive: " .. u .. "; re-probe in combat")
     end
   end
 
@@ -112,6 +141,29 @@ local function showProbe(label, p)
     end
   end
 
+  if type(p.keybinds) == "table" then
+    print("\n  keybind resolution (why the icons show no binding):")
+    local s = p.keybinds.slots
+    if s then
+      print(string.format("    action slots 1-120: %s readable, %s SECRET, %s empty, %s raised",
+        tostring(s.readable), tostring(s.secret), tostring(s.empty), tostring(s.raised)))
+      if tonumber(s.secret) and tonumber(s.secret) > 0 then
+        print("    !! secret action slots exist -- an unguarded actionID comparison RAISES here")
+      end
+      if tonumber(s.readable) == 0 then
+        print("    !! NO action slot was readable. Every keybind lookup must fail.")
+      end
+    end
+    for k, row in pairs(p.keybinds) do
+      if k ~= "slots" and k ~= "error" and type(row) == "table" then
+        print(string.format("    spell %-9s find=%-6s slot=%-6s binding=%-18s key=%s",
+          k, tostring(row.find), tostring(row.slot),
+          tostring(row.bindingName), tostring(row.key)))
+      end
+    end
+    if p.keybinds.error then print("    error: " .. tostring(p.keybinds.error)) end
+  end
+
   if type(p.secrecyPredicates) == "table" then
     print("\n  what the client says about its own secrecy:")
     local ks = {}
@@ -125,6 +177,20 @@ end
 
 showProbe("PROBE AT START", diag.probeAtStart)
 showProbe("PROBE AT STOP", diag.probeAtStop)
+
+-- The in-combat re-probe. This is the one that settles whether the stat family survives
+-- restriction; the start/stop probes are both taken with combat off.
+for _, s in pairs(diag.trace or {}) do
+  if type(s) == "table" and s.k == "probe" then
+    showProbe("PROBE IN COMBAT (t=" .. tostring(s.t) .. ")", {
+      inCombat = true,
+      readBack = s.readBack,
+      unusedReads = s.unusedReads,
+      secrecyPredicates = s.secrecyPredicates,
+    })
+    break
+  end
+end
 
 -- ---------------------------------------------------------------------------
 -- Buff capture: this is what resolves the Roll the Bones stage spell IDs.
@@ -193,6 +259,40 @@ local ticks = {}
 for _, s in pairs(samples) do if s.k == "tick" then ticks[#ticks + 1] = s end end
 table.sort(ticks, function(a, b) return (a.t or 0) < (b.t or 0) end)
 if #ticks > 0 then
+  -- SUMMARISE THE WHOLE RUN BEFORE SHOWING THE TAIL.
+  -- The tail is misleading on its own: a trace almost always ends out of combat, where
+  -- energy is legitimately [100,100] and the source legitimately goes stale. Reading the
+  -- last thirteen ticks as representative produced a confident and wrong diagnosis once
+  -- already -- "the update step is disconnected" -- when the real story was that the
+  -- earlier fight had simply been quiet. Distribution first, tail second.
+  local srcCount, inCombatTicks, widthSum, widthN, widthMax = {}, 0, 0, 0, 0
+  for _, s in ipairs(ticks) do
+    local k = tostring(s.eSrc)
+    srcCount[k] = (srcCount[k] or 0) + 1
+    if s.inCombat then inCombatTicks = inCombatTicks + 1 end
+    local lo, hi = tonumber(s.eLo), tonumber(s.eHi)
+    if lo and hi then
+      local w = hi - lo
+      widthSum = widthSum + w; widthN = widthN + 1
+      if w > widthMax then widthMax = w end
+    end
+  end
+  local srcKeys = {}
+  for k in pairs(srcCount) do srcKeys[#srcKeys + 1] = k end
+  table.sort(srcKeys, function(a, b) return srcCount[a] > srcCount[b] end)
+  local parts = {}
+  for _, k in ipairs(srcKeys) do parts[#parts + 1] = k .. "x" .. srcCount[k] end
+  print("\n  energy source across ALL " .. #ticks .. " ticks: " .. table.concat(parts, "  "))
+  if widthN > 0 then
+    print(string.format("  interval width: mean %.2f, max %.2f  (0 = an exact threshold pin)",
+      widthSum / widthN, widthMax))
+  end
+  if (srcCount["bracketed"] or 0) + (srcCount["measured"] or 0) + (srcCount["anchored"] or 0) == 0 then
+    print("    !! No tick was ever bracketed, measured or anchored. The observation channel")
+    print("       produced nothing all run -- either no threshold was crossed (too little")
+    print("       spending) or recordEdge is not being reached at all.")
+  end
+
   print("\n  last ticks (energy interval, combo points, RtB stage):")
   for i = math.max(1, #ticks - 12), #ticks do
     local s = ticks[i]
