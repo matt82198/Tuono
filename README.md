@@ -171,6 +171,10 @@ This is the part where the project needs other people, honestly:
   simulated harness; real measurements from real content beat both.
 - **Profiles for other specs.** Outlaw is the example, not the point. If you main
   something else and can write its priority list, that is the highest-value contribution.
+**[What Midnight's secret values actually do](docs/SECRET-VALUES-FINDINGS.md)** — the practical
+shape of the new constraints, what survives, what does not, and the four techniques
+that make a helper still possible. Written to be useful whether or not you use this addon.
+
 - **Anyone who has read the secret-values rules closely.** If something here is legally
   wrong, say so loudly and I will fix it.
 
