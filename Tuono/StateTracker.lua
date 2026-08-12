@@ -99,7 +99,7 @@ local castCorrelationWindow = 0.8
 -- ready" made IntelligenceLayer's castability filter drop every cooldown ability in
 -- exactly the content this addon is for. Readiness survives; only the countdown dies.
 -- `remainingKnown` tells the UI whether it may draw a number.
-local function NormalizeCooldown(startTime, duration, isEnabled, isActive)
+local function NormalizeCooldown(startTime, duration, isEnabled, isActive, key)
 	local now = GetTime()
 
 	local st, stKnown = Tuono.readNum(startTime)
@@ -125,12 +125,31 @@ local function NormalizeCooldown(startTime, duration, isEnabled, isActive)
 	local active, activeKnown = Tuono.readBool(isActive)
 	local enabled, enabledKnown = Tuono.readBool(isEnabled)
 
-	if activeKnown then
-		return { known = true, ready = not active, remaining = 0, remainingKnown = false }
-	end
-	if enabledKnown then
-		-- Legacy semantics: isEnabled==0/false while a cooldown blocks the cast.
-		return { known = true, ready = enabled, remaining = 0, remainingKnown = false }
+	local ready = nil
+	if activeKnown then ready = not active
+	elseif enabledKnown then ready = enabled end
+
+	if ready ~= nil then
+		-- THE COUNTDOWN IS HIDDEN, NOT UNKNOWABLE. CooldownModel reconstructs it from
+		-- our own observations -- when we saw the cast, the ability's static duration,
+		-- and Restless Blades CDR derived from combo points (which are never secret).
+		-- The readiness boolean above is ground truth, so it corrects the model rather
+		-- than the model overriding it.
+		if key and Tuono.CooldownModel then
+			Tuono.CooldownModel.Reconcile(key, ready)
+			if not ready then
+				local rem, known = Tuono.CooldownModel.Predict(key)
+				if known and rem and rem > 0 then
+					return {
+						known = true, ready = false, remaining = rem,
+						-- "reconstructed" is not "measured": flagged inferred when the
+						-- model had to guess because it never saw the cast.
+						remainingKnown = not Tuono.CooldownModel.IsInferred(key),
+					}
+				end
+			end
+		end
+		return { known = true, ready = ready, remaining = 0, remainingKnown = false }
 	end
 
 	-- Nothing readable at all: genuinely unknown. Callers must not treat this as ready
@@ -171,7 +190,7 @@ local function RefreshCooldowns()
 				local ok, cd = pcall(C_Spell.GetSpellCooldown, spellID)
 				if ok and type(cd) == "table" then
 					Tuono.State.cooldowns[key] =
-						NormalizeCooldown(cd.startTime, cd.duration, cd.isEnabled, cd.isActive)
+						NormalizeCooldown(cd.startTime, cd.duration, cd.isEnabled, cd.isActive, key)
 					handled = true
 				end
 			end
@@ -179,7 +198,7 @@ local function RefreshCooldowns()
 			if not handled and GetSpellCooldown then
 				local ok, start, duration, enabled = pcall(GetSpellCooldown, spellID)
 				if ok then
-					Tuono.State.cooldowns[key] = NormalizeCooldown(start, duration, enabled, nil)
+					Tuono.State.cooldowns[key] = NormalizeCooldown(start, duration, enabled, nil, key)
 					handled = true
 				end
 			end
@@ -868,6 +887,11 @@ function Tuono.State.RefreshFast()
 		Tuono.State.comboPointsMax = Tuono.State.lastKnownCPMax
 	end
 	Tuono.State.comboPointsMaxKnown = cpMaxKnown
+
+	-- Snapshot combo points BEFORE anything can consume them. UNIT_SPELLCAST_SUCCEEDED
+	-- fires after a finisher has already spent them, so the live value reads 0 at
+	-- exactly the moment CooldownModel needs to know what was spent for Restless Blades.
+	if Tuono.CooldownModel then Tuono.CooldownModel.NoteTick() end
 
 	RefreshCooldowns()
 

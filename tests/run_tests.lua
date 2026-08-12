@@ -63,6 +63,7 @@ local files = {
   "Tuono/StateTracker.lua",
   "Tuono/AssistReader.lua",
   "Tuono/Rotation.lua",
+  "Tuono/CooldownModel.lua",
   "Tuono/EnergyModel.lua",
   "Tuono/IntelligenceLayer.lua",
   "Tuono/Display.lua",

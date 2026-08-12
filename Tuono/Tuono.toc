@@ -6,7 +6,7 @@
 ## Version: 2.0.0
 ## X-License: MIT
 ## X-Website: https://github.com/matt82198/Tuono
-## SavedVariables: TuonoDB
+## SavedVariables: TuonoDB, TuonoDiagDB
 
 Core.lua
 Migration.lua
@@ -17,6 +17,7 @@ data/rules.lua
 StateTracker.lua
 AssistReader.lua
 Rotation.lua
+CooldownModel.lua
 EnergyModel.lua
 IntelligenceLayer.lua
 Display.lua
@@ -24,4 +25,5 @@ Highlight.lua
 Config.lua
 Options.lua
 Secrets.lua
+Recorder.lua
 ApiTest.lua

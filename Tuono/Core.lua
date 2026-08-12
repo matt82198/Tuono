@@ -284,6 +284,11 @@ Tuono.RegisterEvent("PLAYER_LOGIN", function()
     if Tuono.Highlight and Tuono.Highlight.Update then
       Tuono.safe(Tuono.Highlight.Update, r)
     end
+    -- Flight recorder last: it observes the tick's outcome, and must never be able to
+    -- affect it. Self-throttled internally.
+    if Tuono.Recorder and Tuono.Recorder.Snapshot then
+      Tuono.safe(Tuono.Recorder.Snapshot)
+    end
   end, 0.5)
 
   -- Register event-forced re-evaluate triggers

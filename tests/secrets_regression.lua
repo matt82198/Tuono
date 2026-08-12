@@ -170,6 +170,7 @@ local TOC = {
   "Tuono/StateTracker.lua",
   "Tuono/AssistReader.lua",
   "Tuono/Rotation.lua",
+  "Tuono/CooldownModel.lua",
   "Tuono/EnergyModel.lua",
   "Tuono/IntelligenceLayer.lua",
   "Tuono/Config.lua",   -- owns Tuono.defaults; without it Tuono.db is nil
