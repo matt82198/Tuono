@@ -1,4 +1,10 @@
-# Tuono UI Redesign Spec — The One Bar
+# Tuono UI Redesign Spec -- The One Bar
+
+> **SUPERSEDED.** Its two central constraints were both reversed by implementation:
+> position 1 is OUR prediction (Blizzard's pick never becomes an icon), and the bar DOES
+> show a multi-step lookahead -- truncated at the first step whose provenance is unknown.
+> The claim that GetNextCastSpell is static in combat was measuring a crash on a secret
+> boolean, not the API. Kept for the reasoning; see the README for current behaviour.
 
 Status: DRAFT for implementation. Read-only inputs used: `Tuono/Display.lua` (current
 impl), `README.md`, `docs/CONTRACT.md` (module contract), `docs/research/hekilight-analysis.md`

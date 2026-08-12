@@ -8,6 +8,26 @@ It is published for two reasons: players who relied on rotation helpers for
 accessibility lost them overnight, and the practical shape of the new constraints is
 not written down anywhere. This is that writeup.
 
+## Why publish it
+
+Because the alternative to a public writeup is not "nobody knows this". It is "only the
+people willing to spend a month on it know this, and they are not sharing".
+
+Everything in this document was reachable with sanctioned APIs and a lot of ordinary
+engineering — interval arithmetic, threshold detection, event correlation. That is not a
+high wall, it is a *tall* one: it does not stop anybody determined, it just filters out
+the volunteer who maintained a free addon for their guild. The observable result is that
+the open, auditable tools died and the closed ones did not.
+
+So the choice this document is making is between a capability that exists privately and
+the same capability existing in the open, where it can be read, checked, argued with, and
+corrected when it is wrong. Hiding a value from an API mostly relocates a capability
+rather than removing it, and this is an attempt to relocate it somewhere accountable.
+
+None of that is an argument against Blizzard wanting to rein in addons, and none of it
+excuses reading protected state — this repo does not. It is an argument that the cost of
+the change landed mostly on people who were never the problem.
+
 ---
 
 ## The honest summary

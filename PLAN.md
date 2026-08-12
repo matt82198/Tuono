@@ -1,5 +1,11 @@
 # Outlaw Assist: Master Planning Document
 
+> **HISTORICAL.** Written before the rebrand and before the framework refactor. Its "Hard
+> Constraints (Verified)" table is now false in two important rows -- player auras are secret
+> in combat, and energy is secret unconditionally -- and its product thesis (override
+> Blizzard's position-1 pick) was reversed: the bar renders our own rotation and Blizzard's
+> pick is used only as a drift sensor. Kept for provenance; see STATE.md for current state.
+
 **Version:** 1.0  
 **Date:** 2026-08-01  
 **Target:** WoW Midnight 12.0 Addon for Outlaw Rogue DPS  

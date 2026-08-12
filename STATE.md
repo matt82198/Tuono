@@ -10,9 +10,16 @@ A configurable rotation-helper FRAMEWORK for WoW Midnight. Outlaw Rogue is the r
 profile, not the point. Legal by construction: reads no protected value, automates no
 input, degrades honestly when data is unavailable.
 
-It exists because Blizzard's replacement for the old helpers is DPS-only, is reported to
-stall, and ignores Roll the Bones entirely — and because players who used those tools for
-accessibility lost them with no substitute. See `docs/SECRET-VALUES-FINDINGS.md`.
+**The thesis, which the docs are now written around:** secret values did not remove these
+tools, they privatized them. This repo reads nothing protected and reconstructs most of the
+hidden state anyway, purely through engineering effort — so the barrier was never a wall,
+it was cost. Cost does not remove a capability, it selects who keeps it. The free, open,
+audited addons died; private ones did not. Players who used helpers for accessibility are
+the ones who actually lost something. Hence: MIT, public, every technique documented, every
+uncertainty rendered honestly rather than papered over.
+
+This is not an argument for cheating and not a complaint about wanting fair play. See
+README and `docs/SECRET-VALUES-FINDINGS.md`.
 
 ## Locked decisions
 

@@ -140,10 +140,19 @@ fire in a keystone.
 resources carry a predicate with no restriction gate. There is no sanctioned way to read
 it back.
 
-So the addon does not read it. `EnergyModel.lua` **shadows** it: integrates forward from
-your own casts (`UNIT_SPELLCAST_SUCCEEDED` carries a readable spellID), elapsed time and
-haste, resyncing whenever a real read lands. It reports `measured` / `estimated` / `stale`
-and never presents an estimate as a measurement.
+So the addon does not read it. `EnergyModel.lua` **bounds** it. It carries an interval
+`[lo, hi]`, integrating forward from your own casts (`UNIT_SPELLCAST_SUCCEEDED` carries a
+readable spellID), elapsed time, and a haste value cached from the last out-of-combat read
+— `GetHaste` went secret in 12.0.5 too.
+
+Integration alone would only drift, so the interval is *tightened* by never-secret
+observations. The load-bearing one is `C_Spell.IsSpellUsable`: its `insufficientPower`
+boolean turns every ability's cost into a threshold, and watching the true value cross a
+threshold is an exact measurement of something you cannot read. Affordability therefore
+answers **yes / no / maybe**, and rules are written to handle all three.
+
+It reports `measured` / `bracketed` / `anchored` / `estimated` / `stale`, and never presents
+an estimate as a measurement.
 
 This touches no secret and automates no input. It is a client-side model of your own
 actions — the same thing a human does in their head.

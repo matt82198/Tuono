@@ -1,31 +1,38 @@
-# Tuono Test Suite
+# Tests
 
-## How to Run
+Run from the repository root:
 
 ```bash
-cd C:\Users\matt8\outlaw-assist-wt-build
-C:\Users\matt8\AppData\Local\Programs\Lua\bin\lua.exe tests/run_tests.lua
+lua tests/run_tests.lua           # 180 behavioural tests; also runs the TOC and Lua 5.1 lints
+lua tests/secrets_regression.lua  #  77 assertions against emulated secret values
+lua tests/migration_test.lua      #   8 tests for the OutlawAssist -> Tuono import path
+lua tests/toc_check.lua           #   TOC / CHANGELOG / file-manifest drift gate
+lua tests/lua51_check.lua         #   Lua 5.1 syntax gate (the WoW runtime is 5.1)
 ```
 
-Runs 12 behavioral tests via a pure-Lua harness without requiring WoW or the game client. Exit code 0 = all pass, 1 = failures.
+`tests/wow_stub.lua` provides the client surface: events, spell/cooldown/aura APIs, a
+controllable clock, nameplates, and an `issecretvalue` that reports whichever values the
+scenario has marked secret.
 
-## What is Stubbed
+## The rule
 
-- **WoW Frame API** (`CreateFrame`, `SetScript`, `RegisterEvent`, `SetPoint`, etc.) — mock frames that record method calls and fire registered event/update handlers
-- **WoW Globals** (`GetTime`, `UnitPower`, `C_Spell.GetSpellCooldown`, `C_UnitAuras.GetAuraDataByIndex`, `UnitBuff`, `GetInventoryItemID`, `C_Item.GetItemCooldown`, `C_Spell.GetSpellTexture`, `C_AssistedCombat`, `Enum.PowerType`, `SlashCmdList`)
-- **Stub State** (`stub.state`) — controllable energy, combo points, buffs, cooldowns, trinkets; `stub.FireEvent(event, ...)` and `stub.Tick(dt)` to drive addon behavior
+**A test that only passes proves nothing.** Every fix in this repo is confirmed to turn its
+covering test red against the broken code before being called done. If you add a test, break
+the thing it covers and watch it fail first.
 
-## What is NOT Covered
+This is not ceremony. Several tests in this suite were passing for the wrong reason and hid
+real bugs for weeks:
 
-- Real WoW client behavior (lag, event ordering, frame rendering, texture loading)
-- Player class/spec detection beyond mocking
-- Complex buff stacking or aura filtering beyond basic cases
-- Network behavior or addon communication
-- Display frame positioning or visual layout (only functional render calls tested)
-- In-game equipment detection beyond trinket slot lookup
+- The aura stub encoded `GetPlayerAuraBySpellID("player", id)` — the wrong arity — so the
+  suite certified a dead aura layer. Fixing the stub exposed two more call sites.
+- Seven tests were passing only because a legacy `PIN` rule forced position 1 regardless of
+  state. They were not testing the rotation at all, and they masked both cross-test state
+  pollution and a profile rule that never fired.
+- One test survived deleting *both* of the guards it existed to protect.
 
-## Notes
+## Known harness limitation
 
-Two module bugs were fixed to enable tests:
-1. `StateTracker.lua:47` — initialized `lastBuffScan = -1` to ensure buffs refresh on first RefreshFast() call
-2. `Display.lua:213` — fixed trinket lookup from `Tuono.State.trinkets[tostring(slot)]` to `Tuono.State.trinkets[slot]` (numeric keys)
+Lua has no truthiness metamethod, so the stub cannot make `if secret then` raise the way the
+live client does. Tests that cover secret-value *boolean* handling therefore verify the
+guard is present and the surrounding behaviour is correct, but cannot reproduce the raise
+itself. Where that matters it is noted at the test.

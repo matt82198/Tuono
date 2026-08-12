@@ -11,22 +11,60 @@
 
 <p align="center">
   <a href="#quick-start">Quick start</a> ·
-  <a href="#what-midnight-broke">What Midnight broke</a> ·
+  <a href="#secrets-did-not-remove-these-tools-they-privatized-them">The argument</a> ·
+  <a href="#what-is-actually-readable">What is readable</a> ·
   <a href="#how-this-stays-legal">How this stays legal</a> ·
   <a href="docs/PROFILES.md">Write a profile</a>
 </p>
 
 ---
 
-## What this is
+## Secrets did not remove these tools. They privatized them.
 
 Midnight's **secret values** system hid the combat state that rotation addons were built
-on. Hekili is unmaintained. The usual answer is "use Blizzard's Single-Button Assistant
-or nothing" — and the assistant is a flat priority that ignores your buffs and costs
-some specs 25–30% of their damage.
+on. The stated goal was to end the era of addons playing the game for you.
 
-This is the third option: **a framework for building rotation helpers out of the data
-that is still legally readable**, with your own priority logic layered on top.
+Here is the part worth being precise about: **this repository reads no protected value and
+automates no input, and it reconstructs most of what was hidden anyway.** Not by defeating
+anything — by ordinary engineering. Energy is bounded by inverting a never-secret
+"can I cast this?" boolean. Cooldowns are rebuilt from your own cast events. Procs are read
+off the activation-glow the client already draws for you. None of that touches a secret;
+it is arithmetic on things Blizzard deliberately left readable, and a human does a rougher
+version of it in their head every pull.
+
+So the barrier that went up was never a wall. It was **effort**. And an effort barrier does
+not remove capability from the game — it decides *who keeps it*.
+
+What actually happened is that the free, open, community-audited addons died, because a
+volunteer maintaining a spec list for free does not also sign up to write an interval
+arithmetic energy model. What replaces them is Blizzard's own assistant — a flat priority
+that ignores your buffs and costs some specs 25–30% of their damage — or private tools:
+closed source, unaudited, passed around in Discords and paid servers, by exactly the people
+motivated enough to rebuild them.
+
+The players who lose are the ones who were never the problem. Casual players who used a
+helper to keep up. **Players who relied on these tools for accessibility** — motor
+impairments, cognitive load, chronic pain — and who woke up to no substitute and no
+migration path. They are not in the private Discords. They just stopped having the thing.
+
+That is the actual outcome, and it is not a fair one. A hidden value is only hidden from
+people who will not do the work.
+
+**So this is open.** MIT, auditable, every technique documented, every uncertainty rendered
+honestly on screen instead of being papered over. If the capability is going to exist
+either way — and it is — then it should exist where anyone can read it, check it, and use
+it, not only where someone is selling it.
+
+None of that is a complaint about players wanting fair play, and none of it is an argument
+for cheating. It is an argument that **hiding data from an API mostly relocates a
+capability rather than removing it**, and that the relocation has a cost somebody pays.
+
+---
+
+## What this is
+
+A framework for building rotation helpers out of the data that is still legally readable,
+with your own priority logic layered on top.
 
 - **A rolling wheel of your next four presses**, including repeats. If the honest answer
   is "builder four times", you see four icons — and if the fourth step depends on
@@ -37,54 +75,55 @@ that is still legally readable**, with your own priority logic layered on top.
 - **An in-game rule editor.** Ordered priority rows, first match wins, no Lua required.
 - **Profiles.** Outlaw Rogue ships as the worked example. Any spec can be added as data.
 - **Honesty about uncertainty.** Values Midnight hides are shown as estimates, never as
-  measurements.
+  measurements. The display dims, shortens, and admits doubt rather than guessing at you.
 
-> **Status:** the engine and its degradation behaviour are covered by an automated suite
-> that emulates secret values — 174 behavioural tests plus 77 secret-value regressions,
-> all passing. Validated against a live 12.1.0 client in open-world play, where position 1
-> reads as optimal. **Not** yet validated inside a mythic keystone — see
-> [Help wanted](#help-wanted).
+> **Status:** 180 behavioural tests plus 77 secret-value regressions, all passing, against
+> a harness that emulates secret values. Validated on a live 12.1.0 client in open-world
+> play, where the immediate recommendation reads as optimal. **Not** yet validated inside a
+> mythic keystone — see [Help wanted](#help-wanted).
 
 ---
 
 ## Quick start
 
-1. Download the latest release and extract to `World of Warcraft\_retail_\Interface\AddOns\`
-2. **Trap #1 — Windows Extract-All nests a folder.** You need
-   `Interface\AddOns\Tuono\Tuono.toc`, *not*
+1. Clone this repository and copy the inner `Tuono/` folder into
+   `World of Warcraft\_retail_\Interface\AddOns\`. There is no packaged release yet.
+2. **Check the nesting.** You need `Interface\AddOns\Tuono\Tuono.toc`, *not*
    `Interface\AddOns\Tuono\Tuono\Tuono.toc`. Move the inner folder up if so.
-3. **Trap #2 — it may show as "out of date."** Tick **Load out of date AddOns** in the
-   Addons pane before entering the world.
-4. In game: `/tuono config` to open the editor, `/tuono secrets` to audit what your client is
+3. **It may show as "out of date."** Tick **Load out of date AddOns** in the Addons pane
+   before entering the world.
+4. In game: `/tuono config` opens the editor; `/tuono secrets` audits what your client is
+   actually exposing right now.
 
 ### Upgrading from OutlawAssist
 
-Tuono is OutlawAssist renamed. WoW keys saved variables to the addon folder, so the
-rename would otherwise look like a fresh install and lose your bar position, scale,
-glow settings and any edited priority rows.
+Tuono is OutlawAssist renamed. WoW keys saved variables to the addon folder, so the rename
+would otherwise look like a fresh install and lose your bar position, scale, glow settings
+and any edited priority rows.
 
-**Keep the old `OutlawAssist` folder in place for one login.** On first load Tuono reads
-its saved variables, imports them, and tells you in chat what it carried. After that you
-can delete the old folder. The import runs once and will never overwrite settings you
-have already changed in Tuono.
-   actually exposing.
+**Keep the old `OutlawAssist` folder in place for one login.** On first load Tuono reads its
+saved variables, imports them, and tells you in chat what it carried. After that you can
+delete the old folder. The import runs once and will never overwrite settings you have
+already changed in Tuono.
 
 ---
 
-## What Midnight broke
+## What is actually readable
 
-Blizzard did not hide *everything*, and the difference matters enormously. Measured
-against the live client and Blizzard's generated API documentation:
+Blizzard did not hide *everything*, and the difference is the whole design space. Measured
+against a live 12.1.0 client and Blizzard's generated API documentation:
 
 | Value | Readable in combat / M+? |
 |---|---|
 | **Combo points** and other secondary resources | ✅ yes |
-| **Cooldown readiness** (`isEnabled` / `isActive`) | ✅ yes — flagged never-secret |
+| **Cooldown readiness** (`isEnabled` / `isActive` / `isOnGCD`) | ✅ yes — flagged never-secret |
+| `C_Spell.IsSpellUsable` → `isUsable`, `insufficientPower` | ✅ yes — never-secret, and load-bearing |
 | **Trinket cooldowns** | ✅ yes |
 | **Enemy count** (nameplates + threat) | ✅ yes |
 | `IsStealthed`, `GetTime` | ✅ yes |
 | `C_AssistedCombat.GetNextCastSpell` | ✅ yes — plain spellID |
 | **Energy** and other primary resources | ❌ **secret unconditionally** |
+| `GetHaste` | ❌ secret since 12.0.5 — cached from the last out-of-combat read |
 | Cooldown *remaining* (`startTime` / `duration`) | ❌ secret in combat, encounters, keystones, PvP |
 | Aura payloads (`UNIT_AURA`, aura-by-index) | ❌ secret; the index path **raises** |
 | Enemy health, buffs, casts | ❌ secret |
@@ -92,38 +131,48 @@ against the live client and Blizzard's generated API documentation:
 Run `/tuono secrets` in a city, on a dummy, and mid-pull in a keystone. Blizzard flips these
 between builds — documentation is a hypothesis, that command is the measurement.
 
-### Cooldown readiness survives
+### Readiness survives, and that is most of a rotation
 
-The single most useful thing here: `SpellCooldownInfo.isEnabled` and `.isActive` are
-flagged never-secret even when the *timer* is hidden. You can know **whether** an ability
-is ready in a keystone; you just cannot know for how much longer. Most rotation logic only
-needs the boolean.
+`isEnabled`, `isActive` and `isOnGCD` are never-secret even when the *timer* is hidden. You
+can know **whether** an ability is ready in a keystone; you just cannot know for how much
+longer. Most rotation logic only needs the boolean.
 
-### Energy is shadowed, not read
+### Energy is bounded, not read
 
-Energy has no legal read path. So the addon stops trying and **models** it instead —
-integrating forward from your own casts (`UNIT_SPELLCAST_SUCCEEDED` carries a readable
-spellID), elapsed time and haste, resyncing whenever a real read lands.
+Energy has no legal read path, so the addon stops trying and **bounds** it instead. It
+carries an interval `[lo, hi]`: elapsed time widens it, and every never-secret observation
+tightens it — chiefly `IsSpellUsable`'s `insufficientPower`, which turns each ability's cost
+into a threshold you can watch the true value cross. Affordability answers yes, no, or
+**maybe**, and "maybe" is rendered as maybe.
 
-It reports `measured` / `estimated` / `stale` and the UI dims accordingly. It touches no
-secret and automates no input: it is a client-side model of your own actions, which is
-what a human does in their head anyway.
+That is the general shape of everything here: *you never need to read the hidden value, you
+need any never-secret function of it, and then you invert.* The full write-up is in
+**[docs/SECRET-VALUES-FINDINGS.md](docs/SECRET-VALUES-FINDINGS.md)** — the practical shape of
+the constraints, what survives, what does not, and the techniques that keep a helper
+possible. Written to be useful whether or not you use this addon.
 
 ---
 
 ## How this stays legal
 
-- **Reads no hidden state.** Every API return passes a readability check before use. There
-  is no declassification trick here; where a value is hidden, the addon says so.
-- **No input automation.** It displays suggestions. You press the button. There is no
-  code path that casts anything.
-- **Fails toward honesty.** Unreadable never silently becomes zero. That distinction is
-  the whole design: the predecessor bug in this very addon was `Tuono.num(UnitPower(...), 0)`
-  turning "I cannot read your energy" into a confident "you have no energy", which
-  emptied the rotation and froze the bar.
+- **Reads no hidden state.** Every API return passes a readability check before use; where
+  a value is hidden, the addon says so on screen.
+- **No input automation.** It displays suggestions. You press the button. There is no code
+  path that casts anything.
+- **Fails toward honesty.** Unreadable never silently becomes zero. That distinction is the
+  whole design — the original bug in this addon was `num(UnitPower(...), 0)` turning "I
+  cannot read your energy" into a confident "you have no energy", which emptied the rotation
+  and froze the bar.
 
-Blizzard's stated position is that rotation helpers are not inherently harmful; what is
-disallowed is reading the hidden state. This does not.
+Blizzard's position is that rotation helpers are not inherently harmful; what is disallowed
+is reading the hidden state. This does not.
+
+One caveat stated plainly, because pretending otherwise would be dishonest: bounding a
+hidden scalar with a never-secret boolean is a *declassification channel*, and Blizzard has
+narrowed that class of thing before. If they flag `IsSpellUsable`, the energy model degrades
+to `[0, max]`, every affordability question becomes "maybe", and the rotation falls back to
+combo points and cooldowns on its own. That is designed for, not patched around — see
+[docs/SECRET-VALUES-FINDINGS.md](docs/SECRET-VALUES-FINDINGS.md).
 
 ---
 
@@ -134,12 +183,22 @@ disallowed is reading the hidden state. This does not.
 | `/tuono config` | Open the rotation editor — profile selector, priority rows, AoE mode |
 | `/tuono secrets` | Audit which values are readable right now, plus active restriction contexts |
 | `/tuono aoe` | Cycle AoE handling: `auto` / `on` / `off` |
-| `/tuono icons <1-8>` | How many upcoming presses to show |
+| `/tuono icons <1-8>` | Maximum upcoming presses to show (the queue may show fewer) |
+| `/tuono record` | Flight recorder → SavedVariables; `stop`, `auras`, `auto`, `status` |
 | `/tuono unlock` / `/tuono lock` | Move the bar |
 | `/tuono scale <0.5-2>` | Resize |
 | `/tuono glow` | Toggle the action-bar highlight |
-| `/tuono debug` | One-shot state dump |
-| `/tuono apitest` | Probe API compatibility |
+| `/tuono toggle <queue\|ooc>` · `/tuono reset` · `/tuono status` | Display toggles and state |
+| `/tuono debug` · `/tuono apitest` · `/tuono watch` · `/tuono probe` | Diagnostics |
+
+`/tu` and `/oa` are aliases for `/tuono`.
+
+### Reporting a bug usefully
+
+`/tuono record`, play, then `/reload` — that flush is what writes the trace to disk. Then
+`lua tools/read_trace.lua <path-to-SavedVariables/Tuono.lua>` prints what the addon
+believed, what the client refused, and which casts failed. Attaching that output to an issue
+turns "the bar is wrong" into something fixable.
 
 ---
 
@@ -147,16 +206,18 @@ disallowed is reading the hidden state. This does not.
 
 ```
 Core            event dispatch, secret-value primitives (readNum/readBool)
-Profiles        registry; owns Tuono.SpellIDs
+Profiles        registry; owns Tuono.SpellIDs, resolves renumbered spell aliases
 profiles/*      per-spec data: spells, costs, priority lists   <-- add yours here
 UserRules       editable priority rows -> compiled predicates
 StateTracker    readable state only, with knownness flags
-EnergyModel     shadow energy from your own casts
-AssistReader    C_AssistedCombat, secret-safe
-Rotation        spec-agnostic forward simulation, AoE/ST selection
-IntelligenceLayer  queue assembly, castability filtering
+EnergyModel     interval energy: bounded by IsSpellUsable threshold crossings
+CooldownModel   cooldown + GCD reconstruction from the cast stream
+Observers       aura channels: overlay glow, never-secret whitelist, cardinality
+AssistReader    C_AssistedCombat, secret-safe; a drift sensor, never an icon
+Rotation        spec-agnostic forward simulation, AoE/ST selection, provenance rating
+IntelligenceLayer  queue assembly, castability filtering, confidence truncation
 Display         the wheel      Highlight  action-bar glow
-Options         in-game editor  Secrets   readability audit
+Options         in-game editor  Secrets   readability audit  Recorder  flight recorder
 ```
 
 **Adding a spec is a data change, not a code change.** See
@@ -171,14 +232,12 @@ unreadable.
 This is the part where the project needs other people, honestly:
 
 - **Live-client validation.** Run `/tuono secrets` in a keystone and open an issue with the
-  output. The readability table above is built from Blizzard's generated docs plus a
-  simulated harness; real measurements from real content beat both.
-- **Profiles for other specs.** Outlaw is the example, not the point. If you main
-  something else and can write its priority list, that is the highest-value contribution.
-**[What Midnight's secret values actually do](docs/SECRET-VALUES-FINDINGS.md)** — the practical
-shape of the new constraints, what survives, what does not, and the four techniques
-that make a helper still possible. Written to be useful whether or not you use this addon.
-
+  output. The readability table above comes from one character on one build; real
+  measurements from real content beat that.
+- **Profiles for other specs.** Outlaw is the example, not the point. If you main something
+  else and can write its priority list, that is the highest-value contribution available.
+- **Accessibility feedback.** If you used a helper because of a motor or cognitive
+  impairment and this does not work for you, that is a bug report, and a high-priority one.
 - **Anyone who has read the secret-values rules closely.** If something here is legally
   wrong, say so loudly and I will fix it.
 
@@ -189,19 +248,19 @@ Issues and PRs: <https://github.com/matt82198/Tuono/issues>
 ## Development
 
 ```bash
-lua tests/run_tests.lua           # 174 behavioural tests (also runs the two lints)
+lua tests/run_tests.lua           # 180 behavioural tests (also runs the two lints)
 lua tests/secrets_regression.lua  #  77 assertions against emulated secret values
 lua tests/migration_test.lua      #   8 tests for the OutlawAssist import path
 lua tests/toc_check.lua           #   TOC / CHANGELOG / file-manifest drift gate
 lua tests/lua51_check.lua         #   Lua 5.1 syntax gate (the WoW runtime)
 ```
 
-The suite is **mutation-checked**: every fix above was confirmed to go red against the
-broken code before being called done. A test that only passes proves nothing — if you add
-one, break the thing it covers and confirm it fails first.
+The suite is **mutation-checked**: every fix is confirmed to turn its covering test red
+against the broken code before being called done. A test that only passes proves nothing —
+if you add one, break the thing it covers and watch it fail first.
 
 ---
 
 ## License
 
-MIT. Take it, fork it, ship your own.
+MIT. Take it, fork it, ship your own. That is the point.

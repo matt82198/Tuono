@@ -1,4 +1,11 @@
-# Tuono — Module Contract (build coordination doc)
+# Tuono -- Module Contract (build coordination doc)
+
+> **HISTORICAL.** This describes the pre-2.0 OutlawAssist build lanes and is superseded by
+> [PROFILES.md](PROFILES.md) and the README. It is kept for provenance. Known to be stale in
+> at least eight places: the file layout lists 8 of 21 modules, the slash-command globals and
+> chat prefix were renamed, the Roll the Bones ID moved, RTB_BUFF_NAMES is now a last-resort
+> fallback rather than the stage-detection mechanism, enemy counting IS readable, and the
+> config defaults have changed shape. Do not treat any line here as current.
 
 Single source of truth for cross-module interfaces. Every build lane follows this EXACTLY —
 drift here breaks integration. Orchestrator-owned; lanes read, never edit.
