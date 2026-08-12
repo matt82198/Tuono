@@ -913,6 +913,44 @@ function Tuono.State.RefreshFast()
 		end
 	end
 
+	-- PROVING ABSENCE FROM THE CAST STREAM.
+	--
+	-- Aura payloads go secret in combat, so `stageKnown` reads false for most of a fight,
+	-- and the profile's Roll the Bones rule fails CLOSED on an unknown stage. That guard is
+	-- right for REROLLING -- never reroll a Jackpot you cannot see -- but it is catastrophic
+	-- for the case that matters most: with no Roll the Bones buff at all, the rule that says
+	-- "go roll" also refuses to fire, so the core ability of the spec is never recommended
+	-- in combat. Live trace: `rtb=0(false)` on every in-combat tick, and Roll the Bones
+	-- never reached the bar.
+	--
+	-- But absence is PROVABLE without reading a single aura. Roll the Bones only ever starts
+	-- from a cast, casts are readable (UNIT_SPELLCAST_SUCCEEDED carries a plain spellID), and
+	-- the buff has a known duration. If no Roll the Bones cast has landed within that
+	-- duration, there is no buff -- whatever the aura layer can or cannot see. Same
+	-- reconstruction the cooldown model already runs, pointed at a buff instead of a timer.
+	--
+	-- This only ever establishes stage ZERO. It can never claim a stage, so it cannot
+	-- resurrect the reroll-a-Jackpot bug: the moment a roll lands, `rtbUnknownPresent` takes
+	-- over and the stage goes unknown again until something identifies it.
+	if not Tuono.State.buffs.rtb.stageKnown then
+		local lastRoll = Tuono.State.buffs.rtb.lastCastAt or 0
+		local duration = (Tuono.Profiles and Tuono.Profiles.Active()
+			and Tuono.Profiles.Active().rtbDuration) or 30
+		if lastRoll <= 0 or (GetTime() - lastRoll) > duration then
+			Tuono.State.buffs.rtb.stage = 0
+			Tuono.State.buffs.rtb.stageKnown = true
+			Tuono.State.buffs.rtb.stageFromAbsence = true
+		else
+			-- Within the buff window: absence is NOT provable this tick. Clear the flag
+			-- rather than leaving the previous tick's proof standing -- a provenance marker
+			-- that outlives the thing it describes is worse than no marker, because
+			-- everything downstream trusts it.
+			Tuono.State.buffs.rtb.stageFromAbsence = nil
+		end
+	else
+		Tuono.State.buffs.rtb.stageFromAbsence = nil
+	end
+
 	-- Snapshot combo points BEFORE anything can consume them. UNIT_SPELLCAST_SUCCEEDED
 	-- fires after a finisher has already spent them, so the live value reads 0 at
 	-- exactly the moment CooldownModel needs to know what was spent for Restless Blades.
@@ -984,8 +1022,22 @@ end
 
 local function OnUnitSpellcastSucceeded(event, unit, castGUID, spellID)
 	if unit == "player" then
-		lastCast.spellID = Tuono.num(spellID, 0)
+		local id = Tuono.readNum(spellID)
+		lastCast.spellID = id or 0
 		lastCast.t = GetTime()
+
+		-- Timestamp the roll itself. This is what lets the absence proof in RefreshFast
+		-- conclude "there is no Roll the Bones buff" without reading an aura: the buff can
+		-- only start from a cast, and casts are readable even when auras are not.
+		-- Alias-aware, because the cast can arrive under a renumbered sibling ID.
+		if id and Tuono.Profiles and Tuono.Profiles.MatchesSpell
+			and Tuono.Profiles.MatchesSpell("rollTheBones", id) then
+			Tuono.State.buffs.rtb.lastCastAt = GetTime()
+			-- The stage is unknown again until something identifies it; the absence proof
+			-- must not immediately re-conclude "no buff" off a stale timestamp.
+			Tuono.State.buffs.rtb.stageKnown = false
+			Tuono.State.buffs.rtb.stageFromAbsence = nil
+		end
 	end
 end
 

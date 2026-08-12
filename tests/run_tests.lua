@@ -3675,6 +3675,74 @@ test("a failed cast forces an immediate re-evaluate (out of range recovery)", fu
     "failed cast with an unreadable spellID was suppressed instead of refreshing")
 end)
 
+test("Roll the Bones is recommended when its ABSENCE is provable from the cast stream", function()
+  -- REPORTED: Roll the Bones never reaches the bar in combat.
+  --
+  -- Aura payloads are secret in combat, so stageKnown reads false, and the profile rule
+  -- fails closed on an unknown stage. That guard is right for REROLLING -- never reroll a
+  -- Jackpot you cannot see -- but it also suppressed the "you have no buff at all, go
+  -- roll" case, which is the core of the spec. Live trace: rtb=0(false) on every in-combat
+  -- tick and Roll the Bones never recommended.
+  --
+  -- Absence is provable without reading an aura: the buff can only start from a cast,
+  -- casts are readable, and the duration is known.
+  resetRotationState()
+  pinSingleTarget()
+  Tuono.State.inCombat = true
+  stub.state.stealthed = false
+  Tuono.State.stealthed = false
+  Tuono.State.comboPoints = 0
+  Tuono.State.cooldowns.rollTheBones = { known = true, ready = true, remaining = 0 }
+  -- Aura layer blind, exactly as in combat.
+  Tuono.State.buffs.rtb.stageKnown = false
+  Tuono.State.buffs.rtb.stage = 0
+  Tuono.State.buffs.rtb.lastCastAt = nil
+  Tuono.State.buffs.degraded = true
+
+  -- Blind the aura layer, which is the actual in-combat condition. The stub resolves the
+  -- stage happily, so without this the absence proof never runs and the test is vacuous.
+  local realResolve = Tuono.Observers.ResolveRtbStage
+  Tuono.Observers.ResolveRtbStage = function() return 0, false end
+  Tuono.State.RefreshFast()
+  -- Assert on stageFromAbsence, not stageKnown: the harness aura layer can also set
+  -- stageKnown, so keying on it would let this pass without the absence proof running
+  -- at all -- and it did, on the first attempt.
+  assert_true(Tuono.State.buffs.rtb.stageFromAbsence,
+    "with no Roll the Bones cast on record, absence is PROVEN (not merely read)")
+  assert_eq(Tuono.State.buffs.rtb.stage, 0, "the proven stage is zero")
+
+  local p = Tuono.Rotation.Predict(Tuono.State, 4)
+  local found = false
+  for _, step in ipairs(p or {}) do
+    if step.spellID == Tuono.SpellIDs.rollTheBones then found = true end
+  end
+  Tuono.Observers.ResolveRtbStage = realResolve
+  assert_true(found, "Roll the Bones is recommended when we can prove there is no buff")
+end)
+
+test("a fresh Roll the Bones cast makes the stage unknown again, not zero", function()
+  -- The absence proof must never resurrect the reroll-a-Jackpot bug. The instant a roll
+  -- lands there IS a buff, of an unidentified stage, and the reroll rule must go quiet.
+  resetRotationState()
+  Tuono.State.inCombat = true
+  Tuono.State.buffs.rtb.stageKnown = false
+  Tuono.State.buffs.rtb.lastCastAt = nil
+  -- Blind the aura layer, which is the actual in-combat condition. The stub resolves the
+  -- stage happily, so without this the absence proof never runs and the test is vacuous.
+  local realResolve = Tuono.Observers.ResolveRtbStage
+  Tuono.Observers.ResolveRtbStage = function() return 0, false end
+  Tuono.State.RefreshFast()
+  assert_true(Tuono.State.buffs.rtb.stageFromAbsence, "absence proven before the cast")
+
+  -- Simulate the roll landing.
+  Tuono.State.buffs.rtb.lastCastAt = GetTime()
+  Tuono.State.buffs.rtb.stageKnown = false
+  Tuono.State.RefreshFast()
+  assert_false(Tuono.State.buffs.rtb.stageFromAbsence,
+    "a roll just landed, so absence must NOT be re-proven from a stale timestamp")
+  Tuono.Observers.ResolveRtbStage = realResolve
+end)
+
 test("a secret action slot does not take the render down with it", function()
   -- REPORTED SYMPTOM: "Q is just overlaying on the first icon constantly."
   --
