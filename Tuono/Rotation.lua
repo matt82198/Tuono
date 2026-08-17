@@ -20,17 +20,38 @@ Tuono.Rotation = Tuono.Rotation or {}
 Tuono.Rotation.ABILITIES = {}
 Tuono.Rotation.SPELL_TO_CDKEY = {}
 
+-- The spec's energy costs, ascending and de-duplicated. Outlaw's ladder is
+-- 15/25/35/40/45/50, and every one of those is a moment where waiting stops being
+-- pointless: cross it and something new becomes castable.
+--
+-- Precomputed per profile activation rather than derived per pooling iteration. Pooling
+-- can run a dozen times per step across eight steps, and rebuilding this inside that loop
+-- would be the same per-tick waste the scratch table exists to avoid.
+Tuono.Rotation.COSTS = {}
+
 local ABILITIES = Tuono.Rotation.ABILITIES
 local SPELL_TO_CDKEY = Tuono.Rotation.SPELL_TO_CDKEY
+local COSTS = Tuono.Rotation.COSTS
 
 local function rebuildFromProfile(profile)
 	for k in pairs(ABILITIES) do ABILITIES[k] = nil end
 	for k in pairs(SPELL_TO_CDKEY) do SPELL_TO_CDKEY[k] = nil end
+	for i = #COSTS, 1, -1 do COSTS[i] = nil end
 	if not profile then return end
 
 	for spellID, data in pairs(profile.abilities or {}) do
 		ABILITIES[spellID] = data
 	end
+
+	local seen = {}
+	for _, data in pairs(profile.abilities or {}) do
+		local cost = data.cost or 0
+		if cost > 0 and not seen[cost] then
+			seen[cost] = true
+			table.insert(COSTS, cost)
+		end
+	end
+	table.sort(COSTS)
 	-- The cooldown-key map is keyed by spellID and valued by the profile's spell KEY,
 	-- which is also the key StateTracker files cooldown state under.
 	for key, spellID in pairs(profile.spells or {}) do
@@ -112,6 +133,41 @@ local function cpBelowCap(S)
 	return S.comboPoints < cpCap(S)
 end
 
+-- ---------------------------------------------------------------------------
+-- ROLL THE BONES STAGE, TRI-STATE
+-- ---------------------------------------------------------------------------
+-- `stage` reads 0 both when there is genuinely no Roll the Bones buff AND when we
+-- simply cannot see one, so no caller may read it without also asking whether it is
+-- known. Returns (stage, known); stage is nil whenever known is false.
+local function rtbStage(S)
+	local rtb = S and S.buffs and S.buffs.rtb
+	if not rtb then return nil, false end
+	if rtb.stageKnown == false then return nil, false end
+	local stage = rtb.stage
+	if type(stage) ~= "number" then return nil, false end
+	return stage, true
+end
+
+-- BOTH RtB RULES SPEND A COOLDOWN, so both are positive claims and both must fail
+-- closed on an unreadable stage. Rerolling a stage we cannot see is how the addon came
+-- to tell players to reroll a Jackpot every 45 seconds.
+--
+-- These exist as HELPERS rather than as an inline guard in each rule specifically
+-- because the inline version diverged: the single-target list carried the guard, the
+-- AoE list was written later without it, and the AoE list is the one that ran. A shared
+-- helper cannot be half-applied.
+local function rtbStageBelow(S, n)
+	local stage, known = rtbStage(S)
+	if not known then return false end
+	return stage < n
+end
+
+local function rtbStageAtLeast(S, n)
+	local stage, known = rtbStage(S)
+	if not known then return false end
+	return stage >= n
+end
+
 -- Is an ALTERNATIVE ability genuinely usable? An unlearned spell sits at zero cooldown,
 -- so a cooldown-only check reports it "ready" and blocks the fallback that should fire.
 local function isUsableAlternative(S, spellID, cdKey)
@@ -182,6 +238,9 @@ Tuono.RuleHelpers = {
 	cpBelowCap = cpBelowCap,
 	isUsableAlternative = isUsableAlternative,
 	canAfford = canAfford,
+	rtbStage = rtbStage,
+	rtbStageBelow = rtbStageBelow,
+	rtbStageAtLeast = rtbStageAtLeast,
 }
 
 -- ---------------------------------------------------------------------------
@@ -210,6 +269,13 @@ local scratch = {
 
 local function deepCopyState(state)
 	local S = scratch
+
+	-- THE VIRTUAL CLOCK. Every simulated press costs a GCD, so a 4-step lookahead reaches
+	-- several seconds into the future. Buff expiry timestamps are absolute, so the
+	-- simulation needs its own "now" to compare them against. Reset per call: it is
+	-- mutable per-run state living on a scratch table that is deliberately reused, and a
+	-- leak here would make Predict answer differently for identical input.
+	S.simNow = GetTime()
 
 	-- Scalars the simulation mutates.
 	S.energy = state.energy
@@ -298,6 +364,15 @@ local function calcGCD(hasteBuffUp)
 	return hasteBuffUp and 0.8 or 1.0
 end
 
+-- Smallest pooling advance. Guarantees the loop makes forward progress even when the next
+-- interesting moment computes to zero, so the budget is always reached and the loop always
+-- terminates.
+local MIN_POOL_STEP = 0.05
+
+-- CPU guard only. MIN_POOL_STEP already guarantees termination against the time budget;
+-- this bounds the worst case if a profile ever has a very dense cost ladder.
+local MAX_POOL_ITERATIONS = 16
+
 -- Interval regen for the simulation. Regen is itself only known within bounds (haste is
 -- secret since 12.0.5, Combat Potency is stochastic), so elapsed time makes the interval
 -- WIDER, not merely higher. That widening IS the honest representation of a forward
@@ -318,6 +393,165 @@ local function calcEnergyRegen(hasteBuffUp)
 	local base = 10
 	if hasteBuffUp then base = base * 1.6 end
 	return base + 2.5   -- Combat Potency average
+end
+
+-- Adrenaline Rush raises the ceiling and hastes the GCD. Both were sampled ONCE before
+-- the step loop, which was fine while nothing could change them mid-simulation. Now that
+-- buffs lapse against the virtual clock, they have to be asked per step or a simulation
+-- that outlives the buff keeps spending its bonus.
+local function maxEnergyFor(S)
+	local ar = S and S.buffs and S.buffs.adrenalineRush
+	return (ar and ar.up) and 150 or 100
+end
+
+local function hasteBuffUp(S)
+	local ar = S and S.buffs and S.buffs.adrenalineRush
+	return (ar and ar.up) and true or false
+end
+
+-- ============================================================================
+-- WAITING, IN SECONDS
+-- ============================================================================
+-- How long until this ability becomes affordable at the modelled regen rate. Returns 0
+-- when it already is.
+--
+-- This is what turns the "pooling" label into a number. "You cannot press this yet" and
+-- "you can press this in 1.4 seconds" are the same fact, but only the second one can be
+-- acted on -- and lead time is the entire reason a rotation helper exists.
+--
+-- It is a POINT estimate off an interval model, which normally this codebase refuses
+-- (INVERSION.md 6.5). The distinction: the interval governs the DECISION -- what to
+-- recommend -- and that still runs through the three-valued AffordState and never
+-- consults this. This number only annotates a decision already made, and the step it
+-- annotates is already flagged as a wait rather than a command. A countdown that is a
+-- few tenths out is useful; refusing to give one at all is not.
+local function timeToAfford(S, spellID)
+	local ability = ABILITIES[spellID]
+	if not ability then return 0 end
+	local cost = ability.cost or 0
+	if cost <= 0 or cost <= (S.energy or 0) then return 0 end
+	local regen = calcEnergyRegen(hasteBuffUp(S))
+	if regen <= 0 then return 0 end
+	return (cost - S.energy) / regen
+end
+
+-- The soonest moment anything the priority walk cares about could change: a cost
+-- threshold crossed by regeneration, or a cooldown coming up.
+--
+-- Pooling used to advance by a blind full GCD, which quantises every wait to a whole
+-- second. That is wrong in both directions -- an ability affordable 0.4s from now was
+-- reported as a 1.0s wait, and the clock the timeline is read off inherited the error.
+-- Stepping to the next thing that actually changes makes the reported time exact without
+-- changing WHICH ability the walk selects.
+--
+-- Only measured cooldowns count. A remainder the client never gave us is a placeholder
+-- (see advanceTime), and stepping the clock to a moment we invented would be claiming a
+-- precision we do not have.
+local function nextInterestingDelta(S)
+	local best = nil
+
+	local regen = calcEnergyRegen(hasteBuffUp(S))
+	if regen > 0 then
+		local energy = S.energy or 0
+		for i = 1, #COSTS do
+			local cost = COSTS[i]
+			if cost > energy then
+				best = (cost - energy) / regen
+				break   -- COSTS is ascending, so the first one above us is the nearest
+			end
+		end
+	end
+
+	for _, cd in pairs(S.cooldowns) do
+		if cd.remaining and cd.remaining > 0 and cd.remainingKnown ~= false then
+			if not best or cd.remaining < best then best = cd.remaining end
+		end
+	end
+
+	return best
+end
+
+-- ============================================================================
+-- BUFF EXPIRY INSIDE THE SIMULATION
+-- ============================================================================
+-- `expires` is an ABSOLUTE GetTime() timestamp. The simulation advances a virtual clock
+-- past it -- four predicted presses are four GCDs into the future -- so every step must
+-- be judged against that advanced instant, not against the moment Predict was called.
+-- deepCopyState has always COPIED expires; nothing ever compared it. The result was a
+-- wheel that recommended Pistol Shot on an Opportunity which had lapsed two steps
+-- earlier, and the per-GCD commitment layer now HOLDS such a step rather than churning
+-- past it.
+--
+-- FAILS OPEN ON AN UNREADABLE EXPIRY. Midnight hides aura payloads, so expires is
+-- frequently 0 or nil -- which under a naive comparison is indistinguishable from
+-- "expired long ago". Treating that as expired would silently delete every proc-gated
+-- step in real combat: the unknown-as-no defect, which this codebase has shipped
+-- repeatedly. Only a POSITIVE, readable timestamp is allowed to end a buff.
+local function expireBuffs(S, now)
+	local buffs = S and S.buffs
+	if not buffs then return end
+	for _, b in pairs(buffs) do
+		-- `degraded` is a boolean living alongside the buff tables; skip anything that is
+		-- not a buff record.
+		if type(b) == "table" then
+			local exp = b.expires
+			if type(exp) == "number" and exp > 0 and exp <= now then
+				if b.up then b.up = false end
+				if b.stacks then b.stacks = 0 end
+				-- Roll the Bones carries a stage rather than an up flag. Its expiry is a
+				-- genuine drop to no-buff, and stageKnown stays true because we PROVED it
+				-- from a readable timestamp rather than failing to read one.
+				if b.stage then b.stage = 0 end
+			end
+		end
+	end
+end
+
+-- ============================================================================
+-- ADVANCE THE VIRTUAL CLOCK BY dt
+-- ============================================================================
+-- This body used to exist twice, byte for byte -- once in the pooling loop and once
+-- after a cast. That is the exact duplication shape that produced the Roll the Bones
+-- divergence (one copy got the guard, the other did not), so it is one function now.
+local function advanceTime(S, dt)
+	local cap = maxEnergyFor(S)
+	S.energy = math.min(cap, S.energy + calcEnergyRegen(hasteBuffUp(S)) * dt)
+	widenSim(S, cap, dt)
+
+	for _, cdData in pairs(S.cooldowns) do
+		-- A REMAINDER WE NEVER MEASURED MUST NOT BE COUNTED DOWN.
+		--
+		-- When the client hides a cooldown's timer, CooldownModel parks the ability at a
+		-- placeholder remainder and StateTracker flags it remainingKnown = false
+		-- (StateTracker.lua:147). Decrementing that placeholder exactly like a
+		-- measurement is how a 180-second Adrenaline Rush came to read "ready" at step 2
+		-- -- rendered `certain`, because readiness normally IS exactly knowable. A
+		-- confidently wrong step is the worst output this addon can produce.
+		--
+		-- This deliberately does NOT suppress the ability: readiness itself is never
+		-- secret, so step 1 still answers from ground truth and a cooldown the client
+		-- reports as ready is still recommended. Only the invented FUTURE turnover is
+		-- refused. We decline to name a moment we cannot know rather than guessing one.
+		if cdData.remaining and cdData.remaining > 0 and cdData.remainingKnown ~= false then
+			cdData.remaining = math.max(0, cdData.remaining - dt)
+			if cdData.remaining <= 0 then cdData.ready = true end
+		end
+	end
+
+	S.simNow = (S.simNow or GetTime()) + dt
+	expireBuffs(S, S.simNow)
+
+	-- Adrenaline Rush lapsing drops the ceiling from 150 back to 100, so an energy value
+	-- that was legal an instant ago is now above the cap. Clamp rather than carry an
+	-- impossible number into the next step's affordability arithmetic.
+	local newCap = maxEnergyFor(S)
+	if newCap < cap then
+		S.energy = math.min(S.energy, newCap)
+		if S.energyLo then
+			S.energyLo = math.min(S.energyLo, newCap)
+			S.energyHi = math.min(S.energyHi, newCap)
+		end
+	end
 end
 
 -- Exclude a rule ONLY when we explicitly probed and learned the player lacks the spell.
@@ -430,13 +664,29 @@ local function rateRule(rule, S, spellID)
 		conf = weakest(conf, inputConfidence(cond, S, rule.spellKey))
 	end
 
-	-- Every rule passes through canAfford, so an ability that COSTS something inherits
-	-- the energy signal even when its declared conditions never mention energy.
+	-- ============================================================================
+	-- ASK THE MODEL, NOT WHETHER THE READ WORKED
+	-- ============================================================================
+	-- This used to rate a costing ability "unknown" whenever `energyKnown` was false.
+	-- But energyKnown reports whether the RAW energy read succeeded, and Midnight hides
+	-- energy unconditionally -- so it is false in every combat, forever. Every ability
+	-- that costs energy was therefore permanently "unknown", the confidence truncation
+	-- in IntelligenceLayer cut the sequence at the first such step, and the bar collapsed
+	-- to a single icon in live play. Reported as "single combat shows one button".
+	--
+	-- That is the inversion violated at its core (docs/INVERSION.md 1). We do not read
+	-- energy; we model it, and that model measured a median interval width of 0.2 in a
+	-- live trace. Consulting "did the read work" throws the model away and then reports
+	-- the loss as uncertainty about the rotation.
+	--
+	-- Affordability is three-valued and only the ANSWER matters:
+	--   yes/no  PROVEN from never-secret observations. A proven answer is not uncertain
+	--           merely because it was derived from an interval rather than read.
+	--   maybe   the interval straddles the cost, so the threshold really is a coin flip.
+	--           That is `bounded` -- reduced alpha -- and never `unknown`.
 	local ability = spellID and ABILITIES[spellID]
 	if ability and (ability.cost or 0) > 0 then
-		if not energyKnown(S) then
-			conf = weakest(conf, "unknown")
-		elseif S.energySource ~= "measured" then
+		if Tuono.Rotation.AffordState(S, spellID) == "maybe" then
 			conf = weakest(conf, "bounded")
 		end
 	end
@@ -508,23 +758,28 @@ function Tuono.Rotation.ResolveMode(S)
 		return "single"
 	end
 
-	-- BLIZZARD'S OWN LIST IS AN AOE SIGNAL. If C_AssistedCombat's rotation contains Blade
-	-- Flurry, its engine -- which can see the enemy state Midnight hides from us -- has
-	-- concluded this is a cleave. That is strictly better information than our nameplate
-	-- count, which misses anything unnameplated or out of range.
-	--
-	-- The old blade_flurry_aoe rule treated this as one of three OR-ed signals. When the
-	-- rotation moved into the profile's AoE priority list, the mode selector was written
-	-- against nameplate count alone and this signal was silently dropped, so a cleave
-	-- Blizzard could see and we could not would keep running the single-target list.
-	if Tuono.Assist and Tuono.Assist.aoeDetected then
-		belowThresholdSince = nil
-		Tuono.Rotation.mode, Tuono.Rotation.modeReason = "aoe", "Blizzard's list is cleaving"
-		return "aoe"
-	end
-
 	local count = S and S.enemyCount
+
+	-- ========================================================================
+	-- BLIZZARD'S PICK IS A FALLBACK, NOT AN OVERRIDE
+	-- ========================================================================
+	-- Its engine can see enemy state Midnight hides from us, which makes it valuable
+	-- exactly when our own nameplate count is unreadable -- and redundant when it is not.
+	--
+	-- This test used to sit ABOVE the count and return unconditionally, so an inferred
+	-- signal outranked a direct measurement. Combined with the capability-set bug in
+	-- AssistReader (aoeDetected was constant true for any Outlaw with Blade Flurry
+	-- talented), that pinned the addon into the AoE priority list permanently -- on every
+	-- fight, against any number of targets.
+	--
+	-- Order is now: explicit pin > direct count > Blizzard's live pick > hold.
 	if count == nil then
+		if Tuono.Assist and Tuono.Assist.aoeDetected then
+			belowThresholdSince = nil
+			Tuono.Rotation.mode = "aoe"
+			Tuono.Rotation.modeReason = "Blizzard is cleaving (count unreadable)"
+			return "aoe"
+		end
 		-- Count unreadable: HOLD the current mode rather than snapping to single-target.
 		-- Treating "cannot tell" as "one enemy" would drop AoE mid-pack.
 		Tuono.Rotation.modeReason = "count unreadable (holding)"
@@ -592,22 +847,45 @@ function Tuono.Rotation.Predict(state, steps)
 	Tuono.Rotation.activeRuleCount = #priorityList
 
 	local result = {}
-	local maxEnergy = 100
-	if S.buffs and S.buffs.adrenalineRush and S.buffs.adrenalineRush.up then
-		maxEnergy = 150
-	end
-	local hasteBuff = S.buffs and S.buffs.adrenalineRush and S.buffs.adrenalineRush.up
+
+	-- THE TIMELINE'S ORIGIN. Every reported time is an offset from this instant, so it is
+	-- captured once rather than re-read: GetTime() moves between steps of a long
+	-- simulation, and a drifting origin would make the offsets disagree with each other.
+	local baseNow = S.simNow
+	local lastAt = 0
 
 	for step = 1, steps do
 		local spellID, reason = nil, nil
-		local poolAttempts, maxPoolAttempts = 0, 3
-		local pooledStepOne = false
+		local pooled = false
 		local firedRule = nil
+
+		-- POOLING IS BOUNDED BY TIME, NOT BY ITERATIONS.
+		--
+		-- This was three fixed GCDs. Now that each advance steps only as far as the next
+		-- thing that changes, a fixed count would cover far less wall-clock -- and the
+		-- runway is what stops the sequence truncating the moment the simulated player
+		-- runs dry, which cost 58% of a live fight showing one icon or none. Budgeting the
+		-- same ~3 GCDs of simulated time keeps that runway exactly as long while making
+		-- every intermediate instant precise.
+		--
+		-- The iteration cap is a CPU guard, not a policy: a small MIN_POOL_STEP already
+		-- guarantees forward progress, so the loop terminates on the budget alone. This
+		-- bounds the worst case if a future profile has a very dense cost ladder.
+		local pooledTime = 0
+		local poolIterations = 0
+		local maxPoolTime = 3 * calcGCD(hasteBuffUp(S))
 
 		repeat
 			for _, rule in ipairs(priorityList) do
 				local ok, matched = pcall(rule.when, S, state)
-				if ok and matched then
+				-- A rule that throws is skipped, which is right -- one bad rule must not
+				-- take the rotation down. But it was skipped INVISIBLY, so a rule
+				-- throwing on every tick looked exactly like a rule that never matches.
+				-- Counted so a trace can tell those apart.
+				if not ok then
+					Tuono.Rotation.ruleErrors = (Tuono.Rotation.ruleErrors or 0) + 1
+					Tuono.Rotation.lastRuleError = rule.name
+				elseif matched then
 					spellID = ruleSpellID(rule, spells)
 					reason = rule.name
 					if spellID then firedRule = rule break end
@@ -626,21 +904,27 @@ function Tuono.Rotation.Predict(state, steps)
 			-- answer is "wait, this is next". So we still pool, and mark the result
 			-- POOLING so the display can dim it and show it as a wait rather than a
 			-- command. The invariant is preserved: we never claim it is castable now.
-			if not spellID and step == 1 then
-				pooledStepOne = true
+			if not spellID then
+				pooled = true
 			end
 
-			if not spellID and poolAttempts < maxPoolAttempts then
-				local gcd = calcGCD(hasteBuff)
-				S.energy = math.min(maxEnergy, S.energy + calcEnergyRegen(hasteBuff) * gcd)
-				widenSim(S, maxEnergy, gcd)
-				for _, cdData in pairs(S.cooldowns) do
-					if cdData.remaining and cdData.remaining > 0 then
-						cdData.remaining = math.max(0, cdData.remaining - gcd)
-						if cdData.remaining <= 0 then cdData.ready = true end
-					end
-				end
-				poolAttempts = poolAttempts + 1
+			if not spellID and pooledTime < maxPoolTime and poolIterations < MAX_POOL_ITERATIONS then
+				-- Haste is sampled BEFORE the advance, because the length of the interval
+				-- being waited through is fixed by the state at its start.
+				local gcd = calcGCD(hasteBuffUp(S))
+
+				-- Step to the next moment something could change, never past a full GCD --
+				-- the player cannot act sooner than that anyway, so a longer jump would
+				-- skip a decision point.
+				local dt = nextInterestingDelta(S) or gcd
+				if dt > gcd then dt = gcd end
+				local remaining = maxPoolTime - pooledTime
+				if dt > remaining then dt = remaining end
+				if dt < MIN_POOL_STEP then dt = MIN_POOL_STEP end
+
+				advanceTime(S, dt)
+				pooledTime = pooledTime + dt
+				poolIterations = poolIterations + 1
 			else
 				break
 			end
@@ -652,36 +936,122 @@ function Tuono.Rotation.Predict(state, steps)
 		-- Blizzard's pick, and would now just blank it -- answer the question the player
 		-- actually has: what am I waiting for? Re-run the list with affordability
 		-- suspended so cooldown and resource gates still apply but energy does not.
-		if not spellID and step == 1 then
+		-- APPLIES TO EVERY STEP, NOT JUST THE FIRST.
+		--
+		-- This rescue was `step == 1` only, so a later step that could not be afforded
+		-- within the pooling runway simply ended the sequence. Measured in a live trace:
+		-- the published depth was 1 icon on 64 of 198 ticks and 0 on 51 more -- 58% of the
+		-- fight showing one button or none, which is exactly the report "single combat
+		-- shows one button".
+		--
+		-- A lookahead is allowed to span several seconds of pooling; that is what makes it
+		-- a lookahead. Truncating it the moment the simulated player runs dry throws away
+		-- the answer the player most needs at low energy, which is what the sequence looks
+		-- like once they can act again.
+		--
+		-- ONE PCALL PER RULE, NOT ONE AROUND THE WHOLE WALK.
+		--
+		-- This used to wrap the entire loop in a single pcall, so ONE throwing rule
+		-- aborted the rescue outright and the sequence came back empty -- which is the
+		-- last-resort path, so the bar had nothing at all. The main walk above has always
+		-- pcall'd per rule and is immune; only the rescue, the path that exists precisely
+		-- to guarantee an answer, could be taken out by a single bad rule.
+		--
+		-- Worse, it was SILENT: a bare pcall does not go through Tuono.safe, so nothing
+		-- was counted or printed. A live trace showed the sequence empty on 41% of
+		-- in-combat ticks with no error recorded anywhere.
+		if not spellID then
 			ignoreEnergy = true
-			local ok = pcall(function()
-				for _, rule in ipairs(priorityList) do
-					local matched = rule.when(S, state)
-					if matched then
-						local id = ruleSpellID(rule, spells)
-						if id then spellID, reason, firedRule = id, rule.name, rule break end
-					end
+			for _, rule in ipairs(priorityList) do
+				local ok, matched = pcall(rule.when, S, state)
+				if not ok then
+					Tuono.Rotation.ruleErrors = (Tuono.Rotation.ruleErrors or 0) + 1
+					Tuono.Rotation.lastRuleError = rule.name
+				elseif matched then
+					local id = ruleSpellID(rule, spells)
+					if id then spellID, reason, firedRule = id, rule.name, rule break end
 				end
-			end)
-			-- Reset unconditionally: a throw inside the loop must not leave affordability
-			-- permanently disabled for every later evaluation in the session.
+			end
+			-- Reset unconditionally: a throw must not leave affordability permanently
+			-- disabled for every later evaluation in the session.
 			ignoreEnergy = false
-			if ok and spellID then pooledStepOne = true end
+			if spellID then pooled = true end
 		end
 
 		if not spellID then break end
 
+		-- ====================================================================
+		-- A WAIT IS OVER WHEN YOU CAN ACTUALLY PRESS IT
+		-- ====================================================================
+		-- Affordability is decided on the INTERVAL, and "maybe" passes -- deliberately, so
+		-- an unprovable answer never suppresses a recommendation. That means a rule can
+		-- fire the instant the interval's optimistic UPPER bound clears the cost, which
+		-- under a wide regen band is much earlier than the model's own best guess.
+		--
+		-- Measured: from a bracketed 14 energy, Sinister Strike's rule matched at 0.88s
+		-- because the upper bound had crossed 45, while the point estimate did not reach 45
+		-- until 2.48s. Reporting 0.88 would put a countdown on screen that expires while
+		-- the ability is still uncastable -- the player presses, and nothing happens. That
+		-- is precisely the failure the pooling label exists to prevent, reintroduced as a
+		-- number.
+		--
+		-- So the DECISION keeps using the interval (unchanged), and the reported TIME uses
+		-- the model's best estimate of when the cost is actually covered. Only a step that
+		-- had to wait is adjusted; a step castable now is untouched and stays at zero.
+		if pooled then
+			local wait = timeToAfford(S, spellID)
+			if wait > 0 then advanceTime(S, wait) end
+		end
+
 		-- Rate by PROVENANCE, not by slot index. See rateRule above for why.
 		local confidence = firedRule and rateRule(firedRule, S, spellID) or "bounded"
 
-		-- Pooling outranks every other label: "you cannot press this yet" matters more
-		-- to the player than how sure we are that it is the right choice.
-		if pooledStepOne and step == 1 then confidence = "pooling" end
+		-- "POOLING" IS A STATEMENT ABOUT NOW, so it is a step-1 label only. It means "you
+		-- cannot press this yet", which outranks every other label at position 1 because
+		-- it matters more to the player than how sure we are that it is the right choice.
+		--
+		-- A later step reached through pooling is NOT that: of course you cannot press
+		-- step 3 yet. It rests on assumed energy regeneration, so it carries the honest
+		-- cost of that assumption -- bounded -- and is not labelled as a wait.
+		if pooled then
+			if step == 1 then
+				confidence = "pooling"
+			else
+				confidence = weakest(confidence, "bounded")
+			end
+		end
+
+		-- ====================================================================
+		-- WHERE THIS STEP SITS ON THE TIMELINE
+		-- ====================================================================
+		-- The clock has been advanced by every pooling wait and every prior GCD, so at
+		-- this instant S.simNow IS the simulated moment of this cast. Reading it here --
+		-- after the walk and any rescue, before the post-cast GCD -- is what makes the
+		-- number the time of THIS press rather than the next one.
+		--
+		--   at     offset in seconds from now. 0 means "press it this instant".
+		--   since  seconds after the previous step. This is the one a rolling display
+		--          wants: it is the gap the player has to react in, and it is 0 for an
+		--          off-GCD weave, which is exactly the case a purely ordinal list hid.
+		--
+		-- Named after Hekili's slot.time / slot.since (Core.lua:2015-2018), which is where
+		-- the idea comes from. Its slot.exact_time is deliberately NOT mirrored: an
+		-- absolute timestamp is `GetTime() + at` and derivable by any consumer, and storing
+		-- one invites a stale value being rendered as a countdown.
+		--
+		-- Clamped monotonic. Time cannot run backwards, and a consumer computing
+		-- `at - previous.at` must never see a negative gap.
+		local at = (S.simNow or baseNow) - baseNow
+		if at < lastAt then at = lastAt end
+		local since = at - lastAt
+		lastAt = at
 
 		table.insert(result, {
 			spellID = spellID,
 			confidence = confidence,
 			reason = reason,
+			at = at,
+			since = since,
 			-- Later steps additionally assume you FOLLOW the sequence. That is a
 			-- conditional rather than missing knowledge, so it is reported separately
 			-- and the display encodes it by size, not by fading.
@@ -751,19 +1121,17 @@ function Tuono.Rotation.Predict(state, steps)
 					local slot = cdOf(S, cdKey)
 					slot.remaining = ability.cd
 					slot.ready = false
+					-- A cooldown the SIMULATION started has a duration we know exactly --
+					-- it is static profile data, not a hidden client timer. Say so, or the
+					-- scratch row inherits remainingKnown = false from a live cooldown that
+					-- was unmeasured, and advanceTime then refuses to count down a value it
+					-- has every right to trust.
+					slot.remainingKnown = true
 				end
 			end
 
 			if ability.gcd then
-				local gcd = calcGCD(hasteBuff)
-				S.energy = math.min(maxEnergy, S.energy + calcEnergyRegen(hasteBuff) * gcd)
-				widenSim(S, maxEnergy, gcd)
-				for _, cdData in pairs(S.cooldowns) do
-					if cdData.remaining and cdData.remaining > 0 then
-						cdData.remaining = math.max(0, cdData.remaining - gcd)
-						if cdData.remaining <= 0 then cdData.ready = true end
-					end
-				end
+				advanceTime(S, calcGCD(hasteBuffUp(S)))
 			end
 		end
 	end

@@ -118,6 +118,75 @@ README and `docs/SECRET-VALUES-FINDINGS.md`.
    contexts. Undiagnosed.
 11. **Tag a release.** Deliberately held until the above settles.
 
+## Session 2026-08-17: trace-driven defect sweep
+
+Twelve defects found and fixed, every one from a live flight recording rather than from
+reading. Item 4 above -- "position 2 is right about half the time" -- was the target;
+several of these bear on it directly.
+
+**Correction to the record first.** This session repeatedly quoted the energy interval as
+"median 0.1-0.5" from single traces, as an improvement. That is the same cherry-pick this
+file already warns about. The distribution figure stands: **mean width 2.76**. It was
+also asserted that the addon had no tests, which was wrong -- the work was done from the
+deployed AddOns folder, which correctly ships only what the .toc loads, so tests/, docs/
+and tools/ were invisible. A parallel harness got built as a result.
+
+Fixed:
+
+1. `Assist.aoeDetected` keyed off GetRotationSpells MEMBERSHIP -- a capability set, as the
+   comment above it already said. Blade Flurry is permanently in an Outlaw's rotation, so
+   the flag was a constant true, and ResolveMode tested it BEFORE the nameplate count and
+   returned unconditionally. An inferred signal outranked a direct measurement. Order is
+   now pin > count > Blizzard's live pick > hold.
+2. The AoE Roll the Bones rule lacked the stageKnown guard its single-target twin had --
+   the fifth copy of that check, and the guard now lives in shared RuleHelpers so it
+   cannot be half-applied. A sixth copy was later found in the advisory layer.
+3. `buffs.degraded` was true on 100% of ticks for two independent reasons: absence of any
+   tracked buff was read as failure to read, and the UNIT_AURA delta arrays going secret
+   in combat -- a channel we deliberately replaced -- was reported as degradation. Now 0%.
+   This was not cosmetic: inputConfidence consults the flag, so it also rated every
+   buff-gated step `unknown`, which is what collapsed the lookahead.
+4. Roll the Bones stage INVERTED rather than read. Identified once at the roll, integrated
+   forward over the profile's duration constants. Live readability 27% -> 92%.
+5. `CooldownModel.Reconcile` re-armed an unobserved cooldown with a 1s placeholder every
+   tick, and the simulator counted it down as real -- so a 180s Adrenaline Rush showed
+   "ready" at step 2, rendered SOLID. Confidently wrong is the worst failure this addon
+   can produce.
+6. Buffs never expired inside the simulation. Only a positive, READABLE timestamp may end
+   one; `expires` is 0 or nil whenever the payload is hidden.
+7. `UserRules.GetRows` wrote on read -- opening the editor forked a user off the built-in
+   profile permanently, so they silently stopped receiving every future APL fix.
+   Customisation is now a property of row CONTENT.
+8. The ignoreEnergy rescue wrapped the whole priority walk in ONE pcall, so a single
+   throwing rule emptied the bar -- silently, since a bare pcall never reaches Tuono.safe.
+   Six advisory rules were measured throwing. Now one pcall per rule, and throws are
+   counted and named in the trace.
+9. That same rescue was `step == 1` only, so any later step that could not be afforded
+   within the pooling runway ended the sequence.
+10. `Highlight`'s glow was an opaque green rectangle at alpha 1.0 covering the whole
+    button -- the recommended ability's art was completely hidden. Also: `rebuildSlotIndex`
+    pcall'd the GetActionInfo CALL but passed its secret return into ResolveBaseSpell,
+    which raised and emptied the entire slot index, so no spell resolved to any button.
+11. `Display` re-armed cooldown sweeps ~10x/sec; and stall was clamped to alpha 0.45 while
+    unknown was already 0.40, making a stalled recommendation pixel-identical to a merely
+    uncertain one.
+12. Predicted steps now carry `at` and `since` -- a timeline rather than an ordinal list.
+    Engine.Evaluate was dropping both before they reached the queue.
+
+Added: a committed PLAN with a cursor that advances when the player follows it and a named
+`Engine.TRIGGER` set that records WHY a re-plan happened; run-collapsing so the sequence
+SHAPE fits the bar; `/tuono fontscale`; and lints for runtime code generation and taint.
+
+New docs: HEKILI.md (the timeline model and a do-not-build list), ACCESSIBILITY.md,
+FRAMEWORK.md, ARCHITECTURE-REVIEW.md, LEGALITY.md, RESEARCH-MIDNIGHT.md, UI.md.
+
+**Two claims to stop making, both corrected in the new docs:** "27% better than Blizzard"
+is unsupported -- Highlight Assist sims at 3-15%, One-Button at 15-20%, so quoting 20%
+against highlight assist overstates by up to 6x. And Hekili is not a current APL reference:
+its README says the project ENDED with the Midnight prepatch, its TOC targets 11.2.5, and
+applying its Outlaw priority would have REGRESSED five of our rules. It declares Blade Rush
+at cooldown 45; 12.0.0 raised it to 60. Ours was right.
+
 ## Known limitations
 
 - Enemy state is gone permanently: no health, debuffs, casts. No interrupt planning.

@@ -194,24 +194,59 @@ function O.ErrorName(errorType)
 end
 
 -- ---------------------------------------------------------------------------
--- 5. ROLL THE BONES STAGE: read it, or learn it
+-- 5. ROLL THE BONES STAGE: MODEL IT, correct it against observation
 -- ---------------------------------------------------------------------------
 -- The stage IS the identity of the single summary aura RtB applies. We know one ID for
 -- certain (1214933 "One of a Kind" = stage 1, captured from a live client). The other
 -- three only appear when the dice land that way, so rather than guess them, learn them.
 --
--- Three tiers, strongest first:
---   a) the aura is on the never-secret whitelist  -> read it, exact, even in combat
---   b) the aura ID is in the profile's known map  -> exact stage
---   c) an unrecognised aura appeared right after a RtB cast -> a stage buff of UNKNOWN
---      stage. Recorded for identification, and treated as "present but unknown", which
---      is the safe answer: unknown never satisfies "stage < 2", so we do not reroll.
+-- THIS USED TO BE A PURE READ, re-queried every tick, and that is why the bar flapped.
+-- The aura query does not answer reliably in combat: measured on a live 69-second trace,
+-- the stage was readable on 27% of ticks. A blinking sensor produces a blinking
+-- recommendation, because a stage-gated rule correctly enters and leaves the priority
+-- walk with it (docs/INVERSION.md §2).
 --
--- (c) is what makes this self-completing: play normally and the map fills in.
+-- So it is inverted, per §4. Roll the Bones is a textbook candidate: the stage is FIXED
+-- at the instant of the roll, nothing but a new roll or expiry can change it, the roll
+-- itself is observed exactly (UNIT_SPELLCAST_SUCCEEDED carries a readable spellID), and
+-- the duration is a profile constant. Identify once, then integrate.
+--
+--   observation  a whitelist read, or a plain presence query that answered. Always wins;
+--                the model may never overwrite it (§6.2).
+--   model        stage + expiry, carried forward through however long the sensor is dark.
+--   expiry       a POSITIVE fact, derived from a cast we watched plus a constant we
+--                hold. Past it, the stage is a known 0 and Roll the Bones is recommended.
+--   unknown      a roll landed that nothing ever identified. Stays unknown; we do not
+--                fabricate a stage to make the model look continuous (§6.5).
+--
+-- The learner survives unchanged: only one of the four stage IDs is confirmed from a live
+-- client, and it is what makes the map self-completing.
 
 local pendingRollAt = 0
-local ROLL_WINDOW = 1.5
 local knownBuffIDs = nil     -- everything seen on the player before the roll
+
+-- stage: the identified stage, or nil while a roll is outstanding and unidentified.
+-- expiresAt: when the buff ends -- from the aura payload when it is readable, otherwise
+-- from the roll we observed plus the profile's declared duration.
+local rtbModel = { stage = nil, expiresAt = nil }
+
+local function rtbConstants()
+	local p = Tuono.Profiles and Tuono.Profiles.Active()
+	local duration = (p and p.rtbDuration) or 30
+	-- Keep It Rolling adds a full duration but cannot push total remaining past the cap.
+	local cap = (p and p.rtbExtendCap) or (duration * 2)
+	return duration, cap
+end
+
+-- Alias-aware spell match, because the cast can arrive under a renumbered sibling ID --
+-- Roll the Bones moved in Midnight and the profile lists both candidates.
+local function isSpell(profile, key, id)
+	if Tuono.Profiles and Tuono.Profiles.MatchesSpell then
+		local ok, res = pcall(Tuono.Profiles.MatchesSpell, key, id)
+		if ok then return res and true or false end
+	end
+	return profile.spells and profile.spells[key] == id
+end
 
 local function snapshotBuffIDs()
 	local set = {}
@@ -238,42 +273,95 @@ local function recordCandidate(spellID, name)
 		" (" .. tostring(name) .. "). Saved -- /reload to persist.")
 end
 
+-- THE OBSERVATION CHANNEL. Returns (stage, auraTable) or nil.
+--
+-- The stage IS the identity of the aura, so PRESENCE is enough -- we never need the
+-- payload, which is the part Midnight actually hides.
+--
+-- The ordinary query used to be gated on `not inCombat` here, while PollRtbLearner ran
+-- the identical query UNGATED. In combat that pairing was actively harmful: the learner
+-- cleared rtbUnknownPresent without this function ever resolving a stage, so it fell
+-- through to "stage 0, KNOWN" with a Jackpot up, and the reroll rule fired. That is the
+-- reroll-a-Jackpot bug by a second route, and it was live.
+--
+-- The gate is gone. A query that answers is an observation whatever the combat state; one
+-- that does not simply returns nil and the model carries.
+local function identifyStage()
+	local profile = Tuono.Profiles and Tuono.Profiles.Active()
+	local map = profile and profile.rtbStageBuffs
+	if not map then return nil end
+
+	local api = C_UnitAuras
+	for spellID, stage in pairs(map) do
+		local aura = O.ReadAura(spellID)              -- whitelist path, full payload
+		if aura then return stage, aura end
+		if api and api.GetPlayerAuraBySpellID then
+			local ok, a = pcall(api.GetPlayerAuraBySpellID, spellID)
+			-- A secret container is not an answer. A plain table is presence, and
+			-- presence is identity.
+			if ok and a ~= nil and not Tuono.isSecret(a) and type(a) == "table" then
+				return stage, a
+			end
+		end
+	end
+	return nil
+end
+
 -- Returns stage, stageKnown.
 function O.ResolveRtbStage()
 	local profile = Tuono.Profiles and Tuono.Profiles.Active()
 	local map = profile and profile.rtbStageBuffs
 	if not map then return 0, false end
 
-	-- (a)/(b): a known stage aura that we can actually detect.
-	for spellID, stage in pairs(map) do
-		local aura = O.ReadAura(spellID)              -- whitelist path, works in combat
-		if aura then return stage, true end
-		-- Out of combat the ordinary query works even without the whitelist.
-		if not (Tuono.State and Tuono.State.inCombat) then
-			local api = C_UnitAuras
-			if api and api.GetPlayerAuraBySpellID then
-				local ok, a = pcall(api.GetPlayerAuraBySpellID, spellID)
-				if ok and a then return stage, true end
-			end
+	local now = GetTime()
+	local duration = rtbConstants()
+
+	-- 1. OBSERVATION WINS, ALWAYS. Time widens, observation tightens, never the reverse
+	--    (§6.2) -- so a live identification replaces the model outright.
+	local stage, aura = identifyStage()
+	if stage then
+		rtbModel.stage = stage
+		-- Prefer a real expiry off the payload. Otherwise keep the window the roll
+		-- anchored, and only invent one when we hold none -- a buff cannot outlast a
+		-- full duration from the moment we saw it, so that is a sound upper bound.
+		local expires = aura and Tuono.readNum(aura.expirationTime)
+		if expires and expires > now then
+			rtbModel.expiresAt = expires
+		elseif not rtbModel.expiresAt or rtbModel.expiresAt <= now then
+			rtbModel.expiresAt = now + duration
 		end
+		O.rtbUnknownPresent = false
+		return stage, true
 	end
 
-	-- (c): a roll landed and we could not identify the resulting aura. Presence is real,
-	-- the stage is not -- refuse, so the reroll rule cannot fire.
+	-- 2. NOTHING ANSWERED -- the normal case in combat, and exactly what the model is for.
+	if rtbModel.expiresAt and now >= rtbModel.expiresAt then
+		-- Aged out. This is a POSITIVE fact, derived from a cast we watched and a
+		-- constant we hold, not an absence of information. Reporting it as unknown
+		-- would stop Roll the Bones ever being recommended, which breaks the core
+		-- ability of the spec outright.
+		rtbModel.stage, rtbModel.expiresAt = nil, nil
+		O.rtbUnknownPresent = false
+		return 0, true
+	end
+
+	if rtbModel.stage and rtbModel.expiresAt then
+		return rtbModel.stage, true
+	end
+
+	-- 3. A roll landed and nothing ever identified it. Presence is real, the stage is
+	--    not. Refuse, so the reroll rule cannot fire.
 	if O.rtbUnknownPresent then return 0, false end
 
-	-- Nothing found and no unidentified roll outstanding: report stage 0 as KNOWN, so
-	-- Roll the Bones can actually be recommended when there is genuinely no buff up.
+	-- 4. No buff and nothing outstanding: stage 0, KNOWN, so Roll the Bones can be
+	--    recommended when there is genuinely nothing up.
 	--
-	-- RESIDUAL RISK, stated plainly: we can only positively rule out the stage auras
-	-- whose IDs we hold, and right now that is one of four. If the player is carrying an
-	-- unidentified stage buff that this session never saw land -- reloading mid-buff, or
-	-- zoning -- this answers "stage 0, known" and the reroll rule will fire.
-	--
-	-- That risk is bounded and shrinking: rtbUnknownPresent covers every roll we DO see,
-	-- and the learner adds each new ID permanently the first time it appears. The
-	-- alternative -- never recommending RtB at all -- breaks a core ability outright,
-	-- which is a certain harm rather than a conditional one.
+	-- RESIDUAL RISK, stated plainly and now much smaller. If the player carries a stage
+	-- buff this session never saw land -- reloading or zoning mid-buff -- there is no
+	-- anchor to integrate from, and this answers "stage 0, known". Two things narrow it
+	-- that did not before: identification is no longer gated on being out of combat, so
+	-- ANY tick whose aura query answers seeds the model; and PLAYER_ENTERING_WORLD
+	-- re-seeds immediately, which is the common case for a zone change. It is not closed.
 	return 0, true
 end
 
@@ -283,8 +371,28 @@ Tuono.RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player", function(event, un
 	local id = Tuono.readNum(spellID)
 	local profile = Tuono.Profiles and Tuono.Profiles.Active()
 	if not (id and profile and profile.spells) then return end
-	if id ~= profile.spells.rollTheBones and id ~= profile.spells.keepItRolling then return end
-	pendingRollAt = GetTime()
+
+	local duration, cap = rtbConstants()
+	local now = GetTime()
+
+	-- KEEP IT ROLLING EXTENDS; IT DOES NOT RE-ROLL. It lengthens the buffs you already
+	-- have. Treating it as a fresh roll -- which this handler used to do -- threw away a
+	-- stage we had already identified and sent the model back to unknown for nothing.
+	if isSpell(profile, "keepItRolling", id) then
+		if rtbModel.expiresAt then
+			rtbModel.expiresAt = math.min(now + cap, rtbModel.expiresAt + duration)
+		end
+		return
+	end
+
+	if not isSpell(profile, "rollTheBones", id) then return end
+
+	-- A ROLL IS THE TRANSITION. The dice are re-thrown, so whatever stage we believed is
+	-- void -- but the WINDOW is now known exactly, from this instant plus a constant.
+	rtbModel.stage = nil
+	rtbModel.expiresAt = now + duration
+
+	pendingRollAt = now
 	-- Out of combat we can diff the buff list; in combat the index scan raises, so the
 	-- learner simply does not run and we fall back to "unknown".
 	knownBuffIDs = snapshotBuffIDs()
@@ -348,3 +456,17 @@ for _, evt in ipairs({ "TRAIT_CONFIG_UPDATED", "PLAYER_SPECIALIZATION_CHANGED", 
 		Tuono.safe(O.RefreshOverlays)
 	end)
 end
+
+-- A RELOAD OR ZONE LEAVES NO ANCHOR. The model describes a buff whose roll we watched;
+-- across a world boundary we watched nothing, so carrying the old window forward would
+-- describe a fight we are no longer in. Clear it, then re-seed immediately -- a zone
+-- change lands out of combat, where the aura query answers, so the common case recovers
+-- on the spot instead of waiting for the next roll.
+--
+-- Registered AFTER the re-probe above so the never-secret whitelist is refreshed before
+-- the re-seed consults it; handlers fire in registration order.
+Tuono.RegisterEvent("PLAYER_ENTERING_WORLD", function()
+	rtbModel.stage, rtbModel.expiresAt = nil, nil
+	O.rtbUnknownPresent = false
+	Tuono.safe(O.ResolveRtbStage)
+end)

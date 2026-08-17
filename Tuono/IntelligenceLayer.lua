@@ -17,15 +17,152 @@ Tuono.Engine = Tuono.Engine or {}
 Tuono.Engine.stallCount = 0
 local STALL_THRESHOLD = 3
 
+-- How long a plan may survive without the player following it. This is a BACKSTOP, not
+-- the primary invalidation path -- deviation and persistent disagreement both re-plan
+-- immediately. It exists so a player who stops pressing things (target died, ran out of
+-- range, walked away) still sees the bar catch up rather than holding a stale plan.
+local MAX_PLAN_AGE = 3.0
+
+-- Ticks of disagreement before the plan is abandoned. The tick loop runs at 10Hz in
+-- combat, so 3 is ~0.3s -- long enough that a single blinking sensor reading cannot
+-- unseat a plan, short enough to be imperceptible when the world genuinely changed.
+-- One tick would make this identical to having no plan at all, which is where the churn
+-- came from in the first place.
+local DISAGREE_TICKS_BEFORE_REPLAN = 3
+
+-- How far the simulation runs. Deliberately deeper than the icon count: Display collapses
+-- consecutive repeats into a single icon with a multiplier, so depth buys sequence SHAPE
+-- rather than screen space. Rotation.Predict caps at 8.
+local PREDICT_DEPTH = 8
+
+-- ==========================================================================
+-- RECALCULATION TRIGGERS
+-- ==========================================================================
+-- What is allowed to throw away a plan, named in one place.
+--
+-- These existed before, scattered across an event handler, a disagreement counter and an
+-- age check, with nothing that said what the complete set was. Scattered triggers are
+-- how a set becomes accidentally incomplete AND accidentally over-eager at the same
+-- time: nobody can see the whole of it to judge either.
+--
+-- THE GOVERNING CONSTRAINT: every trigger is a chance for the bar to churn again, which
+-- is the defect this layer exists to fix. So a trigger must fire on a REAL state change,
+-- never on a sensor blinking. Where an input can blink, it is either derived from a
+-- modelled value or required to persist -- see worldChangedSince, which compares KNOWN
+-- to KNOWN and treats a transition into "unknown" as an absence of evidence rather than
+-- as evidence of change. That distinction is the whole reason the stage was readable on
+-- 27% of ticks and the bar flapped anyway.
+local TRIGGER = {
+  DEVIATED  = "deviated",         -- cast something other than the planned step
+  PROC      = "proc",             -- an activation overlay lit or cleared
+  COOLDOWN  = "cooldown-ready",   -- a cooldown we knew was down came up
+  RTB_STAGE = "rtb-stage",        -- Roll the Bones landed on a different stage
+  TARGET    = "target-changed",   -- range, facing and target existence all changed
+  MODE      = "mode-flipped",     -- AoE <-> single: a genuinely different priority list
+  TALENTS   = "talents-changed",  -- the ability set itself changed
+  COMBAT    = "combat-boundary",  -- a plan from the last pull is not a plan for this one
+  DISAGREE  = "disagreement",     -- fresh prediction persistently differs from the cursor
+  EXHAUSTED = "plan-exhausted",   -- the player followed it to the end
+  AGED      = "plan-aged-out",    -- nobody is following it; catch up rather than freeze
+  WORLD     = "world-changed",    -- fallback label when no more specific reason was set
+}
+Tuono.Engine.TRIGGER = TRIGGER
+
+-- Throw the plan away, recording WHY.
+--
+-- The reason is remembered rather than counted here: Evaluate does the counting when it
+-- actually re-plans, so an invalidation and the re-plan it causes are one event in the
+-- tally instead of two. `lastTrigger` is published for /tuono debug and the flight
+-- recorder -- a trace that shows a re-plan without saying what caused it is not
+-- diagnosable, which is how the original churn went unexplained for so long.
+function Tuono.Engine.InvalidatePlan(reason)
+  local E = Tuono.Engine
+  E.plan = nil
+  E.cursor = nil
+  E.planContext = nil
+  E.disagreeTicks = 0
+  E.verifyOnAdvance = false
+  E.pendingTrigger = reason
+end
+
+-- PROC EDGES. The spell activation overlay carries no secrecy flags, fires on BOTH the
+-- show and hide edges, and carries a plainly readable spellID -- so this is an OBSERVED
+-- transition, not a polled value. That is precisely why it needs no persistence filter
+-- while an aura read would: an event cannot blink, it can only happen.
+--
+-- Filtered to the procs the active profile actually gates rules on. Every spell in the
+-- game lights up somebody's button, and re-planning on a Paladin's Art of War would be
+-- churn with no information in it.
+local function onOverlayEdge(event, spellID)
+  local id = Tuono.readNum(spellID)
+  if not id then return end
+  local profile = Tuono.Profiles and Tuono.Profiles.Active()
+  local map = profile and profile.overlayAuras
+  if not (map and map[id]) then return end
+  Tuono.Engine.InvalidatePlan(TRIGGER.PROC)
+end
+
+Tuono.RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW", onOverlayEdge)
+Tuono.RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_HIDE", onOverlayEdge)
+
+-- A NEW TARGET IS A NEW FIGHT for every purpose the plan cares about: range, facing,
+-- whether anything is there to hit at all. The recorded trace carried
+-- ERR_SPELL_OUT_OF_RANGE and ERR_NO_ATTACK_TARGET against live recommendations.
+Tuono.RegisterEvent("PLAYER_TARGET_CHANGED", function()
+  Tuono.Engine.InvalidatePlan(TRIGGER.TARGET)
+end)
+
+-- The ability set itself changed, so the plan may name spells the character no longer
+-- has. Rare and never noisy, which is why it needs no damping.
+for _, evt in ipairs({ "TRAIT_CONFIG_UPDATED", "PLAYER_SPECIALIZATION_CHANGED" }) do
+  Tuono.RegisterEvent(evt, function()
+    Tuono.Engine.InvalidatePlan(TRIGGER.TALENTS)
+  end)
+end
+
 Tuono.RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player", function(event, unit, castGUID, spellID)
   if unit ~= "player" then return end
   local id = Tuono.readNum(spellID)
   if not id then return end
-  local recommended = Tuono.Engine.lastPos1
+  local E = Tuono.Engine
+
+  local recommended = E.lastPos1
   if recommended and id ~= recommended then
-    Tuono.Engine.stallCount = (Tuono.Engine.stallCount or 0) + 1
+    E.stallCount = (E.stallCount or 0) + 1
   else
-    Tuono.Engine.stallCount = 0
+    E.stallCount = 0
+  end
+
+  -- ADVANCE THE PLAN, OR ABANDON IT.
+  --
+  -- This is the whole point of planning: following the plan must be CHEAP. The
+  -- simulation already computed the state this cast produces, so the remaining steps are
+  -- still correct and the bar should simply slide left.
+  --
+  -- Deviating is different in kind. Every later step was conditioned on this press
+  -- happening; once it did not, they describe a world that does not exist. A plan built
+  -- on a press that never happened is worse than no plan, so it goes immediately -- no
+  -- disagreement counter, no grace.
+  --
+  -- Off-GCD abilities are deliberately NOT treated as deviation. Adrenaline Rush and
+  -- Preparation do not consume the GCD, so weaving one does not invalidate the plan for
+  -- the ability the player is still about to press.
+  if E.plan and E.cursor then
+    local planned = E.plan[E.cursor]
+    if planned and planned.spellID == id then
+      E.cursor = E.cursor + 1
+      E.disagreeTicks = 0
+      -- Followed correctly -- but possibly LATE. Re-validate on the very next tick
+      -- instead of trusting the rest of the plan; see the note in Evaluate.
+      E.verifyOnAdvance = true
+    else
+      local ability = Tuono.Rotation and Tuono.Rotation.ABILITIES
+        and Tuono.Rotation.ABILITIES[id]
+      local offGCD = ability and ability.gcd == false
+      if not offGCD then
+        Tuono.Engine.InvalidatePlan(TRIGGER.DEVIATED)
+      end
+    end
   end
 end)
 
@@ -56,6 +193,78 @@ local function wipeSet(tbl)
   for k in pairs(tbl) do
     tbl[k] = nil
   end
+end
+
+-- ==========================================================================
+-- PLAN CONTEXT: the world as it stood when the plan was made
+-- ==========================================================================
+-- A trigger is a CHANGE, and a change needs a baseline. This captures the small set of
+-- facts a plan's validity actually rests on, so the per-tick check compares against what
+-- was true at plan time rather than against nothing.
+--
+-- Deliberately small. Every field here is a thing that can re-plan the bar, so anything
+-- added must earn it by changing what the priority walk chooses.
+local function snapshotPlanContext(S)
+  local ctx = { notReady = {} }
+
+  -- Cooldowns we KNEW were down. Storing the not-ready set rather than the ready set is
+  -- what makes the later comparison a provable transition: known-not-ready -> known-ready
+  -- involves no unknown at either end, so a `known` flag flickering cannot manufacture a
+  -- trigger out of nothing.
+  for key, cd in pairs(S.cooldowns or {}) do
+    if cd.known and not cd.ready then ctx.notReady[key] = true end
+  end
+
+  ctx.mode = Tuono.Rotation and Tuono.Rotation.mode
+
+  -- Deliberately NOT written as `local stage, known = A and A.rtbStage and A.rtbStage(S)`.
+  -- An `and` chain truncates a multiple-return call to its first value, so `known` would
+  -- silently be nil, the stage would never be captured, and the trigger below would be
+  -- permanently dead -- along with the test asserting it does not misfire, which would
+  -- have passed vacuously forever.
+  if Tuono.RuleHelpers and Tuono.RuleHelpers.rtbStage then
+    local stage, known = Tuono.RuleHelpers.rtbStage(S)
+    if known then ctx.rtbStage = stage end
+  end
+
+  return ctx
+end
+
+-- Returns a TRIGGER when the world has moved in a way that invalidates the plan, or nil.
+--
+-- Each check is written to be blind to blinking. That is the entire difficulty: the
+-- naive version of any of these fires on a sensor losing its signal, which is not a
+-- change in the world and must never move the bar.
+local function worldChangedSince(S, ctx)
+  if not ctx then return nil end
+
+  -- MODE FLIP. AoE and single-target are genuinely different priority lists, so a plan
+  -- built from one is not a plan for the other. Safe to act on instantly because
+  -- Rotation.ResolveMode already carries a 2s dwell -- this fires on the DEBOUNCED
+  -- output, never on a nameplate count crossing the threshold back and forth.
+  local mode = Tuono.Rotation and Tuono.Rotation.mode
+  if mode ~= ctx.mode then return TRIGGER.MODE end
+
+  -- ROLL THE BONES STAGE. Gates the reroll rule and Keep It Rolling, both near the top
+  -- of the list. Compared KNOWN to KNOWN only: a transition into unknown is an absence
+  -- of evidence, not evidence of a change, and treating it as one is exactly the defect
+  -- that made the bar flap when the stage was still a per-tick aura read.
+  if ctx.rtbStage and Tuono.RuleHelpers and Tuono.RuleHelpers.rtbStage then
+    local stage, known = Tuono.RuleHelpers.rtbStage(S)
+    if known and stage ~= ctx.rtbStage then return TRIGGER.RTB_STAGE end
+  end
+
+  -- A COOLDOWN CAME UP. Readiness is the never-secret boolean corrected every tick
+  -- against ground truth, so this is an observed transition rather than a guess, and a
+  -- major cooldown becoming available makes a higher-priority rule true.
+  --
+  -- Only down -> up counts. Going ON cooldown is something the plan itself caused and
+  -- already predicted, so treating it as news would re-plan after every single cast.
+  for key, cd in pairs(S.cooldowns or {}) do
+    if cd.known and cd.ready and ctx.notReady[key] then return TRIGGER.COOLDOWN end
+  end
+
+  return nil
 end
 
 -- Helper: rebuild queueSet from current queue (minimize calls)
@@ -104,7 +313,25 @@ function Tuono.Engine.Evaluate()
   -- for drift in our own estimates. It just never becomes an icon.
   --
   -- Step 0: Get our rotation predictions -- the only source for the queue.
-  local predictions = Tuono.safe(Tuono.Rotation.Predict, S, 4)
+  -- SIMULATE DEEPER THAN WE DISPLAY.
+  --
+  -- This was 4, exactly the number of icons shown, which quietly capped what the bar
+  -- could ever reveal. Outlaw needs up to 5 builders before a finisher at a 5-point cap,
+  -- so the finisher sat at position 5 and was invisible until the player was already at
+  -- 3 combo points -- producing a wall of Sinister Strike with occasional cooldowns
+  -- popping into slot 1. Reported as "the whole bar is sinister strike while random
+  -- things pop into the first slot".
+  --
+  -- The sequence was never wrong. Simulated 6 deep it reads
+  --   cp=0  SS > SS > SS > SS > BtE > SS
+  --   cp=2  SS > SS > BtE > SS > SS > SS
+  --   cp=4  BtE > SS > SS > SS > SS > Dispatch
+  -- -- the finisher marching left as combo points build, which is exactly the shape a
+  -- rotation helper exists to show. It was simply off the end of the bar.
+  --
+  -- Display collapses runs of the same ability into one icon with a count, so the extra
+  -- depth costs no screen space and buys the whole shape.
+  local predictions = Tuono.safe(Tuono.Rotation.Predict, S, PREDICT_DEPTH)
   local queueIndex = 1
 
   if predictions and type(predictions) == "table" then
@@ -121,6 +348,13 @@ function Tuono.Engine.Evaluate()
           kind = "rotation",
           confidence = pred.confidence,
           step = queueIndex,
+          -- CARRY THE TIMELINE THROUGH. Rotation.Predict stamps every step with `at`
+          -- (seconds until it should be cast) and `since` (the gap after the previous
+          -- one), and this was dropping both on the floor -- so Display's wait rendering,
+          -- written to read entry.at, could never fire and every entry arrived at=nil.
+          -- The engine computed the harder quantity and then discarded it.
+          at = pred.at,
+          since = pred.since,
           isSequence = true
         })
         tempDedup[pred.spellID] = true
@@ -224,8 +458,13 @@ function Tuono.Engine.Evaluate()
               table.insert(resultQueue, trinketEntry)
             end
           elseif rule.kind == "rtb" then
-            -- RtB entry
-            if S.buffs.rtb.stage == 0 then
+            -- FAIL CLOSED ON AN UNREADABLE STAGE. This was a bare `stage == 0`, which is
+            -- the same unknown-as-no defect the profile rules already carry a shared
+            -- helper for -- and it is reachable, because the ADVISE path is live even
+            -- though PIN/PREFER are inert. Unguarded it flips with the sensor and
+            -- re-orders the bar behind position 1.
+            local _, rtbKnown = Tuono.RuleHelpers.rtbStage(S)
+            if rtbKnown and S.buffs.rtb.stage == 0 then
               local rtbEntry = {
                 spellID = Tuono.SpellIDs.rollTheBones,
                 source = rule.name,
@@ -355,15 +594,8 @@ function Tuono.Engine.Evaluate()
     resultQueue[i] = entry
   end
 
-  -- Remember what we are about to recommend, so the stall detector can compare the
-  -- player's next cast against it. Reset the counter when the recommendation CHANGES:
-  -- a stall is "same advice, repeatedly ignored", not "advice that happens to differ
-  -- from what you pressed once".
-  local newPos1 = resultQueue[1] and resultQueue[1].spellID or nil
-  if newPos1 ~= Tuono.Engine.lastPos1 then
-    Tuono.Engine.stallCount = 0
-    Tuono.Engine.lastPos1 = newPos1
-  end
+  -- (lastPos1 is assigned AFTER the plan and fallback layers, further down: it must
+  -- describe what was published, not what was derived. See the note there.)
 
   -- CONFIDENCE TRUNCATION: show lookahead only as far as we can stand behind it.
   --
@@ -401,6 +633,218 @@ function Tuono.Engine.Evaluate()
     end
   end
 
+  -- ==========================================================================
+  -- LOOKAHEAD COMMITMENT
+  -- ==========================================================================
+  -- Position 1 is re-derived from ground truth every tick and is supposed to move. The
+  -- LOOKAHEAD is different, and it was being recomputed just as often -- which is the
+  -- reported complaint: "the first button is optimal, it switches the entire list a lot
+  -- and it's not smooth".
+  --
+  -- The engine is not at fault. Rotation.Predict is a pure, idempotent function of its
+  -- input (proven in tests/test_churn.lua). The problem is that its INPUT flaps: a
+  -- recorded trace had the Roll the Bones stage readable on only 27% of ticks, and every
+  -- flip legitimately reorders the sequence, because a stage-gated rule correctly enters
+  -- and leaves the priority walk with it. Correct engine, blinking sensor, no damping.
+  --
+  -- THE GCD IS THE FRAME RATE OF THE DECISION LOOP. The player cannot act on a change
+  -- faster than one press per global cooldown, so a lookahead that changes faster than
+  -- that is showing information nobody can use, at the cost of being unreadable. So the
+  -- lookahead is committed for the duration of a GCD and only re-derived when something
+  -- material happens:
+  --
+  --   * a new GCD started        -- a press landed; this is the natural decision boundary
+  --   * position 1 changed       -- the world moved enough to change the immediate answer
+  --   * the hold aged out        -- nothing is happening (out of combat, or idle), so
+  --                                 refresh anyway rather than freeze indefinitely
+  --
+  -- ONLY THE SEQUENCE IS HELD. The cooldown and trinket entries appended after it are
+  -- not predictions -- they report something that is ready NOW -- so freezing them would
+  -- make the bar lie about live facts.
+  local seqHead, seqTail, extras = nil, {}, {}
+  for i, entry in ipairs(resultQueue) do
+    if entry.isSequence then
+      if seqHead == nil then seqHead = entry else table.insert(seqTail, entry) end
+    else
+      table.insert(extras, entry)
+    end
+  end
+
+  -- ==========================================================================
+  -- THE SEQUENCE IS A PLAN, AND FOLLOWING IT ADVANCES A CURSOR
+  -- ==========================================================================
+  -- The requirement, in the player's words: "if I press the optimal button I should be
+  -- in the optimal sequence -- but it should still check."
+  --
+  -- That is exactly right, and it falls out of what the sequence already IS. Predict
+  -- returns a CAUSAL CHAIN: step 3 is only correct because the simulator spent step 1's
+  -- energy, banked its combo points and started its cooldowns. So once the player
+  -- actually casts step 1, steps 2..N are still valid BY CONSTRUCTION -- the world moved
+  -- to the state we predicted. Re-deriving them from scratch throws away work we already
+  -- did and correctly own, and it is why pressing the right button produced a whole new
+  -- list instead of the old one sliding left.
+  --
+  -- So: publish a plan, advance a cursor when the player follows it, and re-plan only
+  -- when reality disagrees.
+  --
+  --   FOLLOWED     cast == plan[cursor]  -> cursor advances. The bar slides left. This
+  --                is the common case and it costs nothing.
+  --   DEVIATED     cast ~= plan[cursor]  -> the premise of every later step is void.
+  --                Re-plan immediately; a plan conditioned on a press that did not
+  --                happen is worse than no plan.
+  --   SURPRISED    a fresh prediction persistently disagrees with the cursor -> the
+  --                world changed under us (a proc landed, a cooldown reset, the target
+  --                died). Re-plan. This is the "it should still check" half.
+  --   EXHAUSTED    cursor ran off the end -> re-plan.
+  --
+  -- The disagreement test is deliberately NOT instantaneous. Predict is idempotent, but
+  -- its INPUTS blink -- Roll the Bones stage was readable on 27% of ticks before it was
+  -- modelled -- and a single tick of disagreement is far more likely to be sensor noise
+  -- than a changed world. Requiring the disagreement to persist is what separates
+  -- "checking" from "thrashing".
+  local now = GetTime()
+  local E = Tuono.Engine
+
+  local fresh = {}
+  if seqHead then table.insert(fresh, seqHead) end
+  for _, entry in ipairs(seqTail) do table.insert(fresh, entry) end
+
+  local plan = E.plan
+  local replan, reason = false, nil
+
+  if plan == nil or E.cursor == nil then
+    -- Already invalidated, by an event that named its own reason.
+    replan, reason = true, E.pendingTrigger or TRIGGER.WORLD
+  elseif E.cursor > #plan then
+    replan, reason = true, TRIGGER.EXHAUSTED
+  end
+
+  -- The world may have moved even though the plan is still nominally valid. Checked
+  -- before the disagreement counter because a NAMED cause is strictly better diagnostics
+  -- than "the prediction differs" -- both re-plan, but only one tells you why.
+  if not replan then
+    local trigger = worldChangedSince(S, E.planContext)
+    if trigger then replan, reason = true, trigger end
+  end
+
+  if not replan then
+    local planned = plan[E.cursor]
+    local freshHead = fresh[1] and fresh[1].spellID or nil
+    -- A CAST IS THE MOMENT OF MAXIMUM INFORMATION, SO CHECK HARDEST THERE.
+    --
+    -- The plan assumes the player casts each step PROMPTLY -- the simulator advanced one
+    -- GCD per step. Press the right button late (clipped GCD, a moment's hesitation) and
+    -- the world has moved further than the plan modelled: energy regenerated, a cooldown
+    -- came up, a proc landed. The remaining steps may no longer be optimal even though
+    -- the player did exactly the right thing.
+    --
+    -- So advancing the cursor does not grant the plan immunity. It schedules an immediate
+    -- re-check: one tick of disagreement is enough to re-plan right after a cast, where
+    -- between casts it takes three. Noise rejection is for quiet periods; a cast boundary
+    -- is a real event and disagreement there is real news.
+    local needed = E.verifyOnAdvance and 1 or DISAGREE_TICKS_BEFORE_REPLAN
+    E.verifyOnAdvance = false
+
+    if planned and freshHead and planned.spellID ~= freshHead then
+      E.disagreeTicks = (E.disagreeTicks or 0) + 1
+      if E.disagreeTicks >= needed then replan, reason = true, TRIGGER.DISAGREE end
+    else
+      E.disagreeTicks = 0
+      -- The plan and the world agree, so refresh the head's provenance from the fresh
+      -- rating rather than showing a rating computed several GCDs ago. The CHOICE is
+      -- held; how sure we are about it stays current.
+      if planned and fresh[1] then
+        planned.confidence = fresh[1].confidence
+      end
+    end
+    -- A plan is a short-lived object. This is a backstop against holding one across
+    -- something we failed to notice, not the primary invalidation path.
+    if (now - (E.planAt or 0)) > MAX_PLAN_AGE then replan, reason = true, TRIGGER.AGED end
+  end
+
+  local seq
+  if replan then
+    E.plan = fresh
+    E.cursor = 1
+    E.planAt = now
+    E.planContext = snapshotPlanContext(S)
+    E.disagreeTicks = 0
+    E.verifyOnAdvance = false
+
+    -- One counting site, so an invalidation and the re-plan it caused are one event in
+    -- the tally rather than two. Published for /tuono debug and the flight recorder.
+    local fired = reason or E.pendingTrigger or TRIGGER.WORLD
+    E.pendingTrigger = nil
+    E.lastTrigger = fired
+    E.lastTriggerAt = now
+    E.triggerCounts = E.triggerCounts or {}
+    E.triggerCounts[fired] = (E.triggerCounts[fired] or 0) + 1
+
+    seq = fresh
+  else
+    -- Publish from the cursor onward: the tail the player has not reached yet.
+    seq = {}
+    for i = E.cursor, #plan do table.insert(seq, plan[i]) end
+  end
+  -- ==========================================================================
+  -- THERE IS ALWAYS AN ANSWER
+  -- ==========================================================================
+  -- A live trace recorded ten UI errors fired while the queue held NOTHING -- the player
+  -- was pressing buttons into a blank bar. An empty bar reads as "the addon is broken",
+  -- which is strictly worse than one slightly suboptimal suggestion and worse than an
+  -- honest "wait for this", both of which are information.
+  --
+  -- Two mechanisms already existed to prevent this: the profile's unconditional
+  -- last-resort rule, and Predict's pooling fallback which re-runs the list with
+  -- affordability suspended. The trace proves they still leave gaps -- the last-resort
+  -- rule is itself gated on canAfford, so provable unaffordability empties it, and a
+  -- deviation can drop a plan at a moment when Predict returns nothing.
+  --
+  -- So the guarantee moves here, where it can be enforced rather than hoped for. The
+  -- profile names its filler; the engine promises the bar is never blank. Marked
+  -- "fallback" so the display renders it as a wait rather than a command -- we are not
+  -- claiming it is castable this instant, only that it is what you are waiting for.
+  if #seq == 0 then
+    local profile = Tuono.Profiles and Tuono.Profiles.Active()
+    local key = profile and (profile.fallback or "sinisterStrike")
+    local fallbackID = profile and profile.spells and profile.spells[key]
+    local known = fallbackID and S.knownSpells and S.knownSpells[fallbackID]
+    -- Fail OPEN on an unprobed spell: nil means "never asked", and refusing to show
+    -- anything because we did not probe is the unknown-as-no defect in its purest form.
+    if fallbackID and (known ~= false or S.knownUnavailable) then
+      seq = { {
+        spellID = fallbackID,
+        source = "fallback",
+        kind = "rotation",
+        confidence = "fallback",
+        step = 1,
+        isSequence = true,
+      } }
+      E.usedFallback = true
+    end
+  else
+    E.usedFallback = false
+  end
+
+  E.committedHead = seq[1] and seq[1].spellID or nil
+
+  wipeTable(resultQueue)
+  for _, entry in ipairs(seq) do table.insert(resultQueue, entry) end
+  for _, entry in ipairs(extras) do table.insert(resultQueue, entry) end
+
+  -- WHAT WE ACTUALLY PUBLISHED, not what we derived before planning.
+  --
+  -- This assignment used to sit above the plan block, so lastPos1 described the raw
+  -- prediction rather than the sequence on screen. Both consumers care about the screen:
+  -- the stall detector compares the player's cast against what they were SHOWN, and the
+  -- flight recorder files it as `rec`, which is how a trace attributes an error to a
+  -- recommendation. Reading the wrong one makes a trace blame the wrong spell.
+  local publishedPos1 = resultQueue[1] and resultQueue[1].spellID or nil
+  if publishedPos1 ~= Tuono.Engine.lastPos1 then
+    Tuono.Engine.stallCount = 0
+    Tuono.Engine.lastPos1 = publishedPos1
+  end
+
   -- Step 5: Truncate queue to 8
   while #resultQueue > 8 do
     table.remove(resultQueue)
@@ -408,3 +852,16 @@ function Tuono.Engine.Evaluate()
 
   return { queue = resultQueue, advisories = resultAdvisories }
 end
+
+-- Drop the held lookahead. Combat boundaries are a hard reset: carrying a sequence
+-- committed against the last pull into the next one is exactly the staleness this layer
+-- must not introduce.
+function Tuono.Engine.ResetCommitment()
+  Tuono.Engine.InvalidatePlan(Tuono.Engine.TRIGGER.COMBAT)
+  Tuono.Engine.planAt = nil
+  Tuono.Engine.committedHead = nil
+end
+
+Tuono.RegisterEvent("PLAYER_REGEN_ENABLED", Tuono.Engine.ResetCommitment)
+Tuono.RegisterEvent("PLAYER_REGEN_DISABLED", Tuono.Engine.ResetCommitment)
+Tuono.RegisterEvent("PLAYER_ENTERING_WORLD", Tuono.Engine.ResetCommitment)

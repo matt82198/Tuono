@@ -335,6 +335,71 @@ called, and here is the algebra proving the observation channel cannot be reachi
 
 ---
 
+## 11. What a "secret" actually is: taint, not absence
+
+VERIFIED from a live 12.1.0 error report, 2026-08-17 — thrown by Blizzard's *own*
+`Blizzard_CooldownViewer`, not by an addon:
+
+```
+CooldownViewer.lua:987: attempt to perform arithmetic on field 'startTime'
+(a secret number value, while execution tainted by 'CooldownManagerCentered')
+
+spellCooldownInfo = { modRate=<secret>, isEnabled=true,
+                      startTime=<secret>, isActive=false, duration=<secret> }
+```
+
+Blizzard's own code performs that arithmetic every frame without incident. It threw *only*
+because execution was tainted by an addon. So a secret is not an absent value and not an
+encrypted one: it is **operable by untainted code and inoperable by tainted code**.
+
+Three consequences for everything above:
+
+1. **Addon code is tainted by definition.** No cleverness recovers `x` directly, ever. The
+   inversion is not a workaround for a temporary gap — it is the only approach available to
+   an addon, permanently.
+2. **Blizzard deliberately left decision-grade predicates non-secret.** `isEnabled` and
+   `isActive` came back plain booleans in the same table whose numbers were secret;
+   `C_Spell.IsSpellUsable` likewise. The raw quantity is withheld while the *answer an addon
+   actually needs* is handed over. Building on those is using the surface as designed. (Whether
+   recovering a precise value from *many* such predicates is equally intended is a separate
+   and less settled question — see `STATE.md`.)
+3. **Taint is contagious and it breaks Blizzard's code, not just yours.** The error above is
+   an addon causing a denial of service in a Blizzard UI component, 52 times, in a stack
+   trace that names the responsible addon. This is why `Highlight.lua` anchors its own frame
+   to an action button and never writes to one, and why `tests/lint_codegen.lua` gates
+   `hooksecurefunc` and friends.
+
+Confirmed incidentally: the timer fields were secret while `isActive` was **false**, so
+cooldown secrecy is not gated on the cooldown running. And Blizzard's own
+`MIN_GLOBAL_RECOVERY_TIME` appeared in the locals as `0.750000`, independently confirming
+the `GCD_FLOOR = 0.75` constant in `CooldownModel.lua`.
+
+---
+
+## 12. Not yet inverted
+
+Tracked so the gap stays visible rather than being rediscovered.
+
+- **Roll the Bones stage.** Now modelled (identified once at the roll, integrated forward
+  over `rtbDuration`/`rtbExtendCap`, re-reading demoted to a correction channel). Live
+  readability went **27% → 92%** of ticks. The prior per-tick *read* was the single largest
+  source of bar instability, and §9's observability caveat is exactly why: a blinking sensor
+  produces a blinking output, and no amount of downstream damping fixes the sensor.
+- **"When", not "whether".** The deepest remaining gap, and it is an inversion one. Every
+  affordability question is currently asked in the present tense — `canAfford`,
+  `cooldown.ready` — while the interval model can answer *"when will energy reach 45"* as
+  precisely as *"is energy above 45"*, because it carries regen bounds. We compute the
+  harder quantity and discard it to answer the easier question. Hekili's `TimeToReady`
+  (`State.lua:7831`) is the shape: `max(cooldown remains, GCD remains, resource.time_to_X)`.
+  See `docs/HEKILI.md`.
+- **Buff expiry inside the simulation** is modelled, but only a *positive, readable*
+  timestamp may end a buff — `expires` reads 0 or nil whenever the payload is hidden, and
+  treating that as expired would delete every proc-gated step in real combat.
+- **Buff maintenance** is not modelled at all. Blizzard's own assist recommended Instant
+  Poison for an entire recorded trace because the player's weapon poison had lapsed.
+
+---
+
 ## Further reading
 
 - **[SECRET-VALUES-FINDINGS.md](SECRET-VALUES-FINDINGS.md)** — what is and is not readable,
