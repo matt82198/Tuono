@@ -38,6 +38,75 @@ local function starved(stub)
   for _, id in ipairs(ZERO_COST_COOLDOWNS) do stub.setCooldown(id, 120) end
 end
 
+describe("depth: the lookahead does not end when the simulation runs dry", function()
+  -- Measured in a live trace: published depth was 1 icon on 64 of 198 ticks and 0 on 51
+  -- more -- 58% of the fight showing one button or none. The cause was that the
+  -- ignoreEnergy rescue which keeps step 1 from vanishing was `step == 1` only, so a
+  -- later step that could not be afforded within the pooling runway simply ended the
+  -- sequence. A lookahead is allowed to span several seconds of pooling; that is what
+  -- makes it a lookahead.
+  local function depth(Tuono)
+    return #(Tuono.Rotation.Predict(Tuono.State, 4) or {})
+  end
+
+  it("returns full depth at low energy", function()
+    local Tuono, stub = harness.boot({
+      inCombat = true,
+      world = function(s)
+        s.state.inCombat = true
+        s.state.energy = 5
+        s.state.comboPoints = 2
+        s.state.secret.auras = true
+      end,
+    })
+    harness.evaluate(Tuono)
+    expect.equal(depth(Tuono), 4,
+      "the sequence ended early because the simulated player ran out of energy")
+  end)
+
+  it("returns full depth with every cooldown running", function()
+    -- The live condition my first offline probe missed: a fresh boot has every cooldown
+    -- ready, which is not what a real fight looks like after the opener.
+    local Tuono, stub = harness.boot({
+      inCombat = true,
+      world = function(s)
+        s.state.inCombat = true
+        s.state.energy = 20
+        s.state.comboPoints = 1
+        s.state.secret.auras = true
+        for _, id in ipairs({ 13750, 271877, 1277933, 315341, 1214909, 51690, 13877, 381989 }) do
+          s.setCooldown(id, 90)
+        end
+      end,
+    })
+    harness.evaluate(Tuono)
+    expect.equal(depth(Tuono), 4, "cooldowns running collapsed the lookahead")
+  end)
+
+  it("labels only position 1 as pooling, never a later step", function()
+    -- "Pooling" means "you cannot press this yet", which is a statement about NOW. Of
+    -- course you cannot press step 3 yet; saying so on every step would make the label
+    -- meaningless and dim the whole bar.
+    local Tuono, stub = harness.boot({
+      inCombat = true,
+      world = function(s)
+        s.state.inCombat = true
+        s.state.energy = 0
+        s.state.comboPoints = 0
+        s.state.secret.auras = true
+      end,
+    })
+    harness.evaluate(Tuono)
+    local steps = Tuono.Rotation.Predict(Tuono.State, 4) or {}
+    for i, step in ipairs(steps) do
+      if i > 1 then
+        expect.truthy(step.confidence ~= "pooling",
+          "step " .. i .. " was labelled pooling; that label belongs to position 1 only")
+      end
+    end
+  end)
+end)
+
 describe("fallback: the queue always has an answer", function()
   it("is not empty at zero energy", function()
     local Tuono, stub = harness.boot({ world = starved, inCombat = true })

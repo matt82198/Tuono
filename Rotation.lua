@@ -759,7 +759,7 @@ function Tuono.Rotation.Predict(state, steps)
 	for step = 1, steps do
 		local spellID, reason = nil, nil
 		local poolAttempts, maxPoolAttempts = 0, 3
-		local pooledStepOne = false
+		local pooled = false
 		local firedRule = nil
 
 		repeat
@@ -784,8 +784,8 @@ function Tuono.Rotation.Predict(state, steps)
 			-- answer is "wait, this is next". So we still pool, and mark the result
 			-- POOLING so the display can dim it and show it as a wait rather than a
 			-- command. The invariant is preserved: we never claim it is castable now.
-			if not spellID and step == 1 then
-				pooledStepOne = true
+			if not spellID then
+				pooled = true
 			end
 
 			if not spellID and poolAttempts < maxPoolAttempts then
@@ -804,7 +804,19 @@ function Tuono.Rotation.Predict(state, steps)
 		-- Blizzard's pick, and would now just blank it -- answer the question the player
 		-- actually has: what am I waiting for? Re-run the list with affordability
 		-- suspended so cooldown and resource gates still apply but energy does not.
-		if not spellID and step == 1 then
+		-- APPLIES TO EVERY STEP, NOT JUST THE FIRST.
+		--
+		-- This rescue was `step == 1` only, so a later step that could not be afforded
+		-- within the pooling runway simply ended the sequence. Measured in a live trace:
+		-- the published depth was 1 icon on 64 of 198 ticks and 0 on 51 more -- 58% of the
+		-- fight showing one button or none, which is exactly the report "single combat
+		-- shows one button".
+		--
+		-- A lookahead is allowed to span several seconds of pooling; that is what makes it
+		-- a lookahead. Truncating it the moment the simulated player runs dry throws away
+		-- the answer the player most needs at low energy, which is what the sequence looks
+		-- like once they can act again.
+		if not spellID then
 			ignoreEnergy = true
 			local ok = pcall(function()
 				for _, rule in ipairs(priorityList) do
@@ -818,7 +830,7 @@ function Tuono.Rotation.Predict(state, steps)
 			-- Reset unconditionally: a throw inside the loop must not leave affordability
 			-- permanently disabled for every later evaluation in the session.
 			ignoreEnergy = false
-			if ok and spellID then pooledStepOne = true end
+			if ok and spellID then pooled = true end
 		end
 
 		if not spellID then break end
@@ -826,9 +838,20 @@ function Tuono.Rotation.Predict(state, steps)
 		-- Rate by PROVENANCE, not by slot index. See rateRule above for why.
 		local confidence = firedRule and rateRule(firedRule, S, spellID) or "bounded"
 
-		-- Pooling outranks every other label: "you cannot press this yet" matters more
-		-- to the player than how sure we are that it is the right choice.
-		if pooledStepOne and step == 1 then confidence = "pooling" end
+		-- "POOLING" IS A STATEMENT ABOUT NOW, so it is a step-1 label only. It means "you
+		-- cannot press this yet", which outranks every other label at position 1 because
+		-- it matters more to the player than how sure we are that it is the right choice.
+		--
+		-- A later step reached through pooling is NOT that: of course you cannot press
+		-- step 3 yet. It rests on assumed energy regeneration, so it carries the honest
+		-- cost of that assumption -- bounded -- and is not labelled as a wait.
+		if pooled then
+			if step == 1 then
+				confidence = "pooling"
+			else
+				confidence = weakest(confidence, "bounded")
+			end
+		end
 
 		table.insert(result, {
 			spellID = spellID,

@@ -256,6 +256,13 @@ def report(path: Path) -> int:
             fb = sum(1 for t in ticks if t.get("fb") is True)
             if fb:
                 print(f"  fell back to filler   : {fb} ticks")
+            errs = [t for t in ticks if t.get("err")]
+            if errs:
+                worst = max(t["err"] for t in errs)
+                print(f"  ADDON ERRORS          : {len(errs)} ticks, peak count {worst}")
+                msgs = {t.get("errMsg") for t in errs if t.get("errMsg")}
+                for m in list(msgs)[:3]:
+                    print(f"      {m}")
             reasons = Counter(t.get("replan") for t in ticks if t.get("replan"))
             if reasons:
                 print(f"  re-plan reasons       : {dict(reasons)}")

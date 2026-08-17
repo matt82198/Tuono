@@ -429,10 +429,26 @@ function R.Snapshot()
 		visible = math.max(0, planLen - cursor + 1)
 	end
 
+	-- ERRORS ARE SWALLOWED BY DESIGN, SO THEY MUST BE COUNTED.
+	--
+	-- Every stage of the tick runs inside Tuono.safe, which prints an error ONCE and then
+	-- suppresses it. That is right for stability -- one bad call must not take the frame
+	-- down -- but it means a rule throwing on every tick is invisible after the first
+	-- chat line, and a thrown Predict returns nil, which reaches the player as an empty
+	-- bar with no explanation. A live trace showed the sequence empty on 51 of 198 ticks
+	-- and there was no way to tell a throw from a genuine "nothing matched".
+	local errCount = Tuono.errorCount or 0
+	local firstErr = nil
+	if errCount > 0 then
+		for msg in pairs(Tuono.errorsSeen or {}) do firstErr = msg break end
+	end
+
 	push({
 		k = "tick",
 		-- Sequence depth as rendered, plus why it might be short.
 		vis = visible, planLen = planLen, cur = cursor,
+		err = (errCount > 0) and errCount or nil,
+		errMsg = firstErr,
 		fb = E and E.usedFallback or nil,
 		replan = E and E.lastReplanReason or nil,
 		cp = S.comboPoints, cpK = S.comboPointsKnown,
