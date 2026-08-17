@@ -174,3 +174,31 @@ describe("fallback: the queue always has an answer", function()
       "lastPos1 disagrees with what was actually published")
   end)
 end)
+
+describe("fallback: one bad rule cannot empty the bar", function()
+  it("survives a rule that throws, and counts it", function()
+    -- The rescue that guarantees an answer used to wrap the whole priority walk in a
+    -- SINGLE pcall, so one throwing rule aborted it and the sequence came back empty --
+    -- silently, because a bare pcall never reaches Tuono.safe. A live trace showed the
+    -- sequence empty on 41% of in-combat ticks with no error recorded anywhere.
+    local Tuono, stub = harness.boot({ world = starved, inCombat = true })
+    local profile = Tuono.Profiles.Active()
+
+    -- Poison one rule near the top of the walk.
+    local poisoned = profile.priority[3]
+    local original = poisoned.when
+    poisoned.when = function() error("deliberate: a rule that throws") end
+    Tuono.Rotation.ruleErrors = 0
+
+    local ok = pcall(function()
+      local ids = harness.queueIDs(harness.evaluate(Tuono))
+      expect.truthy(#ids >= 1, "one throwing rule emptied the entire bar")
+      expect.truthy((Tuono.Rotation.ruleErrors or 0) > 0,
+        "the throw was swallowed without being counted, so a trace cannot tell a rule "
+          .. "that throws every tick from one that simply never matches")
+    end)
+
+    poisoned.when = original
+    if not ok then error("assertions failed", 0) end
+  end)
+end)

@@ -449,6 +449,12 @@ function R.Snapshot()
 		vis = visible, planLen = planLen, cur = cursor,
 		err = (errCount > 0) and errCount or nil,
 		errMsg = firstErr,
+		-- Rules that THREW during the priority walk. These are pcall'd per rule and
+		-- skipped, which is right -- one bad rule must not take the rotation down -- but
+		-- skipping was invisible, so a rule throwing every tick looked exactly like one
+		-- that never matches.
+		ruleErr = (Tuono.Rotation and Tuono.Rotation.ruleErrors) or nil,
+		ruleErrName = Tuono.Rotation and Tuono.Rotation.lastRuleError or nil,
 		fb = E and E.usedFallback or nil,
 		replan = E and E.lastReplanReason or nil,
 		cp = S.comboPoints, cpK = S.comboPointsKnown,

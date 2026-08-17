@@ -263,6 +263,12 @@ def report(path: Path) -> int:
                 msgs = {t.get("errMsg") for t in errs if t.get("errMsg")}
                 for m in list(msgs)[:3]:
                     print(f"      {m}")
+            rerr = [t for t in ticks if t.get("ruleErr")]
+            if rerr:
+                peak = max(t["ruleErr"] for t in rerr)
+                names = {t.get("ruleErrName") for t in rerr if t.get("ruleErrName")}
+                print(f"  RULES THAT THREW      : {len(rerr)} ticks, cumulative {peak}"
+                      f"  last: {', '.join(str(n) for n in list(names)[:3])}")
             reasons = Counter(t.get("replan") for t in ticks if t.get("replan"))
             if reasons:
                 print(f"  re-plan reasons       : {dict(reasons)}")

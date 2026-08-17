@@ -765,7 +765,14 @@ function Tuono.Rotation.Predict(state, steps)
 		repeat
 			for _, rule in ipairs(priorityList) do
 				local ok, matched = pcall(rule.when, S, state)
-				if ok and matched then
+				-- A rule that throws is skipped, which is right -- one bad rule must not
+				-- take the rotation down. But it was skipped INVISIBLY, so a rule
+				-- throwing on every tick looked exactly like a rule that never matches.
+				-- Counted so a trace can tell those apart.
+				if not ok then
+					Tuono.Rotation.ruleErrors = (Tuono.Rotation.ruleErrors or 0) + 1
+					Tuono.Rotation.lastRuleError = rule.name
+				elseif matched then
 					spellID = ruleSpellID(rule, spells)
 					reason = rule.name
 					if spellID then firedRule = rule break end
@@ -816,21 +823,34 @@ function Tuono.Rotation.Predict(state, steps)
 		-- a lookahead. Truncating it the moment the simulated player runs dry throws away
 		-- the answer the player most needs at low energy, which is what the sequence looks
 		-- like once they can act again.
+		--
+		-- ONE PCALL PER RULE, NOT ONE AROUND THE WHOLE WALK.
+		--
+		-- This used to wrap the entire loop in a single pcall, so ONE throwing rule
+		-- aborted the rescue outright and the sequence came back empty -- which is the
+		-- last-resort path, so the bar had nothing at all. The main walk above has always
+		-- pcall'd per rule and is immune; only the rescue, the path that exists precisely
+		-- to guarantee an answer, could be taken out by a single bad rule.
+		--
+		-- Worse, it was SILENT: a bare pcall does not go through Tuono.safe, so nothing
+		-- was counted or printed. A live trace showed the sequence empty on 41% of
+		-- in-combat ticks with no error recorded anywhere.
 		if not spellID then
 			ignoreEnergy = true
-			local ok = pcall(function()
-				for _, rule in ipairs(priorityList) do
-					local matched = rule.when(S, state)
-					if matched then
-						local id = ruleSpellID(rule, spells)
-						if id then spellID, reason, firedRule = id, rule.name, rule break end
-					end
+			for _, rule in ipairs(priorityList) do
+				local ok, matched = pcall(rule.when, S, state)
+				if not ok then
+					Tuono.Rotation.ruleErrors = (Tuono.Rotation.ruleErrors or 0) + 1
+					Tuono.Rotation.lastRuleError = rule.name
+				elseif matched then
+					local id = ruleSpellID(rule, spells)
+					if id then spellID, reason, firedRule = id, rule.name, rule break end
 				end
-			end)
-			-- Reset unconditionally: a throw inside the loop must not leave affordability
-			-- permanently disabled for every later evaluation in the session.
+			end
+			-- Reset unconditionally: a throw must not leave affordability permanently
+			-- disabled for every later evaluation in the session.
 			ignoreEnergy = false
-			if ok and spellID then pooled = true end
+			if spellID then pooled = true end
 		end
 
 		if not spellID then break end
