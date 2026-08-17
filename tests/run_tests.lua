@@ -131,6 +131,8 @@ local SUITE_FILES = {
   "test_display.lua",
   "test_highlight.lua",
   "test_fallback.lua",
+  "test_confidence.lua",
+  "test_triggers.lua",
   "test_churn.lua",
 }
 
