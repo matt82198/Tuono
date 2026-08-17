@@ -1,0 +1,5 @@
+# WoW reads Lua fine either way, but mixed endings make every diff unreadable.
+# Normalize to LF in the repo; check out LF so the deployed copy matches the repo byte-for-byte.
+* text=auto eol=lf
+*.tga binary
+*.blp binary
