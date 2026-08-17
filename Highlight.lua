@@ -53,10 +53,36 @@ local function CurrentMainBarSlot(buttonIndex)
 	return buttonIndex + (page - 1) * numButtons
 end
 
--- Map action slot (1-108) to the action button frame name
--- Canonical layout: 1-12 ActionButton, 13-24 ActionButton (page 2), 25-36 MultiBarRightButton, etc.
+-- ============================================================================
+-- ACTION SLOT -> BUTTON FRAME
+-- ============================================================================
+-- ONE TABLE IS THE SOURCE OF TRUTH FOR BOTH DIRECTIONS. The slot sweep used to run
+-- 1..120 while this mapping rejected anything above 108, so a spell on bar 8 was indexed
+-- and then resolved to no frame -- the glow simply never appeared, with no error and no
+-- diagnostic. Two hardcoded bounds in two functions is exactly the divergence shape that
+-- has bitten this codebase repeatedly, so the sweep now iterates precisely the range this
+-- table covers and the two cannot drift apart.
+--
+-- Canonical layout: 1-12 main, 13-24 main page 2 (shares ActionButton frames), 25-36
+-- MultiBarRight, 37-48 MultiBarLeft, 49-60 MultiBarBottomRight, 61-72 MultiBarBottomLeft,
+-- 73-108 MultiBar5/6/7. 109-120 exist as action slots but have no named button frame.
+local BAR_RANGES = {
+	{ first = 1,   last = 12,  prefix = "ActionButton",              base = 0 },
+	{ first = 13,  last = 24,  prefix = "ActionButton",              base = 12 },
+	{ first = 25,  last = 36,  prefix = "MultiBarRightButton",       base = 24 },
+	{ first = 37,  last = 48,  prefix = "MultiBarLeftButton",        base = 36 },
+	{ first = 49,  last = 60,  prefix = "MultiBarBottomRightButton", base = 48 },
+	{ first = 61,  last = 72,  prefix = "MultiBarBottomLeftButton",  base = 60 },
+	{ first = 73,  last = 84,  prefix = "MultiBar5Button",           base = 72 },
+	{ first = 85,  last = 96,  prefix = "MultiBar6Button",           base = 84 },
+	{ first = 97,  last = 108, prefix = "MultiBar7Button",           base = 96 },
+}
+
+local MAX_ACTION_SLOT = BAR_RANGES[#BAR_RANGES].last
+Tuono.Highlight.MAX_ACTION_SLOT = MAX_ACTION_SLOT
+
 local function GetActionButtonFrameName(slot)
-	if type(slot) ~= "number" or slot < 1 or slot > 108 then
+	if type(slot) ~= "number" or slot < 1 or slot > MAX_ACTION_SLOT then
 		return nil
 	end
 
@@ -68,26 +94,41 @@ local function GetActionButtonFrameName(slot)
 		end
 	end
 
-	if slot >= 1 and slot <= 12 then
-		return "ActionButton" .. slot
-	elseif slot >= 13 and slot <= 24 then
-		return "ActionButton" .. (slot - 12)
-	elseif slot >= 25 and slot <= 36 then
-		return "MultiBarRightButton" .. (slot - 24)
-	elseif slot >= 37 and slot <= 48 then
-		return "MultiBarLeftButton" .. (slot - 36)
-	elseif slot >= 49 and slot <= 60 then
-		return "MultiBarBottomRightButton" .. (slot - 48)
-	elseif slot >= 61 and slot <= 72 then
-		return "MultiBarBottomLeftButton" .. (slot - 60)
-	elseif slot >= 73 and slot <= 84 then
-		return "MultiBar5Button" .. (slot - 72)
-	elseif slot >= 85 and slot <= 96 then
-		return "MultiBar6Button" .. (slot - 84)
-	elseif slot >= 97 and slot <= 108 then
-		return "MultiBar7Button" .. (slot - 96)
+	for _, range in ipairs(BAR_RANGES) do
+		if slot >= range.first and slot <= range.last then
+			return range.prefix .. (slot - range.base)
+		end
 	end
 	return nil
+end
+
+-- Published so the invariant "every slot we index resolves to a frame" is testable, and
+-- so Display can eventually share this instead of keeping its own copy.
+Tuono.Highlight.FrameNameForSlot = GetActionButtonFrameName
+
+-- GetActionInfo, secret-safe. Display.lua learned this the expensive way: an unreadable
+-- actionID makes the `actionID == spellID` comparison RAISE, and one secret slot mid-loop
+-- took out the entire icon strip. The same hazard is worse here, because a raise inside
+-- rebuildSlotIndex leaves the whole index empty and no spell resolves to any button.
+-- Skipping one slot costs at most one glow; raising costs all of them.
+local function safeActionInfo(slot)
+	if not _G.GetActionInfo then return nil, nil end
+	local ok, actionType, actionID = pcall(_G.GetActionInfo, slot)
+	if not ok then return nil, nil end
+	if Tuono.isSecret(actionType) then actionType = nil end
+	if type(actionType) ~= "string" then actionType = nil end
+	local id = Tuono.readNum(actionID)
+	return actionType, id
+end
+
+local function actionMatches(actionType, actionID, spellID)
+	if not actionType or not actionID then return false end
+	if actionType ~= "spell" and actionType ~= "talent" and actionType ~= "action" then
+		return false
+	end
+	if actionID == spellID then return true end
+	local ok, matched = pcall(Tuono.SpellMatchesAction, spellID, actionID)
+	return ok and matched or false
 end
 
 -- ============================================================================
@@ -118,9 +159,11 @@ local function rebuildSlotIndex()
 	slotIndexDirty = false
 	if not _G.GetActionInfo then return end
 
-	for slot = 1, 120 do
-		local ok, actionType, actionID = pcall(_G.GetActionInfo, slot)
-		if ok and actionID and
+	-- Iterate exactly the slots BAR_RANGES can resolve to a frame. Sweeping further
+	-- indexed spells that could never be glowed.
+	for slot = 1, MAX_ACTION_SLOT do
+		local actionType, actionID = safeActionInfo(slot)
+		if actionID and
 			(actionType == "spell" or actionType == "talent" or actionType == "action") then
 			-- First slot wins, so a duplicated ability resolves to its earliest button.
 			if slotIndex[actionID] == nil then slotIndex[actionID] = slot end
@@ -185,26 +228,26 @@ local function GetActionSlotForSpell_Scan(spellID)
 	-- TIER 2: the CURRENTLY VISIBLE main-bar slots (bonus-bar aware), so the glow
 	-- follows a stealth-only spell (e.g. Ambush) to whatever button is ACTUALLY
 	-- showing it right now instead of a static page-1 guess. Override-aware match.
+	-- Read through safeActionInfo, not raw. A secret actionID makes the comparison below
+	-- RAISE, and this whole function is called from a slash command with nothing between
+	-- it and the user -- so an unreadable slot would turn a diagnostic into an error.
 	if _G.GetActionInfo then
 		for i = 1, 12 do
 			local slot = CurrentMainBarSlot(i)
-			local actionType, actionID = _G.GetActionInfo(slot)
-			local matches = (actionType == "spell" or actionType == "talent" or actionType == "action")
-				and ((Tuono.SpellMatchesAction and Tuono.SpellMatchesAction(spellID, actionID)) or actionID == spellID)
-			if matches then
+			local actionType, actionID = safeActionInfo(slot)
+			if actionMatches(actionType, actionID, spellID) then
 				return slot
 			end
 		end
 	end
 
-	-- TIER 3: fallback full sweep of all 120 action slots (fixed multibars unaffected
-	-- by the main-bar page/bonus swap, plus a catch-all for anything TIER 1/2 missed).
+	-- TIER 3: fallback sweep of every slot that has a button frame (fixed multibars are
+	-- unaffected by the main-bar page/bonus swap, plus a catch-all for anything TIER 1/2
+	-- missed).
 	if _G.GetActionInfo then
-		for slot = 1, 120 do
-			local actionType, actionID = _G.GetActionInfo(slot)
-			local matches = (actionType == "spell" or actionType == "talent" or actionType == "action")
-				and ((Tuono.SpellMatchesAction and Tuono.SpellMatchesAction(spellID, actionID)) or actionID == spellID)
-			if matches then
+		for slot = 1, MAX_ACTION_SLOT do
+			local actionType, actionID = safeActionInfo(slot)
+			if actionMatches(actionType, actionID, spellID) then
 				return slot
 			end
 		end
@@ -248,19 +291,137 @@ local GLOW_POOL_SIZE = 4
 local glowPool = {}
 local glowByButton = {}
 
+-- How many buttons may carry a mark at once: the immediate recommendation plus two steps
+-- of lead. Subitizing is reliable to about four, and three leaves margin.
+local MAX_MARKS = 3
+local MAX_PIPS = MAX_MARKS - 1
+
+-- ============================================================================
+-- COLOUR TOKENS
+-- ============================================================================
+-- DELIBERATELY NO GREEN AND NO RED. Green/red is the single most common colourblind
+-- failure (deuteranopia, roughly 6% of men), and the previous glow was pure green.
+-- Authority is carried by LUMINANCE instead, which works for every form of colour vision
+-- and reads against arbitrary spell art.
+--
+-- Blue is deliberately absent too: Blizzard's own Assisted Highlight is blue, and a blue
+-- Tuono mark would be indistinguishable from it.
+local COLOR_AUTHORITY = { 0.95, 0.95, 0.95, 0.95 }   -- position 1
+local COLOR_LEAD      = { 0.60, 0.60, 0.65, 0.75 }   -- positions 2-3
+
+local RING_THICKNESS_PRIMARY = 2
+local RING_THICKNESS_LEAD = 1
+
+-- Frame and texture API surface varies across builds and across the test harness. None
+-- of these calls is worth taking the whole highlight module down for.
+local function try(obj, method, ...)
+	if obj and obj[method] then pcall(obj[method], obj, ...) end
+end
+
 local function makeGlow()
 	local f = CreateFrame("Frame", nil, UIParent)
-	-- Frame API surface varies across builds and harnesses; none of these are worth
-	-- taking the whole highlight module down for.
 	if f.SetFrameStrata then pcall(f.SetFrameStrata, f, "HIGH") end
 	if f.Hide then f:Hide() end
-	if f.CreateTexture then
+	if not f.CreateTexture then return f end
+
+	-- FOUR EDGES, NOT A FILL.
+	--
+	-- This used to be a single texture with SetAllPoints on a frame covering the entire
+	-- button, at HIGH strata, coloured with a three-argument SetColorTexture -- which
+	-- defaults alpha to 1.0. The result was a solid rectangle over the spell art: the
+	-- player was told "press the green square" and could not see which spell it was.
+	--
+	-- Edge pieces mark the button and leave the icon completely readable, which is the
+	-- entire point of putting the mark on the bar rather than on our own strip.
+	f.ring = {}
+	for _, edge in ipairs({ "TOP", "BOTTOM", "LEFT", "RIGHT" }) do
 		local tex = f:CreateTexture(nil, "OVERLAY")
-		if tex and tex.SetAllPoints then pcall(tex.SetAllPoints, tex, f) end
-		if tex and tex.SetColorTexture then pcall(tex.SetColorTexture, tex, 0, 1, 0.35) end
-		f.tex = tex
+		tex.edge = edge
+		f.ring[#f.ring + 1] = tex
 	end
+
+	-- ORDINAL PIPS carry lead time onto the action bar, which is the only thing that
+	-- justifies occupying it: Blizzard already ships a native position-1 highlight, so a
+	-- helper that marks only position 1 is a worse copy of a built-in feature. Numerals
+	-- would need foveal attention and cancel the benefit of being peripheral; one to
+	-- three dots are preattentive.
+	f.pips = {}
+	for i = 1, MAX_PIPS do
+		local tex = f:CreateTexture(nil, "OVERLAY")
+		try(tex, "SetSize", 3, 3)
+		try(tex, "Hide")
+		f.pips[i] = tex
+	end
+
+	-- The one place a numeral earns its slot. A repeat count is read at leisure and its
+	-- absence is the common case -- and "Sinister Strike x4" on one button is more honest
+	-- than four identical marks, which would imply four decisions where there is one
+	-- decision repeated.
+	if f.CreateFontString then
+		f.countText = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+		try(f.countText, "Hide")
+	end
+
 	return f
+end
+
+local function layoutRing(f, thickness, color)
+	for _, tex in ipairs(f.ring or {}) do
+		try(tex, "ClearAllPoints")
+		try(tex, "SetColorTexture", color[1], color[2], color[3], color[4])
+		local edge = tex.edge
+		if edge == "TOP" then
+			try(tex, "SetPoint", "TOPLEFT", f, "TOPLEFT", 0, 0)
+			try(tex, "SetPoint", "TOPRIGHT", f, "TOPRIGHT", 0, 0)
+			try(tex, "SetHeight", thickness)
+		elseif edge == "BOTTOM" then
+			try(tex, "SetPoint", "BOTTOMLEFT", f, "BOTTOMLEFT", 0, 0)
+			try(tex, "SetPoint", "BOTTOMRIGHT", f, "BOTTOMRIGHT", 0, 0)
+			try(tex, "SetHeight", thickness)
+		elseif edge == "LEFT" then
+			try(tex, "SetPoint", "TOPLEFT", f, "TOPLEFT", 0, 0)
+			try(tex, "SetPoint", "BOTTOMLEFT", f, "BOTTOMLEFT", 0, 0)
+			try(tex, "SetWidth", thickness)
+		else
+			try(tex, "SetPoint", "TOPRIGHT", f, "TOPRIGHT", 0, 0)
+			try(tex, "SetPoint", "BOTTOMRIGHT", f, "BOTTOMRIGHT", 0, 0)
+			try(tex, "SetWidth", thickness)
+		end
+		try(tex, "Show")
+	end
+end
+
+local function configureGlow(f, mark)
+	local primary = (mark.ordinal or 1) <= 1
+	layoutRing(f,
+		primary and RING_THICKNESS_PRIMARY or RING_THICKNESS_LEAD,
+		primary and COLOR_AUTHORITY or COLOR_LEAD)
+
+	-- Pips count PRESSES AWAY, so the immediate recommendation carries none: its thicker,
+	-- brighter ring already says "now".
+	local pipCount = math.max(0, math.min(MAX_PIPS, (mark.ordinal or 1) - 1))
+	for i, tex in ipairs(f.pips or {}) do
+		if i <= pipCount then
+			try(tex, "ClearAllPoints")
+			try(tex, "SetPoint", "TOPRIGHT", f, "TOPRIGHT", -3 - (i - 1) * 5, -3)
+			try(tex, "SetColorTexture", COLOR_LEAD[1], COLOR_LEAD[2], COLOR_LEAD[3], 0.9)
+			try(tex, "Show")
+		else
+			try(tex, "Hide")
+		end
+	end
+
+	if f.countText then
+		local n = mark.repeatCount or 1
+		if n >= 2 then
+			try(f.countText, "ClearAllPoints")
+			try(f.countText, "SetPoint", "BOTTOMRIGHT", f, "BOTTOMRIGHT", -2, 2)
+			try(f.countText, "SetText", "x" .. n)
+			try(f.countText, "Show")
+		else
+			try(f.countText, "Hide")
+		end
+	end
 end
 
 local function acquireGlow()
@@ -276,7 +437,7 @@ function PrewarmGlowPool()
 	end
 end
 
-local function ShowGlow(buttonFrame)
+local function ShowGlow(buttonFrame, mark)
 	if not buttonFrame then return false end
 	if glowByButton[buttonFrame] then return true end
 
@@ -307,6 +468,7 @@ local function ShowGlow(buttonFrame)
 		end
 	end
 
+	configureGlow(f, mark or { ordinal = 1, repeatCount = 1 })
 	f:Show()
 	glowByButton[buttonFrame] = f
 	return true
@@ -318,79 +480,158 @@ local function HideGlow(buttonFrame)
 	if not f then return false end
 	f:Hide()
 	f:ClearAllPoints()
+	-- Reset the decorations too. A pooled frame reused for position 1 must not still be
+	-- wearing the pips and repeat count of the position-3 mark it last served.
+	for _, tex in ipairs(f.pips or {}) do try(tex, "Hide") end
+	if f.countText then try(f.countText, "Hide") end
 	glowByButton[buttonFrame] = nil
 	table.insert(glowPool, f)
 	return true
 end
 
--- Main highlight update: called after Display.Render
-function Tuono.Highlight.Update(result)
-	if not Tuono.db or not Tuono.db.highlight or not Tuono.db.highlight.enabled then
-		-- Ensure no glow is active
-		if lastHighlightedButton then
-			HideGlow(lastHighlightedButton)
-			lastHighlightedButton = nil
-			lastHighlightedSpellID = nil
-		end
-		return
+-- Buttons currently wearing a mark, in sequence order.
+local activeMarks = {}
+local lastSignature = nil
+
+local function clearMarks()
+	for _, mark in ipairs(activeMarks) do
+		HideGlow(mark.button)
 	end
+	for i = #activeMarks, 1, -1 do activeMarks[i] = nil end
+	lastHighlightedButton = nil
+	lastHighlightedSpellID = nil
+end
 
-	-- Clear previous highlight if recommendation changed
-	local currentSpellID = nil
-	if result and result.queue and #result.queue > 0 then
-		currentSpellID = result.queue[1].spellID
-	end
+-- Turn the engine's queue into at most MAX_MARKS button marks.
+local function buildMarks(result)
+	local marks = {}
+	local bySpell = {}
+	local ordinal = 0
 
-	-- Cache hit only holds when BOTH the recommendation AND the action-bar layout are
-	-- unchanged (see barDirty declaration for why: a stealth/bonus-bar swap can leave
-	-- the recommended spellID identical while moving it to a different button).
-	--
-	-- The `lastHighlightedButton` term is gone from this guard. It was only ever
-	-- assigned on a SUCCESSFUL resolution, so a spell that is not on any bar left it
-	-- nil, the guard never short-circuited, and the resolution re-ran every tick
-	-- forever. A resolved miss is now cached like any other result.
-	if not barDirty and currentSpellID == lastHighlightedSpellID then
-		return
-	end
-	barDirty = false
+	for _, entry in ipairs((result and result.queue) or {}) do
+		-- Only the SEQUENCE is a prediction. The cooldown and trinket reminders appended
+		-- after it report something ready now; giving them an ordinal would claim they
+		-- are the third press, which they are not.
+		if entry.isSequence and entry.spellID then
+			ordinal = ordinal + 1
 
-	-- Clear previous glow
-	if lastHighlightedButton then
-		HideGlow(lastHighlightedButton)
-		lastHighlightedButton = nil
-		lastHighlightedSpellID = nil
-	end
+			local existing = bySpell[entry.spellID]
+			if existing then
+				-- The honest answer at 0 combo points is "Sinister Strike x4", and that is
+				-- ONE button. Marking it three times would need three ordinals on one
+				-- frame, which is unreadable and untrue.
+				existing.repeatCount = existing.repeatCount + 1
+			else
+				-- An uncertain LOOKAHEAD step gets no mark: if we cannot stand behind
+				-- step 3 we do not point at it, and the number of marks stays a signal.
+				-- Position 1 is exempt -- refusing to answer "what do I press now" is
+				-- strictly worse than answering it with a visible uncertainty cue.
+				if ordinal > 1 and entry.confidence == "unknown" then break end
+				if #marks >= MAX_MARKS then break end
 
-	-- Apply glow to new recommendation.
-	-- lastHighlightedSpellID is recorded UNCONDITIONALLY, including when the spell is
-	-- not on any bar. Recording it only on success is what made an unbarred
-	-- recommendation re-resolve every tick forever; "we looked and there is no button"
-	-- is a result worth remembering, and barDirty already invalidates it.
-	lastHighlightedSpellID = currentSpellID
-
-	if currentSpellID then
-		local slot = GetActionSlotForSpell(currentSpellID)
-		if slot then
-			local frameName = GetActionButtonFrameName(slot)
-			if frameName then
-				local buttonFrame = GetButtonFrame(frameName)
-				if buttonFrame then
-					ShowGlow(buttonFrame)
-					lastHighlightedButton = buttonFrame
-				end
+				local mark = {
+					spellID = entry.spellID,
+					ordinal = ordinal,
+					repeatCount = 1,
+					confidence = entry.confidence,
+				}
+				marks[#marks + 1] = mark
+				bySpell[entry.spellID] = mark
 			end
 		end
 	end
+
+	return marks
+end
+
+local function signatureOf(marks)
+	local parts = {}
+	for i, m in ipairs(marks) do
+		parts[i] = tostring(m.spellID) .. ":" .. m.ordinal .. ":" .. m.repeatCount
+	end
+	return table.concat(parts, "|")
+end
+
+-- Main highlight update: called after Display.Render
+function Tuono.Highlight.Update(result)
+	if not Tuono.db or not Tuono.db.highlight or not Tuono.db.highlight.enabled then
+		clearMarks()
+		lastSignature = nil
+		return
+	end
+
+	local marks = buildMarks(result)
+	local signature = signatureOf(marks)
+
+	-- Cache hit only holds when BOTH the marked set AND the action-bar layout are
+	-- unchanged (see barDirty declaration for why: a stealth/bonus-bar swap can leave
+	-- every spellID identical while moving them to different buttons).
+	--
+	-- The signature covers a resolved MISS as well, because it is derived from the queue
+	-- rather than from what we managed to glow. Keying on success is what made an
+	-- unbarred recommendation re-resolve every tick forever.
+	if not barDirty and signature == lastSignature then
+		return
+	end
+	barDirty = false
+	lastSignature = signature
+
+	clearMarks()
+
+	local usedButton = {}
+	for _, mark in ipairs(marks) do
+		local slot = GetActionSlotForSpell(mark.spellID)
+		local frameName = slot and GetActionButtonFrameName(slot) or nil
+		local buttonFrame = frameName and GetButtonFrame(frameName) or nil
+		-- Two spellIDs can resolve to the SAME button (an override pair), and one button
+		-- can only carry one mark. The earlier ordinal wins, because that is the press
+		-- the player makes first.
+		if buttonFrame and not usedButton[buttonFrame] then
+			if ShowGlow(buttonFrame, mark) then
+				usedButton[buttonFrame] = true
+				mark.button = buttonFrame
+				activeMarks[#activeMarks + 1] = mark
+			end
+		end
+	end
+
+	local first = activeMarks[1]
+	lastHighlightedButton = first and first.button or nil
+	lastHighlightedSpellID = first and first.spellID or nil
+end
+
+-- Read-only view of what is currently marked. Copies out, so a caller cannot reach in
+-- and mutate the module's own bookkeeping.
+function Tuono.Highlight.ActiveMarks()
+	local out = {}
+	for i, m in ipairs(activeMarks) do
+		local name = nil
+		if m.button and m.button.GetName then
+			local ok, n = pcall(m.button.GetName, m.button)
+			name = ok and n or nil
+		end
+		out[i] = {
+			spellID = m.spellID,
+			ordinal = m.ordinal,
+			repeatCount = m.repeatCount,
+			confidence = m.confidence,
+			buttonName = name,
+		}
+	end
+	return out
+end
+
+function Tuono.Highlight.LastButtonName()
+	if not (lastHighlightedButton and lastHighlightedButton.GetName) then return nil end
+	local ok, name = pcall(lastHighlightedButton.GetName, lastHighlightedButton)
+	return ok and name or nil
 end
 
 -- Clear glow on combat exit if combatOnly is true
 local function ClearGlowOutOfCombat()
 	if Tuono.db and Tuono.db.highlight and Tuono.db.highlight.combatOnly then
-		if lastHighlightedButton then
-			HideGlow(lastHighlightedButton)
-			lastHighlightedButton = nil
-			lastHighlightedSpellID = nil
-		end
+		clearMarks()
+		lastSignature = nil
 	end
 end
 
@@ -420,11 +661,8 @@ local function RegisterHighlightEvents()
 
 	-- Clear on logout/reload
 	Tuono.RegisterEvent("PLAYER_LOGOUT", function()
-		if lastHighlightedButton then
-			HideGlow(lastHighlightedButton)
-			lastHighlightedButton = nil
-			lastHighlightedSpellID = nil
-		end
+		clearMarks()
+		lastSignature = nil
 	end)
 
 	-- STEALTH SWAPS THE ACTION BAR PAGE: the glow target must be re-resolved even when
@@ -480,8 +718,15 @@ function Tuono.Highlight.AppendDebugOutput()
 	table.insert(debugInfo, "Enabled: " .. (Tuono.db and Tuono.db.highlight and Tuono.db.highlight.enabled and "ON" or "OFF"))
 	table.insert(debugInfo, "Combat-only: " .. (Tuono.db and Tuono.db.highlight and Tuono.db.highlight.combatOnly and "ON" or "OFF"))
 	table.insert(debugInfo, "Glow mechanism: " .. (glowMechanism or "none"))
-	table.insert(debugInfo, "Last spell ID: " .. (lastHighlightedSpellID or "none"))
-	table.insert(debugInfo, "Button frame: " .. (lastHighlightedButton and lastHighlightedButton:GetName() or "none"))
+	table.insert(debugInfo, "Max action slot: " .. tostring(MAX_ACTION_SLOT))
+	for _, m in ipairs(Tuono.Highlight.ActiveMarks()) do
+		table.insert(debugInfo, string.format("  #%d spell %s x%d on %s (%s)",
+			m.ordinal, tostring(m.spellID), m.repeatCount,
+			tostring(m.buttonName), tostring(m.confidence)))
+	end
+	if #activeMarks == 0 then
+		table.insert(debugInfo, "  no buttons marked")
+	end
 
 	for _, line in ipairs(debugInfo) do
 		Tuono.print(line)

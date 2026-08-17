@@ -73,7 +73,22 @@ local function compileCondition(cond, profile, ownSpellKey)
 		return function(S)
 			local h = H()
 			if not h.energyKnown(S) then return true end   -- never block on an estimate we lack
-			return compare(cond.op, S.energy, cond.value or 0)
+			-- PREFER THE INTERVAL OVER THE POINT ESTIMATE. S.energy is a single number
+			-- carried through the simulation, but the authoritative model brackets energy
+			-- in [energyLo, energyHi]. Testing the point estimate lets an UNPROVABLE claim
+			-- read as false -- the unknown-as-no defect in a different costume. The house
+			-- rule for energy is that an unprovable claim PASSES and carries its
+			-- uncertainty into the confidence rating instead.
+			local lo, hi, value = S.energyLo, S.energyHi, cond.value or 0
+			if type(lo) == "number" and type(hi) == "number" then
+				if cond.op == ">=" then return hi >= value end
+				if cond.op == ">"  then return hi >  value end
+				if cond.op == "<=" then return lo <= value end
+				if cond.op == "<"  then return lo <  value end
+				-- Equality against a bracketed value is disprovable, never provable.
+				return lo <= value and hi >= value
+			end
+			return compare(cond.op, S.energy, value)
 		end
 
 	elseif ctype == "cdReady" then
@@ -92,7 +107,15 @@ local function compileCondition(cond, profile, ownSpellKey)
 		return function(S)
 			local b = S.buffs and S.buffs[key]
 			if b == nil then return false end
-			if type(b) == "table" then return b.up == true or (b.stage or 0) > 0 end
+			if type(b) == "table" then
+				-- A STAGED BUFF CARRIES ITS OWN READABILITY FLAG. `stage` reads 0 both
+				-- when the buff is absent and when we could not see it, so inferring
+				-- "the buff is up" from a stage we cannot read is the same defect the
+				-- rtbStage branch below guards against. Fall back to `up`, which is at
+				-- least a direct claim.
+				if b.stageKnown == false then return b.up == true end
+				return b.up == true or (b.stage or 0) > 0
+			end
 			return b == true
 		end
 
@@ -101,14 +124,32 @@ local function compileCondition(cond, profile, ownSpellKey)
 
 	elseif ctype == "enemyCount" then
 		return function(S)
-			-- nil means "could not count", which must not read as zero enemies.
-			if S.enemyCount == nil then return false end
+			-- nil means "could not count", which must not read as zero enemies -- but it
+			-- must not suppress every single-target gate either. Same asymmetry as combo
+			-- points, for the same reason: an unprovable LOWER bound fails (we will not
+			-- claim three enemies we cannot see), an unprovable UPPER bound passes.
+			-- Failing both directions is what left an unreadable count killing every
+			-- rule that mentioned it.
+			if S.enemyCount == nil then
+				return (cond.op == "<" or cond.op == "<=")
+			end
 			return compare(cond.op, S.enemyCount, cond.value or 0)
 		end
 
 	elseif ctype == "rtbStage" then
 		return function(S)
-			local stage = (S.buffs and S.buffs.rtb and S.buffs.rtb.stage) or 0
+			-- FAIL CLOSED ON AN UNREADABLE STAGE. Every rtbStage comparison authorises
+			-- spending a cooldown -- rerolling below a stage, or Keep It Rolling above
+			-- one -- so every one of them is a positive claim, whichever way the operator
+			-- points. `stage` reads 0 both when there is no buff and when we cannot see
+			-- one, and treating the second as the first is what told players to reroll a
+			-- Jackpot every 45 seconds.
+			--
+			-- This branch had no guard at all while the built-in closures did, and
+			-- compiled rows REPLACE those closures -- so merely opening the editor
+			-- reinstated the bug in full.
+			local stage, known = H().rtbStage(S)
+			if not known then return false end
 			return compare(cond.op, stage, cond.value or 0)
 		end
 	end
@@ -171,10 +212,47 @@ local function profileList(profile, kind)
 	return profile.priority
 end
 
+-- ---------------------------------------------------------------------------
+-- ROW IDENTITY
+-- ---------------------------------------------------------------------------
+-- A row's SIGNATURE is a canonical string of everything about it that changes
+-- behaviour. Comparing a row against the signature it was SEEDED WITH answers the only
+-- question that matters for maintenance: has this user actually edited this row, or is
+-- it still the author's?
+--
+-- Fields are enumerated explicitly rather than walked with pairs(), because pairs()
+-- order is undefined and a signature that varies run to run would mark every row edited.
+local function condSignature(cond)
+	return table.concat({
+		tostring(cond.type), tostring(cond.op), tostring(cond.value), tostring(cond.spell),
+	}, "\1")
+end
+
+local function rowSignature(row)
+	local parts = {
+		tostring(row.name), tostring(row.spellKey), tostring(row.requiresSpell),
+		tostring(row.enabled ~= false),
+	}
+	for _, cond in ipairs(row.conditions or {}) do
+		parts[#parts + 1] = condSignature(cond)
+	end
+	return table.concat(parts, "\2")
+end
+U.RowSignature = rowSignature
+
+-- A row is TOUCHED when it no longer matches the baseline it was seeded from. A row with
+-- no baseline at all predates this bookkeeping and is treated as touched, which is the
+-- conservative direction: it can never discard a real edit.
+local function rowIsTouched(row)
+	if row.__baseline == nil then return true end
+	return row.__baseline ~= rowSignature(row)
+end
+U.RowIsTouched = rowIsTouched
+
 function U.RowsFromProfile(profile, kind)
 	local rows = {}
 	for _, rule in ipairs(profileList(profile, kind) or {}) do
-		table.insert(rows, {
+		local row = {
 			name = rule.name,
 			spellKey = rule.spellKey,
 			requiresSpell = rule.requiresSpell,
@@ -188,7 +266,11 @@ function U.RowsFromProfile(profile, kind)
 				end
 				return c
 			end)() or { { type = "always" } },
-		})
+		}
+		-- Stamp the baseline at seed time. This is what lets a later read distinguish
+		-- "the user opened the editor" from "the user changed something".
+		row.__baseline = rowSignature(row)
+		table.insert(rows, row)
 	end
 	return rows
 end
@@ -197,23 +279,99 @@ local function storeKey(kind)
 	return (kind == "aoe") and "priorityAoE" or "priority"
 end
 
-function U.IsCustomised(profileId, kind)
-	local s = Tuono.db and Tuono.db.profiles and Tuono.db.profiles[profileId]
-	return s ~= nil and s[storeKey(kind)] ~= nil
+-- Structural edits -- adding, deleting or reordering rows -- cannot be detected by
+-- comparing a row against its own baseline, so they are recorded explicitly.
+local function structuralKey(kind)
+	return storeKey(kind) .. "Edited"
 end
 
--- Materialise an editable copy, seeded from the built-in list on first open.
+-- Adopt baselines for rows stored before this bookkeeping existed.
+--
+-- Those users were forked by the old write-on-read behaviour, most of them without ever
+-- editing anything. A legacy row whose content still matches the built-in it was seeded
+-- from is adopted as untouched, so built-in fixes start flowing again. One that DIFFERS
+-- is left alone and therefore counts as edited -- that direction can never discard a
+-- real edit, which matters more than reclaiming a row whose built-in has since changed.
+local function normaliseBaselines(profile, kind)
+	local rows = store(profile.id)[storeKey(kind)]
+	if not rows then return nil end
+
+	local needs = false
+	for _, row in ipairs(rows) do
+		if row.__baseline == nil then needs = true break end
+	end
+	if not needs then return rows end
+
+	local builtinSig = {}
+	for _, r in ipairs(U.RowsFromProfile(profile, kind)) do
+		builtinSig[tostring(r.name)] = rowSignature(r)
+	end
+	for _, row in ipairs(rows) do
+		if row.__baseline == nil then
+			local sig = rowSignature(row)
+			if builtinSig[tostring(row.name)] == sig then row.__baseline = sig end
+		end
+	end
+	return rows
+end
+
+-- CUSTOMISED MEANS EDITED, NOT MERELY OPENED.
+--
+-- This used to be `the store has an entry`, and GetRows created that entry on READ -- so
+-- looking at the rule list forked a user off the built-in profile permanently and cut
+-- them off from every future APL fix, silently, forever. Customisation is now a property
+-- of the CONTENT: a structural change, or any row that no longer matches the baseline it
+-- was seeded from. Reading cannot produce either.
+function U.IsCustomised(profileId, kind)
+	local s = Tuono.db and Tuono.db.profiles and Tuono.db.profiles[profileId]
+	if not s then return false end
+	local rows = s[storeKey(kind)]
+	if rows == nil then return false end
+	if s[structuralKey(kind)] then return true end
+
+	local profile = Tuono.Profiles and Tuono.Profiles.Get and Tuono.Profiles.Get(profileId)
+	if profile then normaliseBaselines(profile, kind) end
+
+	for _, row in ipairs(rows) do
+		if rowIsTouched(row) then return true end
+	end
+	return false
+end
+
+-- Materialise an editable copy, seeded from the built-in list on first open. Safe to
+-- call from a pure display path: the copy it creates is byte-identical to the built-ins
+-- and therefore reads as untouched, so nothing about the player's rotation changes.
 function U.GetRows(profile, kind)
 	local s = store(profile.id)
 	local key = storeKey(kind)
 	if not s[key] then
 		s[key] = U.RowsFromProfile(profile, kind)
 	end
+	normaliseBaselines(profile, kind)
 	return s[key]
 end
 
+-- Rows to mutate. Materialises on demand, because the editing entry points take a
+-- profile id rather than a profile and can now be reached before anything has read.
+local function rowsForEdit(profileId, kind)
+	local s = store(profileId)
+	local key = storeKey(kind)
+	if not s[key] then
+		local profile = Tuono.Profiles and Tuono.Profiles.Get and Tuono.Profiles.Get(profileId)
+		if not profile then return nil end
+		s[key] = U.RowsFromProfile(profile, kind)
+	end
+	return s[key]
+end
+
+local function markStructural(profileId, kind)
+	store(profileId)[structuralKey(kind)] = true
+end
+
 function U.ResetToDefault(profileId, kind)
-	store(profileId)[storeKey(kind)] = nil
+	local s = store(profileId)
+	s[storeKey(kind)] = nil
+	s[structuralKey(kind)] = nil
 end
 
 -- What the engine actually runs. Falls back to the built-in list whenever the user has
@@ -222,10 +380,26 @@ function U.EffectivePriority(profile, kind)
 	if not U.IsCustomised(profile.id, kind) then
 		return profileList(profile, kind) or {}
 	end
+	normaliseBaselines(profile, kind)
+
+	-- AN UNTOUCHED ROW KEEPS RUNNING THE AUTHOR'S OWN CLOSURE.
+	--
+	-- The built-in rules are hand-written Lua carrying guards the condition compiler does
+	-- not reproduce row for row, and a user who edited ONE row should not thereby freeze
+	-- the other twelve at the version shipped the day they edited it. Indexing by name
+	-- lets a shipped fix reach every row that user never touched, in whatever order they
+	-- arranged them.
+	local builtinByName = {}
+	for _, rule in ipairs(profileList(profile, kind) or {}) do
+		builtinByName[tostring(rule.name)] = rule
+	end
+
 	local compiled = {}
 	for _, row in ipairs(store(profile.id)[storeKey(kind)] or {}) do
 		if row.enabled ~= false then
-			local rule = U.Compile(row, profile)
+			local rule = nil
+			if not rowIsTouched(row) then rule = builtinByName[tostring(row.name)] end
+			if not rule then rule = U.Compile(row, profile) end
 			if rule then table.insert(compiled, rule) end
 		end
 	end
@@ -235,24 +409,29 @@ function U.EffectivePriority(profile, kind)
 	return compiled
 end
 
+-- Reorder, delete and add all change the LIST rather than a row, which no per-row
+-- baseline can detect, so each one records the structural edit explicitly.
 function U.MoveRow(profileId, kind, index, delta)
-	local rows = store(profileId)[storeKey(kind)]
+	local rows = rowsForEdit(profileId, kind)
 	if not rows then return false end
 	local target = index + delta
 	if target < 1 or target > #rows then return false end
+	if not rows[index] then return false end
 	rows[index], rows[target] = rows[target], rows[index]
+	markStructural(profileId, kind)
 	return true
 end
 
 function U.DeleteRow(profileId, kind, index)
-	local rows = store(profileId)[storeKey(kind)]
+	local rows = rowsForEdit(profileId, kind)
 	if not rows or not rows[index] then return false end
 	table.remove(rows, index)
+	markStructural(profileId, kind)
 	return true
 end
 
 function U.AddRow(profileId, kind, spellKey)
-	local rows = store(profileId)[storeKey(kind)]
+	local rows = rowsForEdit(profileId, kind)
 	if not rows then return false end
 	table.insert(rows, {
 		name = nil,
@@ -260,6 +439,7 @@ function U.AddRow(profileId, kind, spellKey)
 		enabled = true,
 		conditions = { { type = "always" } },
 	})
+	markStructural(profileId, kind)
 	return true
 end
 

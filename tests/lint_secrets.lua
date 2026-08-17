@@ -137,6 +137,16 @@ local SAFE_WRAPPERS = {
 -- pattern. An entry is visible and reviewable; weakening the lint to make a finding
 -- disappear would not be, which is why nothing above this line was softened to suit it.
 local ALLOW = {
+  -- FIXED, entries removed. Kept as a note because the fix found something worse than
+  -- what was filed: the allowlist comment below used to assert that the INDEXED path
+  -- "pcalls correctly". It did not. rebuildSlotIndex pcall'd the GetActionInfo CALL but
+  -- passed its secret return value straight into Tuono.ResolveBaseSpell, which raised --
+  -- emptying the whole slot index, so no spell resolved to any button. The cold path
+  -- named here was real; the confident claim about the hot path next to it was not.
+  --
+  -- Both now route through a local safeActionInfo mirroring Display's.
+  --
+  -- Original entry, for the record:
   -- GetActionSlotForSpell_Scan calls _G.GetActionInfo un-pcall'd and then compares the
   -- result (`actionType == "spell"`, `actionID == spellID`). A secret actionID makes
   -- both comparisons raise in the live client.
@@ -147,10 +157,6 @@ local ALLOW = {
   --
   -- Display.lua hit this exact bug inside the render loop and it cost the entire icon
   -- strip; see its safeActionInfo comment. Same defect, colder path.
-  ["Highlight.lua:192:op"] = "known defect: unguarded GetActionInfo compare, /tuono debug path only",
-  ["Highlight.lua:193:op"] = "known defect: unguarded GetActionInfo compare, /tuono debug path only",
-  ["Highlight.lua:205:op"] = "known defect: unguarded GetActionInfo compare, /tuono debug path only",
-  ["Highlight.lua:206:op"] = "known defect: unguarded GetActionInfo compare, /tuono debug path only",
 
   -- `if aura.spellId and not isSecret(aura.spellId) then` -- the boolean test runs
   -- BEFORE the secrecy check it depends on, so a secret spellId raises on the very line
@@ -158,7 +164,16 @@ local ALLOW = {
   -- then `if id then`. Deferred: StateTracker.lua is outside this change's scope, and
   -- the reachable path is the TIER 3 fallback that only runs when delta tracking found
   -- nothing.
-  ["StateTracker.lua:488:order"] = "known defect: value boolean-tested before its own isSecret guard",
+  -- `src` PINS THE SOURCE TEXT, not just the line number. A line-number-only check is
+  -- not a staleness check: Highlight.lua grew by 244 lines while its four entries were
+  -- being made obsolete by the very fix that obsoleted them, and every one still
+  -- "resolved" to some line, so the gate stayed green over four dead entries. An
+  -- allowlist that outlives the code it excused is worse than no allowlist, because it
+  -- reads as a reviewed decision.
+  ["StateTracker.lua:488:order"] = {
+    why = "known defect: value boolean-tested before its own isSecret guard",
+    src = "if aura.spellId and not isSecret(aura.spellId) then",
+  },
 }
 
 -- --- expression helpers -----------------------------------------------------
@@ -390,11 +405,12 @@ describe("secret-value handling", function()
       "the guard runs after the test it was meant to protect" .. detail(all))
   end)
 
-  it("keeps every allowlist entry pointed at a real line", function()
-    -- A stale allowlist silently re-opens the hole it was documenting.
+  it("keeps every allowlist entry pointed at the code it excused", function()
+    -- A stale allowlist silently re-opens the hole it was documenting -- and reads as a
+    -- reviewed decision while doing it, which is the dangerous part.
     local stale = {}
     local cache = {}
-    for key in pairs(ALLOW) do
+    for key, entry in pairs(ALLOW) do
       local rel, lineNo = key:match("^(.+):(%d+):[%w_]+$")
       local src = cache[rel]
       if src == nil then
@@ -405,11 +421,30 @@ describe("secret-value handling", function()
         stale[#stale + 1] = key .. " (file missing)"
       else
         local lines = splitLines(src)
-        if not lines[tonumber(lineNo)] then stale[#stale + 1] = key .. " (line missing)" end
+        local actual = lines[tonumber(lineNo)]
+        if not actual then
+          stale[#stale + 1] = key .. " (line missing)"
+        else
+          -- Compare on the source text, whitespace-normalised. If the excused code moved
+          -- or was fixed, the entry is dead and must be removed by hand -- deliberately,
+          -- so someone re-reads the justification rather than inheriting it.
+          local want = type(entry) == "table" and entry.src or nil
+          if want then
+            local got = actual:gsub("^%s+", ""):gsub("%s+$", ""):gsub("%s+", " ")
+            want = want:gsub("^%s+", ""):gsub("%s+$", ""):gsub("%s+", " ")
+            if got ~= want then
+              stale[#stale + 1] = string.format(
+                "%s (source changed)\n           expected: %s\n           found:    %s",
+                key, want, got)
+            end
+          else
+            stale[#stale + 1] = key .. " (no src pin -- add one, a line number is not a pin)"
+          end
+        end
       end
     end
     table.sort(stale)
-    expect.listEqual(stale, {}, "allowlist entries no longer resolve")
+    expect.listEqual(stale, {}, "allowlist entries no longer describe the code they excused")
   end)
 
   it("actually scanned the addon (a lint over zero files is not a pass)", function()

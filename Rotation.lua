@@ -249,6 +249,13 @@ local scratch = {
 local function deepCopyState(state)
 	local S = scratch
 
+	-- THE VIRTUAL CLOCK. Every simulated press costs a GCD, so a 4-step lookahead reaches
+	-- several seconds into the future. Buff expiry timestamps are absolute, so the
+	-- simulation needs its own "now" to compare them against. Reset per call: it is
+	-- mutable per-run state living on a scratch table that is deliberately reused, and a
+	-- leak here would make Predict answer differently for identical input.
+	S.simNow = GetTime()
+
 	-- Scalars the simulation mutates.
 	S.energy = state.energy
 	S.energyMax = state.energyMax
@@ -356,6 +363,103 @@ local function calcEnergyRegen(hasteBuffUp)
 	local base = 10
 	if hasteBuffUp then base = base * 1.6 end
 	return base + 2.5   -- Combat Potency average
+end
+
+-- Adrenaline Rush raises the ceiling and hastes the GCD. Both were sampled ONCE before
+-- the step loop, which was fine while nothing could change them mid-simulation. Now that
+-- buffs lapse against the virtual clock, they have to be asked per step or a simulation
+-- that outlives the buff keeps spending its bonus.
+local function maxEnergyFor(S)
+	local ar = S and S.buffs and S.buffs.adrenalineRush
+	return (ar and ar.up) and 150 or 100
+end
+
+local function hasteBuffUp(S)
+	local ar = S and S.buffs and S.buffs.adrenalineRush
+	return (ar and ar.up) and true or false
+end
+
+-- ============================================================================
+-- BUFF EXPIRY INSIDE THE SIMULATION
+-- ============================================================================
+-- `expires` is an ABSOLUTE GetTime() timestamp. The simulation advances a virtual clock
+-- past it -- four predicted presses are four GCDs into the future -- so every step must
+-- be judged against that advanced instant, not against the moment Predict was called.
+-- deepCopyState has always COPIED expires; nothing ever compared it. The result was a
+-- wheel that recommended Pistol Shot on an Opportunity which had lapsed two steps
+-- earlier, and the per-GCD commitment layer now HOLDS such a step rather than churning
+-- past it.
+--
+-- FAILS OPEN ON AN UNREADABLE EXPIRY. Midnight hides aura payloads, so expires is
+-- frequently 0 or nil -- which under a naive comparison is indistinguishable from
+-- "expired long ago". Treating that as expired would silently delete every proc-gated
+-- step in real combat: the unknown-as-no defect, which this codebase has shipped
+-- repeatedly. Only a POSITIVE, readable timestamp is allowed to end a buff.
+local function expireBuffs(S, now)
+	local buffs = S and S.buffs
+	if not buffs then return end
+	for _, b in pairs(buffs) do
+		-- `degraded` is a boolean living alongside the buff tables; skip anything that is
+		-- not a buff record.
+		if type(b) == "table" then
+			local exp = b.expires
+			if type(exp) == "number" and exp > 0 and exp <= now then
+				if b.up then b.up = false end
+				if b.stacks then b.stacks = 0 end
+				-- Roll the Bones carries a stage rather than an up flag. Its expiry is a
+				-- genuine drop to no-buff, and stageKnown stays true because we PROVED it
+				-- from a readable timestamp rather than failing to read one.
+				if b.stage then b.stage = 0 end
+			end
+		end
+	end
+end
+
+-- ============================================================================
+-- ADVANCE THE VIRTUAL CLOCK BY dt
+-- ============================================================================
+-- This body used to exist twice, byte for byte -- once in the pooling loop and once
+-- after a cast. That is the exact duplication shape that produced the Roll the Bones
+-- divergence (one copy got the guard, the other did not), so it is one function now.
+local function advanceTime(S, dt)
+	local cap = maxEnergyFor(S)
+	S.energy = math.min(cap, S.energy + calcEnergyRegen(hasteBuffUp(S)) * dt)
+	widenSim(S, cap, dt)
+
+	for _, cdData in pairs(S.cooldowns) do
+		-- A REMAINDER WE NEVER MEASURED MUST NOT BE COUNTED DOWN.
+		--
+		-- When the client hides a cooldown's timer, CooldownModel parks the ability at a
+		-- placeholder remainder and StateTracker flags it remainingKnown = false
+		-- (StateTracker.lua:147). Decrementing that placeholder exactly like a
+		-- measurement is how a 180-second Adrenaline Rush came to read "ready" at step 2
+		-- -- rendered `certain`, because readiness normally IS exactly knowable. A
+		-- confidently wrong step is the worst output this addon can produce.
+		--
+		-- This deliberately does NOT suppress the ability: readiness itself is never
+		-- secret, so step 1 still answers from ground truth and a cooldown the client
+		-- reports as ready is still recommended. Only the invented FUTURE turnover is
+		-- refused. We decline to name a moment we cannot know rather than guessing one.
+		if cdData.remaining and cdData.remaining > 0 and cdData.remainingKnown ~= false then
+			cdData.remaining = math.max(0, cdData.remaining - dt)
+			if cdData.remaining <= 0 then cdData.ready = true end
+		end
+	end
+
+	S.simNow = (S.simNow or GetTime()) + dt
+	expireBuffs(S, S.simNow)
+
+	-- Adrenaline Rush lapsing drops the ceiling from 150 back to 100, so an energy value
+	-- that was legal an instant ago is now above the cap. Clamp rather than carry an
+	-- impossible number into the next step's affordability arithmetic.
+	local newCap = maxEnergyFor(S)
+	if newCap < cap then
+		S.energy = math.min(S.energy, newCap)
+		if S.energyLo then
+			S.energyLo = math.min(S.energyLo, newCap)
+			S.energyHi = math.min(S.energyHi, newCap)
+		end
+	end
 end
 
 -- Exclude a rule ONLY when we explicitly probed and learned the player lacks the spell.
@@ -635,11 +739,6 @@ function Tuono.Rotation.Predict(state, steps)
 	Tuono.Rotation.activeRuleCount = #priorityList
 
 	local result = {}
-	local maxEnergy = 100
-	if S.buffs and S.buffs.adrenalineRush and S.buffs.adrenalineRush.up then
-		maxEnergy = 150
-	end
-	local hasteBuff = S.buffs and S.buffs.adrenalineRush and S.buffs.adrenalineRush.up
 
 	for step = 1, steps do
 		local spellID, reason = nil, nil
@@ -674,15 +773,9 @@ function Tuono.Rotation.Predict(state, steps)
 			end
 
 			if not spellID and poolAttempts < maxPoolAttempts then
-				local gcd = calcGCD(hasteBuff)
-				S.energy = math.min(maxEnergy, S.energy + calcEnergyRegen(hasteBuff) * gcd)
-				widenSim(S, maxEnergy, gcd)
-				for _, cdData in pairs(S.cooldowns) do
-					if cdData.remaining and cdData.remaining > 0 then
-						cdData.remaining = math.max(0, cdData.remaining - gcd)
-						if cdData.remaining <= 0 then cdData.ready = true end
-					end
-				end
+				-- Haste is sampled BEFORE the advance, because the length of the interval
+				-- being waited through is fixed by the state at its start.
+				advanceTime(S, calcGCD(hasteBuffUp(S)))
 				poolAttempts = poolAttempts + 1
 			else
 				break
@@ -794,19 +887,17 @@ function Tuono.Rotation.Predict(state, steps)
 					local slot = cdOf(S, cdKey)
 					slot.remaining = ability.cd
 					slot.ready = false
+					-- A cooldown the SIMULATION started has a duration we know exactly --
+					-- it is static profile data, not a hidden client timer. Say so, or the
+					-- scratch row inherits remainingKnown = false from a live cooldown that
+					-- was unmeasured, and advanceTime then refuses to count down a value it
+					-- has every right to trust.
+					slot.remainingKnown = true
 				end
 			end
 
 			if ability.gcd then
-				local gcd = calcGCD(hasteBuff)
-				S.energy = math.min(maxEnergy, S.energy + calcEnergyRegen(hasteBuff) * gcd)
-				widenSim(S, maxEnergy, gcd)
-				for _, cdData in pairs(S.cooldowns) do
-					if cdData.remaining and cdData.remaining > 0 then
-						cdData.remaining = math.max(0, cdData.remaining - gcd)
-						if cdData.remaining <= 0 then cdData.ready = true end
-					end
-				end
+				advanceTime(S, calcGCD(hasteBuffUp(S)))
 			end
 		end
 	end

@@ -64,6 +64,17 @@ function harness.load(opts)
 
   local stub = dofile(harness.root .. "/tests/wow_stub.lua")
   stub.reset()
+
+  -- SAVED VARIABLES ARE GLOBALS, AND GLOBALS OUTLIVE A LOAD.
+  -- The client hands an addon its SavedVariables as real _G entries, so Core's
+  -- `TuonoDB = deepMerge(TuonoDB or {}, defaults)` happily adopts the PREVIOUS test's
+  -- table -- verified with rawequal: Tuono.db was literally the same table across two
+  -- boots. Every assertion about db state was therefore order-dependent, and one suite
+  -- saw a user profile already marked customised before it had read anything.
+  -- A fresh load must mean a fresh character.
+  _G.TuonoDB = nil
+  _G.TuonoDiagDB = nil
+
   if opts.world then opts.world(stub) end
 
   local Tuono = {}

@@ -1,0 +1,31 @@
+# BigWigs packager manifest.
+#
+# Everything in this repo except the addon itself is developer tooling: the offline test
+# harness, the trace analyser, the deploy script and the design docs. Shipping them wastes
+# the user's disk and, worse, tests/wow_stub.lua defines globals named after real WoW API
+# functions -- if it ever reached a client it would be inert (nothing loads it, since the
+# .toc does not list it) but it has no business in a release either way.
+#
+# The .toc is the real manifest for what LOADS; this only controls what SHIPS.
+
+package-as: Tuono
+
+enable-nolib-creation: no
+
+ignore:
+  - tests
+  - tools
+  - docs
+  - .github
+  - STATE.md
+  - CLAUDE.md
+  - .gitattributes
+  - .editorconfig
+
+# No embedded libraries yet. Tuono hand-rolls its event dispatch, saved variables and
+# options panel; whether to adopt Ace3 is an open decision recorded in docs/FRAMEWORK.md.
+# When that lands, libraries go here as externals rather than being vendored, so they can
+# be updated without a manual copy.
+#
+# externals:
+#   libs/LibStub: https://repos.wowace.com/wow/libstub/trunk
