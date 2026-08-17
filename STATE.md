@@ -162,6 +162,37 @@ technical reason. See `docs/FRAMEWORK.md`.
 
 ---
 
+## EXISTENTIAL RISK: the inversion is a side channel
+
+Stated plainly because the whole product rests on it.
+
+`C_Spell.IsSpellUsable` is declared never-secret, but its return value is **a function of
+the secret energy value**. Probing it across Outlaw's cost ladder recovers the hidden
+number to a median width of 0.2; a threshold crossing recovers it *exactly*; two crossings
+recover the regen rate. `CooldownModel` does the same thing to secret timers via the
+never-secret `isEnabled`/`isActive`. In security terms this is an **oracle attack**:
+Blizzard hid a value and left a predicate over it readable.
+
+`docs/LEGALITY.md` argues that shadowing a hidden resource from readable signals is
+legitimate. **That argument is the load-bearing premise of the product, and it is not
+settled.** If Blizzard instead classifies side-channel recovery of a deliberately-secreted
+value as circumvention of an anti-cheat measure, the energy model stops being the asset
+and becomes the liability.
+
+The mitigation on their side is cheap and total: flag `IsSpellUsable` secret-when-restricted,
+or add jitter around the predicate boundary. Either kills the model outright. Design
+accordingly — the interval model already degrades gracefully to cooldown-driven logic when
+starved of observations (`EnergyModel.lua:301`), and that property is now a *hedge*, not
+just an elegance.
+
+**What separates this from an actual vulnerability**: everything Tuono probes is the
+player's own spells on the player's own unit — state the human already has on screen.
+Secret values exist for competitive integrity (enemy cooldowns, enemy resources, PvP
+information). The serious open question is whether **any never-secret predicate is a
+function of state the player is not entitled to**. If one is, that is a disclosure to
+Blizzard, not a feature. Not yet investigated; worth doing, and it hardens the legality
+argument whichever way it lands.
+
 ## Claims to stop making
 
 - **"27% better than Blizzard" is not supported by anything.** The only verifiable figure
