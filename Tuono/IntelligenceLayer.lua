@@ -35,6 +35,11 @@ local DISAGREE_TICKS_BEFORE_REPLAN = 3
 -- rather than screen space. Rotation.Predict caps at 8.
 local PREDICT_DEPTH = 8
 
+-- How many predicted steps may reach the queue. Separate from PREDICT_DEPTH so the
+-- simulation can run deeper than the bar shows, and separate from the advisories, which
+-- are facts about now and are never trimmed to make room for a prediction.
+local MAX_SEQUENCE_ENTRIES = 8
+
 -- ==========================================================================
 -- RECALCULATION TRIGGERS
 -- ==========================================================================
@@ -64,6 +69,7 @@ local TRIGGER = {
   DISAGREE  = "disagreement",     -- fresh prediction persistently differs from the cursor
   EXHAUSTED = "plan-exhausted",   -- the player followed it to the end
   AGED      = "plan-aged-out",    -- nobody is following it; catch up rather than freeze
+  RESOURCE  = "resource-changed", -- combo points moved without us casting anything
   WORLD     = "world-changed",    -- fallback label when no more specific reason was set
 }
 Tuono.Engine.TRIGGER = TRIGGER
@@ -217,6 +223,12 @@ local function snapshotPlanContext(S)
 
   ctx.mode = Tuono.Rotation and Tuono.Rotation.mode
 
+  -- Combo points as of the plan. Never secret, so this is a real observation; see the
+  -- RESOURCE trigger in worldChangedSince for why it is skipped on a post-cast tick.
+  if S.comboPointsKnown ~= false and type(S.comboPoints) == "number" then
+    ctx.cp = S.comboPoints
+  end
+
   -- Deliberately NOT written as `local stage, known = A and A.rtbStage and A.rtbStage(S)`.
   -- An `and` chain truncates a multiple-return call to its first value, so `known` would
   -- silently be nil, the stage would never be captured, and the trigger below would be
@@ -262,6 +274,25 @@ local function worldChangedSince(S, ctx)
   -- already predicted, so treating it as news would re-plan after every single cast.
   for key, cd in pairs(S.cooldowns or {}) do
     if cd.known and cd.ready and ctx.notReady[key] then return TRIGGER.COOLDOWN end
+  end
+
+  -- COMBO POINTS MOVED AND WE DID NOT MOVE THEM.
+  --
+  -- Combo points gate every finisher and the builder, so a plan built at 2 points is not
+  -- a plan at 5. They are never secret, so this is an observed transition.
+  --
+  -- The subtlety is that CP changes constantly BECAUSE the player follows the plan, and
+  -- triggering on that would re-plan after every cast and defeat the whole layer. So the
+  -- comparison is skipped on the tick right after a cast -- `verifyOnAdvance` already
+  -- marks exactly that tick -- and the baseline is re-taken instead. What survives is the
+  -- case this is for: points that changed with no cast of ours behind them, which means
+  -- the plan was built on a world that no longer exists.
+  --
+  -- Without this, Engine.Evaluate is not a function of Tuono.State: a caller that changes
+  -- the state and evaluates once gets the PREVIOUS plan, because the disagreement check
+  -- needs three consecutive ticks and a single call never accumulates them.
+  if ctx.cp ~= nil and S.comboPointsKnown ~= false and type(S.comboPoints) == "number" then
+    if S.comboPoints ~= ctx.cp then return TRIGGER.RESOURCE end
   end
 
   return nil
@@ -723,6 +754,14 @@ function Tuono.Engine.Evaluate()
   -- before the disagreement counter because a NAMED cause is strictly better diagnostics
   -- than "the prediction differs" -- both re-plan, but only one tells you why.
   if not replan then
+    -- FOLLOWING THE PLAN IS NOT THE WORLD CHANGING. On the tick right after a cast the
+    -- player's own press moved combo points and energy, so the resource comparison is
+    -- re-baselined rather than evaluated -- otherwise every correct press would re-plan
+    -- and the cursor could never advance. Every other trigger still applies here.
+    if E.verifyOnAdvance and E.planContext
+      and S.comboPointsKnown ~= false and type(S.comboPoints) == "number" then
+      E.planContext.cp = S.comboPoints
+    end
     local trigger = worldChangedSince(S, E.planContext)
     if trigger then replan, reason = true, trigger end
   end
@@ -845,10 +884,28 @@ function Tuono.Engine.Evaluate()
     Tuono.Engine.lastPos1 = publishedPos1
   end
 
-  -- Step 5: Truncate queue to 8
-  while #resultQueue > 8 do
-    table.remove(resultQueue)
+  -- Step 5: CAP THE SEQUENCE, NEVER THE FACTS BEHIND IT.
+  --
+  -- This trimmed the tail to 8 entries. The cooldown and trinket advisories are appended
+  -- AFTER the sequence, so raising the simulation depth from 4 to 8 filled the cap with
+  -- predicted steps and silently deleted every advisory -- the trinket reminder, the
+  -- ready-cooldown reminder, all of it. Five legacy behaviour tests caught it.
+  --
+  -- The two kinds are not interchangeable and must not compete for the same budget. The
+  -- sequence is a prediction and can be trimmed without losing a fact; an advisory is a
+  -- fact about right now, and dropping it is a lie by omission. So the cap applies to the
+  -- sequence alone, and the advisories always survive.
+  local trimmed, seqSeen = {}, 0
+  for _, entry in ipairs(resultQueue) do
+    if entry.isSequence then
+      seqSeen = seqSeen + 1
+      if seqSeen <= MAX_SEQUENCE_ENTRIES then table.insert(trimmed, entry) end
+    else
+      table.insert(trimmed, entry)
+    end
   end
+  wipeTable(resultQueue)
+  for i, entry in ipairs(trimmed) do resultQueue[i] = entry end
 
   return { queue = resultQueue, advisories = resultAdvisories }
 end

@@ -636,24 +636,37 @@ if auraHandlers and #auraHandlers > 0 then
 
   -- A secret isFullUpdate must degrade cleanly, not throw and not corrupt state.
   Tuono.State.buffs.degraded = false
+  Tuono.State.buffs.deltaBlind = false
   fire({ isFullUpdate = secret() })
-  check("secret isFullUpdate degrades instead of throwing",
-    Tuono.State.buffs.degraded == true,
-    "degraded=" .. tostring(Tuono.State.buffs.degraded))
+  -- FIELD RENAMED, INTENT UNCHANGED. These asserted buffs.degraded, which used to be set
+  -- whenever the UNIT_AURA delta payload was secret. That payload is secret for the whole
+  -- of combat, so the flag was true on 100% of ticks in a live trace -- a warning that is
+  -- always on, and (via inputConfidence) a confidence input that always said 'unknown'.
+  -- The addon now records a dark delta channel as buffs.deltaBlind and reserves
+  -- `degraded` for genuine inability to read. See tests/test_statetracker.lua
+  -- ('degraded means unreadable, not absent').
+  --
+  -- The property these guard is unchanged and still guarded: a secret payload must be
+  -- NOTICED AND RECORDED rather than throwing. Only the field name moved.
+  check("secret isFullUpdate is recorded as a blind delta channel, not a throw",
+    Tuono.State.buffs.deltaBlind == true,
+    "deltaBlind=" .. tostring(Tuono.State.buffs.deltaBlind))
 
   -- A wholly secret payload: even INDEXING it throws, so the guard must come first.
   Tuono.State.buffs.degraded = false
+  Tuono.State.buffs.deltaBlind = false
   fire(secret())
-  check("a fully secret payload degrades instead of throwing",
-    Tuono.State.buffs.degraded == true,
-    "degraded=" .. tostring(Tuono.State.buffs.degraded))
+  check("a fully secret payload is recorded as blind, not a throw",
+    Tuono.State.buffs.deltaBlind == true,
+    "deltaBlind=" .. tostring(Tuono.State.buffs.deltaBlind))
 
   -- Secret ARRAYS: ipairs and # both throw on one.
   Tuono.State.buffs.degraded = false
+  Tuono.State.buffs.deltaBlind = false
   fire({ addedAuras = secret(), removedAuraInstanceIDs = secret() })
-  check("secret delta arrays degrade instead of throwing",
-    Tuono.State.buffs.degraded == true,
-    "degraded=" .. tostring(Tuono.State.buffs.degraded))
+  check("secret delta arrays are recorded as blind, not a throw",
+    Tuono.State.buffs.deltaBlind == true,
+    "deltaBlind=" .. tostring(Tuono.State.buffs.deltaBlind))
 
   -- REGRESSION GUARD: absent is NOT secret. An ordinary delta omits isFullUpdate, and
   -- treating that omission as unreadable killed every normal aura update -- which is
