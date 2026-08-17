@@ -158,22 +158,21 @@ local ALLOW = {
   -- Display.lua hit this exact bug inside the render loop and it cost the entire icon
   -- strip; see its safeActionInfo comment. Same defect, colder path.
 
-  -- `if aura.spellId and not isSecret(aura.spellId) then` -- the boolean test runs
-  -- BEFORE the secrecy check it depends on, so a secret spellId raises on the very line
-  -- written to defend against it. Correct form is `local id = Tuono.readNum(aura.spellId)`
-  -- then `if id then`. Deferred: StateTracker.lua is outside this change's scope, and
-  -- the reachable path is the TIER 3 fallback that only runs when delta tracking found
-  -- nothing.
+  -- FIXED, entry removed. StateTracker's TIER 3 fallback boolean-tested aura.spellId
+  -- before its own isSecret guard; it now goes through Tuono.readNum, which answers
+  -- "readable?" and "what value?" in one call and in the right order.
+  --
+  -- Worth noting how this one surfaced: an unrelated edit to StateTracker shifted its
+  -- line numbers, the src-pinned staleness check caught that the entry no longer pointed
+  -- at the code it excused, and fixing the defect was cheaper than re-pinning it. That is
+  -- the behaviour the pin was added for.
   -- `src` PINS THE SOURCE TEXT, not just the line number. A line-number-only check is
   -- not a staleness check: Highlight.lua grew by 244 lines while its four entries were
   -- being made obsolete by the very fix that obsoleted them, and every one still
   -- "resolved" to some line, so the gate stayed green over four dead entries. An
   -- allowlist that outlives the code it excused is worse than no allowlist, because it
   -- reads as a reviewed decision.
-  ["StateTracker.lua:488:order"] = {
-    why = "known defect: value boolean-tested before its own isSecret guard",
-    src = "if aura.spellId and not isSecret(aura.spellId) then",
-  },
+  -- (empty: no known defect is currently excused)
 }
 
 -- --- expression helpers -----------------------------------------------------

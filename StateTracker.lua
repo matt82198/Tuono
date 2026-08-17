@@ -37,7 +37,11 @@ Tuono.State = {
 		rtb = { stage = 0, stageKnown = false, expires = 0, names = {} },
 		opportunity = { up = false, expires = 0, stacks = 0 },
 		adrenalineRush = { up = false, expires = 0 },
-		degraded = false
+		degraded = false,
+		-- The UNIT_AURA delta payload is secret throughout combat. That is expected and
+		-- handled (overlay glow, modelled RtB stage, modelled AR window), so it is
+		-- recorded separately from `degraded` and is diagnostic only -- see ProcessAuraDelta.
+		deltaBlind = false
 	},
 	cooldowns = {
 		adrenalineRush = { known = false, ready = false, remaining = 0 },
@@ -250,10 +254,30 @@ local function BootstrapBuffState()
 			{ spellID = Tuono.SpellIDs.stealth, key = "stealthed" }
 		}
 
+		-- ABSENCE IS AN ANSWER, NOT A FAILURE.
+		--
+		-- This used to set `degraded` whenever NO tracked buff was found. But the common
+		-- case in combat is that the player legitimately has none up -- no Adrenaline
+		-- Rush, no Roll the Bones, no Opportunity proc, not stealthed -- and a query that
+		-- ran cleanly and returned nil is a DEFINITIVE "you do not have this buff".
+		-- Conflating the two pinned the flag on for most of every fight: a live trace had
+		-- it true on 100% of ticks. A warning that is always on conveys nothing, and via
+		-- inputConfidence it also rated every buff-gated step "unknown", which is what
+		-- made the lookahead collapse.
+		--
+		-- This is the mirror of the defect this codebase keeps shipping. The usual form is
+		-- unknown-as-no; this is no-as-unknown, and it is just as wrong.
+		--
+		-- Only a query that could not RUN is degradation. `foundAny` is retained purely
+		-- as a diagnostic; it is deliberately not an input to the flag any more.
 		local foundAny = false
+		local readFailed = false
 		for _, item in ipairs(trackedSpells) do
 			local ok, aura = pcall(queryByID, item.spellID)
-			if not ok then aura = nil end
+			if not ok then
+				readFailed = true
+				aura = nil
+			end
 			if aura then
 				foundAny = true
 				local instanceID = Tuono.num(aura.auraInstanceID, 0)
@@ -278,10 +302,12 @@ local function BootstrapBuffState()
 			end
 		end
 
-		if not foundAny then
+		Tuono.State.buffsFoundAny = foundAny
+		if readFailed then
 			Tuono.State.buffs.degraded = true
 		end
 	else
+		-- No aura query function exists at all. This is genuine inability to read.
 		Tuono.State.buffs.degraded = true
 	end
 end
@@ -325,14 +351,30 @@ local function ProcessAuraDelta(updateInfo)
 	--
 	-- Indexing a secret TABLE throws too, so the field read is protected as well as
 	-- the test.
+	-- A DARK DELTA CHANNEL IS NOT DEGRADATION. IT IS TUESDAY.
+	--
+	-- The UNIT_AURA payload is secret for the whole of combat, so these branches fire on
+	-- essentially every aura event in every fight -- which is why `degraded` was true on
+	-- 100% of ticks in a recorded trace, why the bar showed "~ degraded data"
+	-- permanently, and why inputConfidence rated buff-gated steps "unknown" forever.
+	--
+	-- But we do not depend on this channel any more. Opportunity comes from the spell
+	-- activation overlay, which is never-secret and fires on both edges. Roll the Bones
+	-- stage is modelled from the roll we observe plus the profile's duration constants.
+	-- Adrenaline Rush is modelled by EnergyModel from the cast. Announcing degradation
+	-- because a REPLACED channel went dark reports our own architecture as a fault.
+	--
+	-- So: record that the delta channel is blind, which is true and diagnostic, and stop
+	-- claiming the addon's knowledge is degraded when it is not. `degraded` is reserved
+	-- for genuine loss -- no aura API, or a query that could not run.
 	if Tuono.isSecret(updateInfo) then
-		Tuono.State.buffs.degraded = true
+		Tuono.State.buffs.deltaBlind = true
 		return
 	end
 
 	local rawFull, gotFull = safeField(updateInfo, "isFullUpdate")
 	if not gotFull then
-		Tuono.State.buffs.degraded = true
+		Tuono.State.buffs.deltaBlind = true
 		return
 	end
 
@@ -345,8 +387,9 @@ local function ProcessAuraDelta(updateInfo)
 	elseif Tuono.isSecret(rawFull) then
 		-- Genuinely unreadable: we cannot tell a rebuild from a delta, and applying a
 		-- delta to a map that may have just been invalidated would corrupt state.
-		-- Refuse, and let the out-of-combat bootstrap re-establish the truth.
-		Tuono.State.buffs.degraded = true
+		-- Refuse, and let the out-of-combat bootstrap re-establish the truth. Blind on
+		-- this channel, not degraded overall -- see the note above.
+		Tuono.State.buffs.deltaBlind = true
 		return
 	else
 		local isFull = Tuono.readBool(rawFull)
@@ -483,11 +526,12 @@ local function RefreshBuffsFallback()
 			local aura = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
 			if not aura then break end
 
-			-- Guard against secret values in aura.spellId
-			local auraSpellId = 0
-			if aura.spellId and not isSecret(aura.spellId) then
-				auraSpellId = Tuono.num(aura.spellId, 0)
-			end
+			-- THE GUARD MUST NOT RUN AFTER THE TEST IT PROTECTS.
+			-- This was `if aura.spellId and not isSecret(aura.spellId) then`, which
+			-- boolean-tests the value BEFORE asking whether it is secret -- so a secret
+			-- spellId raises on the very line written to defend against it. readNum
+			-- answers both questions at once and in the right order.
+			local auraSpellId = Tuono.readNum(aura.spellId) or 0
 
 			-- Modern path: spell IDs take precedence; only update if delta didn't already set it
 			if auraSpellId == Tuono.SpellIDs.rollTheBones and rtbStageFromModern == 0 then
