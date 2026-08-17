@@ -572,13 +572,29 @@ local function rateRule(rule, S, spellID)
 		conf = weakest(conf, inputConfidence(cond, S, rule.spellKey))
 	end
 
-	-- Every rule passes through canAfford, so an ability that COSTS something inherits
-	-- the energy signal even when its declared conditions never mention energy.
+	-- ============================================================================
+	-- ASK THE MODEL, NOT WHETHER THE READ WORKED
+	-- ============================================================================
+	-- This used to rate a costing ability "unknown" whenever `energyKnown` was false.
+	-- But energyKnown reports whether the RAW energy read succeeded, and Midnight hides
+	-- energy unconditionally -- so it is false in every combat, forever. Every ability
+	-- that costs energy was therefore permanently "unknown", the confidence truncation
+	-- in IntelligenceLayer cut the sequence at the first such step, and the bar collapsed
+	-- to a single icon in live play. Reported as "single combat shows one button".
+	--
+	-- That is the inversion violated at its core (docs/INVERSION.md 1). We do not read
+	-- energy; we model it, and that model measured a median interval width of 0.2 in a
+	-- live trace. Consulting "did the read work" throws the model away and then reports
+	-- the loss as uncertainty about the rotation.
+	--
+	-- Affordability is three-valued and only the ANSWER matters:
+	--   yes/no  PROVEN from never-secret observations. A proven answer is not uncertain
+	--           merely because it was derived from an interval rather than read.
+	--   maybe   the interval straddles the cost, so the threshold really is a coin flip.
+	--           That is `bounded` -- reduced alpha -- and never `unknown`.
 	local ability = spellID and ABILITIES[spellID]
 	if ability and (ability.cost or 0) > 0 then
-		if not energyKnown(S) then
-			conf = weakest(conf, "unknown")
-		elseif S.energySource ~= "measured" then
+		if Tuono.Rotation.AffordState(S, spellID) == "maybe" then
 			conf = weakest(conf, "bounded")
 		end
 	end

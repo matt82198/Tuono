@@ -409,8 +409,32 @@ function R.Snapshot()
 	local lo, hi = nil, nil
 	if Tuono.Energy and Tuono.Energy.Interval then lo, hi = Tuono.Energy.Interval() end
 
+	-- HOW MANY ICONS THE PLAYER ACTUALLY SAW.
+	--
+	-- Every trace so far has recorded only position 1, so three separate reports of the
+	-- bar behaving badly -- "it switches the entire list a lot", "it just goes empty",
+	-- "single combat shows one button" -- were all unanswerable from the data, and each
+	-- one had to be chased by reproducing it offline and guessing at the live cause. The
+	-- depth of the published sequence is the single most useful number the recorder was
+	-- not capturing.
+	--
+	-- Read off the plan rather than the queue: Engine.Evaluate returns resultQueue itself
+	-- and wipes it in place on the next tick, so holding a reference here would observe a
+	-- table that mutates underneath us.
+	local E = Tuono.Engine
+	local planLen, cursor, visible = nil, nil, nil
+	if E and E.plan and E.cursor then
+		planLen = #E.plan
+		cursor = E.cursor
+		visible = math.max(0, planLen - cursor + 1)
+	end
+
 	push({
 		k = "tick",
+		-- Sequence depth as rendered, plus why it might be short.
+		vis = visible, planLen = planLen, cur = cursor,
+		fb = E and E.usedFallback or nil,
+		replan = E and E.lastReplanReason or nil,
 		cp = S.comboPoints, cpK = S.comboPointsKnown,
 		eLo = lo, eHi = hi, eSrc = S.energySource,
 		rtb = S.buffs.rtb.stage, rtbK = S.buffs.rtb.stageKnown,

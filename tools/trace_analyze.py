@@ -243,6 +243,25 @@ def report(path: Path) -> int:
         def frac(pred):
             return 100.0 * sum(1 for t in ticks if pred(t)) / len(ticks)
 
+        # Sequence depth as the player actually saw it. Absent in traces recorded before
+        # the recorder learned to capture it.
+        vis = [t["vis"] for t in ticks if isinstance(t.get("vis"), int)]
+        if vis:
+            hist = Counter(vis)
+            spread = "  ".join(f"{n}:{hist[n]}" for n in sorted(hist))
+            print(f"  icons shown           : median {sorted(vis)[len(vis) // 2]}, "
+                  f"min {min(vis)}, max {max(vis)}   [{spread}]")
+            one_or_less = sum(1 for v in vis if v <= 1)
+            print(f"  collapsed to <=1 icon : {100.0 * one_or_less / len(vis):.0f}% of ticks")
+            fb = sum(1 for t in ticks if t.get("fb") is True)
+            if fb:
+                print(f"  fell back to filler   : {fb} ticks")
+            reasons = Counter(t.get("replan") for t in ticks if t.get("replan"))
+            if reasons:
+                print(f"  re-plan reasons       : {dict(reasons)}")
+        else:
+            print("  icons shown           : not recorded (trace predates queue capture)")
+
         print(f"  combo points readable : {frac(lambda t: t.get('cpK') is not False):.0f}%")
         print(f"  RtB stage readable    : {frac(lambda t: t.get('rtbK') is True):.0f}%")
         print(f"  aura data degraded    : {frac(lambda t: t.get('deg') is True):.0f}%")
