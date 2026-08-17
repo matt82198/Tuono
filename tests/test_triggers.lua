@@ -274,3 +274,85 @@ describe("triggers: the whole set must not reintroduce churn", function()
       "other people's procs moved our bar. " .. harness.describeChurn(stats))
   end)
 end)
+
+-- ============================================================================
+-- WASTE AND MISTAKES RECALCULATE IMMEDIATELY
+-- ============================================================================
+-- The owner's goal, verbatim: "this should work like hekili, I waste BTE, recalculate, I
+-- hit the wrong button, recalculate. The model is behind it."
+--
+-- The trigger tests above assert that a reason gets NAMED. These assert the thing the
+-- player actually experiences: the sequence on the bar is freshly derived on the very next
+-- evaluation, not the one that was already there. Naming a reason while continuing to
+-- publish the old plan would pass every test above and fail the goal entirely.
+describe("triggers: waste and mistakes recalculate on the next tick", function()
+  local BETWEEN_THE_EYES = 315341
+  local VANISH = 1856
+
+  it("re-derives the published sequence when the player casts the wrong button", function()
+    local Tuono, stub = planned()
+    local before = Tuono.Engine.plan
+    expect.truthy(before, "no plan to invalidate")
+
+    harness.cast(Tuono, stub, VANISH)          -- on the GCD, never in the plan
+    stub.state.time = stub.state.time + 0.1
+    harness.evaluate(Tuono)
+
+    expect.truthy(Tuono.Engine.plan ~= before,
+      "the bar kept publishing the plan the player just abandoned")
+    expect.equal(Tuono.Engine.lastTrigger, Tuono.Engine.TRIGGER.DEVIATED)
+  end)
+
+  it("re-derives after a wasted finisher, on the tick after the cast", function()
+    -- "I waste BtE": a finisher spent at low combo points. It is on the GCD, so it must
+    -- take the deviation path -- the off-GCD exemption below must not swallow it.
+    local Tuono, stub = harness.boot({ world = world, inCombat = true })
+    stub.state.comboPoints = 1
+    harness.evaluate(Tuono)
+    local before = Tuono.Engine.plan
+    expect.truthy(before, "no plan to invalidate")
+
+    harness.cast(Tuono, stub, BETWEEN_THE_EYES)
+    expect.falsy(Tuono.Engine.plan,
+      "a wasted finisher is a deviation and must drop the plan at the event, not later")
+
+    stub.state.time = stub.state.time + 0.1
+    harness.evaluate(Tuono)
+    expect.equal(Tuono.Engine.lastTrigger, Tuono.Engine.TRIGGER.DEVIATED)
+    expect.truthy(#harness.queueIDs({ queue = Tuono.Engine.plan }) > 0,
+      "re-planning must produce a sequence, not an empty bar")
+  end)
+
+  it("re-checks an off-GCD weave on the next tick instead of after three", function()
+    -- An off-GCD cast does not consume the press the plan is waiting for, so the plan is
+    -- kept -- but Adrenaline Rush moves the energy ceiling and the haste the simulation
+    -- assumed, and nothing else catches that: it is not a deviation, going ON cooldown is
+    -- deliberately not a trigger, and combo points did not move.
+    local Tuono, stub = planned()
+    local before = Tuono.Engine.plan
+    stub.FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", "c", ADRENALINE_RUSH)
+    expect.equal(Tuono.Engine.plan, before, "an off-GCD weave must not drop the plan")
+    expect.truthy(Tuono.Engine.verifyOnAdvance,
+      "it must still demand the plan re-prove itself immediately, at the one-tick "
+        .. "threshold rather than three")
+  end)
+
+  it("learning a value it could not read before counts as a change", function()
+    -- A plan built while combo points were unreadable carries no baseline. The guard used
+    -- to skip the comparison entirely in that case, so such a plan could never be
+    -- invalidated by combo points again however far they moved. Measured live: a plan of
+    -- eight Sinister Strikes, every step rated unknown, survived into a state with two
+    -- points and a ready Adrenaline Rush.
+    local Tuono, stub = planned()
+    Tuono.State.comboPointsKnown = false
+    Tuono.Engine.InvalidatePlan("test-setup")
+    Tuono.Engine.Evaluate()
+    expect.falsy(Tuono.Engine.planContext.cpKnown, "fixture failed to make CP unknown")
+
+    Tuono.State.comboPointsKnown = true
+    Tuono.State.comboPoints = 2
+    Tuono.Engine.Evaluate()
+    expect.equal(Tuono.Engine.lastTrigger, Tuono.Engine.TRIGGER.RESOURCE,
+      "acquiring a reading we did not have is new information and must re-plan")
+  end)
+end)

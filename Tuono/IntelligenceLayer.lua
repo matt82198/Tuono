@@ -24,21 +24,44 @@ local STALL_THRESHOLD = 3
 local MAX_PLAN_AGE = 3.0
 
 -- Ticks of disagreement before the plan is abandoned. The tick loop runs at 10Hz in
--- combat, so 3 is ~0.3s -- long enough that a single blinking sensor reading cannot
--- unseat a plan, short enough to be imperceptible when the world genuinely changed.
--- One tick would make this identical to having no plan at all, which is where the churn
--- came from in the first place.
-local DISAGREE_TICKS_BEFORE_REPLAN = 3
+-- combat, so this is a delay in units of 0.1s.
+--
+-- CHOSEN BY MEASUREMENT, not by feel. Against a sensor deliberately blinking every single
+-- tick (tests/test_churn.lua drives Roll the Bones readability on and off), over 40 frames:
+--
+--   threshold 3   tail changed 0, head changed 1
+--   threshold 2   tail changed 0, head changed 1     <- identical
+--   threshold 1   tail changed 39, head changed 39   <- no damping whatsoever
+--
+-- So 2 is free: it halves the worst-case staleness after an unnoticed state change, from
+-- ~0.3s to ~0.2s, with measurably identical churn. 1 is not -- an alternating blink resets
+-- the counter on every agreeing tick, so only a threshold above 1 rejects it at all, and
+-- at 1 the layer degenerates into having no plan.
+--
+-- 0.2s also matches the cadence Hekili settled on for the same decision (5Hz in combat,
+-- UI.lua:2377), reached independently and for the same reason: nobody can act on a change
+-- faster than that, so re-deriving faster buys nothing and costs readability.
+local DISAGREE_TICKS_BEFORE_REPLAN = 2
 
 -- How far the simulation runs. Deliberately deeper than the icon count: Display collapses
 -- consecutive repeats into a single icon with a multiplier, so depth buys sequence SHAPE
 -- rather than screen space. Rotation.Predict caps at 8.
 local PREDICT_DEPTH = 8
 
--- How many predicted steps may reach the queue. Separate from PREDICT_DEPTH so the
--- simulation can run deeper than the bar shows, and separate from the advisories, which
--- are facts about now and are never trimmed to make room for a prediction.
-local MAX_SEQUENCE_ENTRIES = 8
+-- The queue is bounded. Display shows `iconCount` (4 by default, 8 maximum) and every
+-- consumer iterates the whole thing, so an unbounded queue is a slow leak of work.
+local MAX_QUEUE_ENTRIES = 8
+
+-- ...but the sequence and the advisories are different KINDS of claim and must not simply
+-- compete for the same budget on a first-come basis. A predicted step can be trimmed
+-- without losing a fact; an advisory reports something ready RIGHT NOW, and dropping it is
+-- a lie by omission. Advisories are appended after the sequence, so a naive tail-trim
+-- deleted all of them the moment the simulation depth rose from 4 to 8.
+--
+-- So the sequence yields first, down to this floor -- enough to still show the rotation's
+-- SHAPE after Display collapses runs -- and only if advisories would still overflow the
+-- cap do the lowest-priority ones (last in rule order) get dropped.
+local MIN_SEQUENCE_ENTRIES = 4
 
 -- ==========================================================================
 -- RECALCULATION TRIGGERS
@@ -167,6 +190,22 @@ Tuono.RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player", function(event, un
       local offGCD = ability and ability.gcd == false
       if not offGCD then
         Tuono.Engine.InvalidatePlan(TRIGGER.DEVIATED)
+      else
+        -- AN OFF-GCD WEAVE DOES NOT CONSUME THE PRESS, BUT IT DOES MOVE THE PREMISE.
+        --
+        -- Dropping the plan here would be wrong: the player still owes the GCD press the
+        -- plan is waiting for. But an off-GCD cast is not free of consequence -- Adrenaline
+        -- Rush changes the energy ceiling and the haste the simulation assumes, and
+        -- Preparation resets cooldowns the later steps were scheduled around.
+        --
+        -- Nothing else catches it: the cast is not a deviation, going ON cooldown is
+        -- deliberately not a trigger, and combo points did not move. So without this the
+        -- plan survived on a premise that had just changed, for up to three ticks or the
+        -- full age-out -- which is exactly "the model is behind it".
+        --
+        -- So: keep the plan, but demand it re-prove itself on the very next tick, at the
+        -- one-tick threshold rather than three.
+        E.verifyOnAdvance = true
       end
     end
   end
@@ -223,9 +262,26 @@ local function snapshotPlanContext(S)
 
   ctx.mode = Tuono.Rotation and Tuono.Rotation.mode
 
+  -- HOW MANY RULES WERE EVEN ELIGIBLE. buildActivePriorityList drops any rule whose
+  -- required spell the character is known not to have, so this number is a cheap
+  -- fingerprint of the known-spell set as the walk actually sees it.
+  --
+  -- Without it, a spell being learned or lost changes which rules can fire and nothing
+  -- notices: the TALENTS event covers the in-game path, but any other update to
+  -- knownSpells -- a probe completing, the known-API becoming available -- leaves a plan
+  -- standing that was built from a different rule list. Comparing the whole table every
+  -- tick would be the obvious alternative and is not worth the allocation.
+  ctx.activeRules = Tuono.Rotation and Tuono.Rotation.activeRuleCount
+
   -- Combo points as of the plan. Never secret, so this is a real observation; see the
   -- RESOURCE trigger in worldChangedSince for why it is skipped on a post-cast tick.
-  if S.comboPointsKnown ~= false and type(S.comboPoints) == "number" then
+  --
+  -- KNOWN-NESS IS RECORDED SEPARATELY FROM THE VALUE. A plan made while combo points were
+  -- unreadable has no baseline to compare against, and the naive guard -- "only compare
+  -- when we have one" -- then means such a plan can NEVER be invalidated by combo points
+  -- again, however far they move. See worldChangedSince.
+  ctx.cpKnown = (S.comboPointsKnown ~= false) and (type(S.comboPoints) == "number")
+  if ctx.cpKnown then
     ctx.cp = S.comboPoints
   end
 
@@ -256,6 +312,15 @@ local function worldChangedSince(S, ctx)
   -- output, never on a nameplate count crossing the threshold back and forth.
   local mode = Tuono.Rotation and Tuono.Rotation.mode
   if mode ~= ctx.mode then return TRIGGER.MODE end
+
+  -- THE ELIGIBLE RULE SET CHANGED, so the plan was built by walking a different list.
+  -- Reported as TALENTS because that is the cause in play; the count is just the cheapest
+  -- way to observe it. Only fires on an actual difference, and the count is derived from
+  -- explicit known-false entries, so a probe that has not run yet cannot manufacture one.
+  local activeRules = Tuono.Rotation and Tuono.Rotation.activeRuleCount
+  if ctx.activeRules ~= nil and activeRules ~= nil and activeRules ~= ctx.activeRules then
+    return TRIGGER.TALENTS
+  end
 
   -- ROLL THE BONES STAGE. Gates the reroll rule and Keep It Rolling, both near the top
   -- of the list. Compared KNOWN to KNOWN only: a transition into unknown is an absence
@@ -291,8 +356,30 @@ local function worldChangedSince(S, ctx)
   -- Without this, Engine.Evaluate is not a function of Tuono.State: a caller that changes
   -- the state and evaluates once gets the PREVIOUS plan, because the disagreement check
   -- needs three consecutive ticks and a single call never accumulates them.
-  if ctx.cp ~= nil and S.comboPointsKnown ~= false and type(S.comboPoints) == "number" then
-    if S.comboPoints ~= ctx.cp then return TRIGGER.RESOURCE end
+  -- LEARNING SOMETHING IS ALSO A CHANGE.
+  --
+  -- The guard used to be `if ctx.cp ~= nil and <cp is known now>`, which reads as
+  -- known-to-known discipline but is not the same thing. It meant a plan built while
+  -- combo points were UNREADABLE carried no baseline, so the comparison was skipped
+  -- forever and that plan could never be invalidated by combo points again, however far
+  -- they moved.
+  --
+  -- Measured: a plan of eight Sinister Strikes, every step rated `unknown` because the
+  -- points were unreadable when it was built, survived into a state with two points, a
+  -- ready Adrenaline Rush and a priority walk that returned RtB > AR > Blade Rush the
+  -- instant it was asked directly. The bar showed the stale plan. That is precisely "the
+  -- model is behind it".
+  --
+  -- Combo points are NEVER secret -- 100% readable across every recorded trace -- so an
+  -- unknown->known transition here is a genuine acquisition of information, not a sensor
+  -- blinking, and carries no churn risk. (Roll the Bones stage does blink, which is why
+  -- its check above stays strictly known-to-known.)
+  local cpKnownNow = (S.comboPointsKnown ~= false) and (type(S.comboPoints) == "number")
+  if cpKnownNow ~= (ctx.cpKnown == true) then
+    return TRIGGER.RESOURCE
+  end
+  if cpKnownNow and ctx.cp ~= nil and S.comboPoints ~= ctx.cp then
+    return TRIGGER.RESOURCE
   end
 
   return nil
@@ -309,6 +396,99 @@ local function rebuildQueueSet()
       queueSet[entry.spellID] = i
     end
   end
+end
+
+-- Drop entries the player could not act on. Returns a NEW list; the caller assigns it.
+--
+-- Runs on the freshly derived queue AND again on whatever is finally published, because a
+-- HELD plan is a held CHOICE, not a licence to show something uncastable. Between the tick
+-- that made a plan and the tick that publishes it a spell can be untalented away, or the
+-- ability at position 1 can go on cooldown -- and a plan that skipped this check on the way
+-- out would show it anyway. Measured: three separate legacy behaviours (talent-gated spell
+-- filtered, unknown-cooldown entry suppressed, untalented ability suppressed) all failed
+-- for this one reason once plans could outlive the tick that built them.
+function Tuono.Engine.applyCastabilityFilter(queue, S)
+  local out = {}
+  for i, entry in ipairs(queue) do
+    local skip = false
+
+    -- The spell is not on this character. Only an explicit `false` counts: nil means the
+    -- probe never ran, and refusing to show a recommendation because we did not ask is the
+    -- unknown-as-no defect in its purest form.
+    if entry.spellID and not S.knownUnavailable then
+      if S.knownSpells and S.knownSpells[entry.spellID] == false then
+        skip = true
+        -- WHY A STEP WAS DROPPED, recorded for the flight recorder. A live trace showed
+        -- the sequence EMPTY on 36% of ticks with no way to tell which reason did it, and
+        -- the engine-level filler then covered every one of them with an identical single
+        -- icon. Silent filtering reads as "the addon has no idea"; a named reason is
+        -- diagnosable.
+        if i == 1 then Tuono.Engine.lastDrop = "unknown-spell:" .. tostring(entry.spellID) end
+      end
+    end
+
+    -- A COOLDOWN WE CANNOT CONFIRM IS NOT A RECOMMENDATION, AT ANY POSITION.
+    --
+    -- Distinct from known-and-not-ready, which is fine for a later step -- that is the
+    -- whole point of a forward simulation. This is `known == false`: we cannot vouch for
+    -- the ability now OR later, so scheduling it at step 5 is a guess wearing a
+    -- prediction's clothes. Fail closed. Live play had Adrenaline Rush on the bar while it
+    -- was on cooldown, which is what this rule exists to prevent, and raising the
+    -- simulation depth to 8 gave the walk room to place such an ability further back where
+    -- the position-1 check below could not see it.
+    if not skip and entry.spellID then
+      local ab = Tuono.Rotation and Tuono.Rotation.ABILITIES
+        and Tuono.Rotation.ABILITIES[entry.spellID]
+      if ab and (ab.cd or 0) > 0 then
+        local key = Tuono.Rotation.SPELL_TO_CDKEY and Tuono.Rotation.SPELL_TO_CDKEY[entry.spellID]
+        local cd = key and S.cooldowns and S.cooldowns[key]
+        if cd and cd.known == false then
+          skip = true
+          if i == 1 then Tuono.Engine.lastDrop = "cooldown-unknown:" .. tostring(entry.spellID) end
+        end
+      end
+    end
+
+    -- POSITION 1 ONLY: the immediate action must be castable RIGHT NOW. Later sequence
+    -- steps are legitimately on cooldown at this instant -- that is the point of a forward
+    -- simulation -- so filtering them against live cooldowns would delete correct future
+    -- steps.
+    --
+    -- A pooling entry is ALREADY flagged as not-yet-castable; filtering it here would
+    -- delete the very thing we are trying to tell the player to wait for.
+    if not skip and i == 1 and entry.spellID
+      and entry.confidence ~= "pooling" and entry.confidence ~= "fallback" then
+      -- Only meaningful for abilities that HAVE a cooldown. A zero-cooldown ability
+      -- (Ambush, Sinister Strike, Dispatch) can never be "not ready", so a stale
+      -- not-ready entry for one must not suppress a correct recommendation.
+      local ab = Tuono.Rotation and Tuono.Rotation.ABILITIES
+        and Tuono.Rotation.ABILITIES[entry.spellID]
+      local hasCooldown = ab and (ab.cd or 0) > 0
+      if hasCooldown then
+        local key = Tuono.Rotation.SPELL_TO_CDKEY and Tuono.Rotation.SPELL_TO_CDKEY[entry.spellID]
+        local cd = key and S.cooldowns and S.cooldowns[key]
+        if cd and cd.known and not cd.ready then
+          skip = true
+          Tuono.Engine.lastDrop = "on-cooldown:" .. tostring(entry.spellID)
+        end
+      end
+    end
+
+    -- Cooldown and trinket ADVISORIES report something ready NOW, so unlike a predicted
+    -- step they must be dropped the moment that stops being true, wherever they sit.
+    if not skip and entry.kind == "cooldown" and entry.spellID then
+      local key = Tuono.Rotation and Tuono.Rotation.SPELL_TO_CDKEY
+        and Tuono.Rotation.SPELL_TO_CDKEY[entry.spellID]
+      local cd = key and S.cooldowns and S.cooldowns[key]
+      if cd and (not cd.known or not cd.ready) then skip = true end
+    elseif not skip and entry.kind == "trinket" and entry.itemSlot then
+      local trinket = S.trinkets and S.trinkets[entry.itemSlot]
+      if trinket and not trinket.ready then skip = true end
+    end
+
+    if not skip then table.insert(out, entry) end
+  end
+  return out
 end
 
 function Tuono.Engine.Evaluate()
@@ -560,77 +740,14 @@ function Tuono.Engine.Evaluate()
   end
 
   -- Step 4: ENGINE-LEVEL CASTABILITY FILTER (belt-and-braces)
-  -- Drop any entry whose cooldown is not known-ready OR spell is not known, EXCEPT position 1 from Blizzard
-  local filteredQueue = {}
-  for i, entry in ipairs(resultQueue) do
-    local skip = false
-
-    -- The "position 1 from Blizzard is authoritative, never filter" exemption that used
-    -- to sit here is gone with the fallback itself. It never matched anyway: the entry
-    -- it was written for carried source "blizzard_static_fallback", not "blizzard".
-    do
-      -- Check if spell is known (when API available)
-      if entry.spellID and not S.knownUnavailable then
-        if S.knownSpells[entry.spellID] == false then
-          skip = true
-          -- WHY A STEP WAS DROPPED, recorded for the flight recorder. A live trace showed
-          -- the sequence EMPTY on 36% of ticks with no way to tell which of the four
-          -- reasons below did it, and the engine-level filler then covered every one of
-          -- them with an identical single icon. Silent filtering reads as "the addon has
-          -- no idea"; a named reason is diagnosable.
-          if i == 1 then Tuono.Engine.lastDrop = "unknown-spell:" .. tostring(entry.spellID) end
-        end
-      end
-
-      -- POSITION 1 ONLY: the immediate action must be castable RIGHT NOW. Later
-      -- sequence steps are legitimately on cooldown at this instant -- that is the
-      -- point of a forward simulation -- so filtering them against live cooldowns
-      -- would delete correct future steps.
-      -- ALL position-1 entries, not just simulated ones. PIN entries from the legacy
-      -- rules were skipping this check, so a Between the Eyes on a 38s cooldown could be
-      -- pinned to position 1 while the actually-ready finisher sat at position 2.
-      -- A pooling entry is ALREADY flagged as not-yet-castable; filtering it here would
-      -- delete the very thing we are trying to tell the player to wait for.
-      if not skip and i == 1 and entry.spellID and entry.confidence ~= "pooling" then
-        -- Only meaningful for abilities that HAVE a cooldown. A zero-cooldown ability
-        -- (Ambush, Sinister Strike, Dispatch) can never be "not ready", so a stale
-        -- not-ready entry for one must not suppress a correct recommendation.
-        local ab = Tuono.Rotation and Tuono.Rotation.ABILITIES and Tuono.Rotation.ABILITIES[entry.spellID]
-        local hasCooldown = ab and (ab.cd or 0) > 0
-        if hasCooldown then
-          local key = Tuono.Rotation.SPELL_TO_CDKEY and Tuono.Rotation.SPELL_TO_CDKEY[entry.spellID]
-          local cd = key and S.cooldowns[key]
-          if cd and cd.known and not cd.ready then
-            skip = true
-            Tuono.Engine.lastDrop = "on-cooldown:" .. tostring(entry.spellID)
-          end
-        end
-      end
-
-      -- For cooldown/trinket entries: verify the cooldown is known and ready
-      if not skip and entry.kind == "cooldown" and entry.spellID then
-        local cd = S.cooldowns[entry.spellID == Tuono.SpellIDs.adrenalineRush and "adrenalineRush" or
-                              entry.spellID == Tuono.SpellIDs.bladeRush and "bladeRush" or
-                              entry.spellID == Tuono.SpellIDs.preparation and "preparation" or nil]
-        if cd and (not cd.known or not cd.ready) then
-          skip = true
-        end
-      elseif not skip and entry.kind == "trinket" and entry.itemSlot then
-        local trinket = S.trinkets[entry.itemSlot]
-        if trinket and not trinket.ready then
-          skip = true
-        end
-      end
-    end
-
-    if not skip then
-      table.insert(filteredQueue, entry)
-    end
-  end
+  --
+  -- Extracted into a function because it now runs TWICE, and duplicating it is exactly
+  -- the failure this codebase keeps repeating -- a guard applied to one copy of a rule and
+  -- not the other has caused five separate defects here. See applyCastabilityFilter's
+  -- second call site, below the plan layer.
+  local filtered = Tuono.Engine.applyCastabilityFilter(resultQueue, S)
   wipeTable(resultQueue)
-  for i, entry in ipairs(filteredQueue) do
-    resultQueue[i] = entry
-  end
+  for i, entry in ipairs(filtered) do resultQueue[i] = entry end
 
   -- (lastPos1 is assigned AFTER the plan and fallback layers, further down: it must
   -- describe what was published, not what was derived. See the note there.)
@@ -928,6 +1045,15 @@ function Tuono.Engine.Evaluate()
     E.usedFallback = false
   end
 
+  -- A HELD PLAN IS STILL CHECKED BEFORE IT IS SHOWN.
+  --
+  -- The filter above ran on the freshly derived queue. When the plan is held instead, its
+  -- entries were chosen on an earlier tick and have not been checked since -- so a spell
+  -- untalented away, or an ability that went on cooldown at position 1, would be published
+  -- anyway. The plan holds the CHOICE; it does not license showing something uncastable.
+  seq = Tuono.Engine.applyCastabilityFilter(seq, S)
+  extras = Tuono.Engine.applyCastabilityFilter(extras, S)
+
   E.committedHead = seq[1] and seq[1].spellID or nil
 
   wipeTable(resultQueue)
@@ -958,15 +1084,42 @@ function Tuono.Engine.Evaluate()
   -- sequence is a prediction and can be trimmed without losing a fact; an advisory is a
   -- fact about right now, and dropping it is a lie by omission. So the cap applies to the
   -- sequence alone, and the advisories always survive.
+  local extraCount = 0
+  for _, entry in ipairs(resultQueue) do
+    if not entry.isSequence then extraCount = extraCount + 1 end
+  end
+
+  -- The sequence yields to the advisories, but never below the floor that keeps the
+  -- rotation's shape legible.
+  local seqBudget = MAX_QUEUE_ENTRIES - extraCount
+  if seqBudget < MIN_SEQUENCE_ENTRIES then seqBudget = MIN_SEQUENCE_ENTRIES end
+
   local trimmed, seqSeen = {}, 0
   for _, entry in ipairs(resultQueue) do
     if entry.isSequence then
       seqSeen = seqSeen + 1
-      if seqSeen <= MAX_SEQUENCE_ENTRIES then table.insert(trimmed, entry) end
+      if seqSeen <= seqBudget then table.insert(trimmed, entry) end
     else
       table.insert(trimmed, entry)
     end
   end
+
+  -- If advisories alone still overflow, drop the lowest-priority ones. They are appended
+  -- in rule order, so the tail is the least important -- and an unbounded queue is worse
+  -- than a missing reminder, because every consumer walks the whole thing every tick.
+  while #trimmed > MAX_QUEUE_ENTRIES do
+    local removed = false
+    for i = #trimmed, 1, -1 do
+      if not trimmed[i].isSequence then
+        table.remove(trimmed, i)
+        removed = true
+        break
+      end
+    end
+    -- Nothing left to give: the sequence is at its floor and there are no advisories.
+    if not removed then break end
+  end
+
   wipeTable(resultQueue)
   for i, entry in ipairs(trimmed) do resultQueue[i] = entry end
 
