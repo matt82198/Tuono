@@ -330,9 +330,13 @@ Tuono.Rules = {
       -- Bones buff and when we could not see one, and the live trace had it unreadable
       -- on 73% of ticks -- so unguarded, this advisory blinks on and off ten times a
       -- second and drags the whole bar with it.
-      local _, known = Tuono.RuleHelpers.rtbStage(S)
+      local stage, known = Tuono.RuleHelpers.rtbStage(S)
       if not known then return false end
-      return S.buffs.rtb.stage == 0 and not ((S.buffs.rtb.expires or 0) > 0)
+      -- AN ADVISORY REPORTS SOMETHING READY NOW. Recommending Roll the Bones while it is
+      -- on cooldown is exactly the lie this category exists to avoid, and it was doing it:
+      -- the rule checked only the buff, never the cooldown.
+      if not Tuono.RuleHelpers.cdOf(S, "rollTheBones").ready then return false end
+      return stage == 0 and not ((S.buffs.rtb.expires or 0) > 0)
     end,
     source = "outlaw-rotation.md §1 (Roll the Bones Mechanics: 'Use on cooldown unless already at Stage 2+')"
   },

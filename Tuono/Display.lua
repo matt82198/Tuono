@@ -669,8 +669,37 @@ function Tuono.Display.Render(result)
 	--
 	-- Only consecutive identical SEQUENCE steps merge. The cooldown and trinket reminders
 	-- appended after the sequence are independent facts and are never folded together.
+	-- AN UNIDENTIFIABLE ICON IS WORSE THAN NO ICON.
+	--
+	-- Reported from live play as "some dude's face with a blue icon". Entries whose art
+	-- cannot be resolved were rendering FALLBACK_TEXTURE, a hardcoded FileDataID -- and
+	-- since Blizzard stopped naming new icons, that ID now points at whatever art happens
+	-- to live there. The whole product is "press THIS button", so an icon the player
+	-- cannot identify is not a degraded recommendation, it is a wrong one.
+	--
+	-- This surfaced because advisories stopped being trimmed off past the queue cap, which
+	-- was itself a fix: they were being silently deleted. A trinket advisory carries no
+	-- spellID and depends on GetInventoryItemTexture, which answers nil when there is
+	-- nothing to draw -- so the entries that had been invisible became visible AND broken
+	-- in the same change.
+	local function resolveTexture(entry)
+		if entry.itemSlot and (entry.itemSlot == 13 or entry.itemSlot == 14) then
+			return GetInventoryItemTexture("player", entry.itemSlot)
+		end
+		if not entry.spellID then return nil end
+		return GetSpellTexture(entry.spellID)
+	end
+
 	local collapsed = {}
 	if show.queue and result and result.queue then
+		for _, entry in ipairs(result.queue) do
+			entry.__tex = resolveTexture(entry)
+		end
+		local drawable = {}
+		for _, entry in ipairs(result.queue) do
+			if entry.__tex then table.insert(drawable, entry) end
+		end
+		result = { queue = drawable, advisories = result.advisories }
 		for _, entry in ipairs(result.queue) do
 			local prev = collapsed[#collapsed]
 			if prev and prev.entry.isSequence and entry.isSequence
@@ -738,13 +767,8 @@ function Tuono.Display.Render(result)
 				local repeatCount = slot and slot.count or 1
 				if entry then
 					-- Determine texture based on entry type
-					local tex = nil
-					if entry.itemSlot and (entry.itemSlot == 13 or entry.itemSlot == 14) then
-						tex = GetInventoryItemTexture("player", entry.itemSlot) or FALLBACK_TEXTURE
-					else
-						tex = GetSpellTexture(entry.spellID) or FALLBACK_TEXTURE
-					end
-					icon.texture:SetTexture(tex)
+					-- Resolved above; an entry with no art never reaches here.
+					icon.texture:SetTexture(entry.__tex or FALLBACK_TEXTURE)
 
 					-- The multiplier. Shown only when it means something: "x1" is noise.
 					if icon.countText then
