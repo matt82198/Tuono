@@ -78,6 +78,57 @@ local function scan()
   return findings
 end
 
+-- ============================================================================
+-- TAINT
+-- ============================================================================
+-- Observed live, 12.1.0, 2026-08-17: another addon on this machine tainted Blizzard's
+-- own Blizzard_CooldownViewer, and Blizzard's code then threw 52 times on
+--
+--   attempt to perform arithmetic on field 'startTime' (a secret number value,
+--   while execution tainted by 'CooldownManagerCentered')
+--
+-- That is the real shape of the secret-value system: the number is not absent, it is
+-- inoperable BY TAINTED CODE. Blizzard's own untainted code does that arithmetic every
+-- frame. So taint is not merely a thing that stops OUR code working -- it is contagious,
+-- and it breaks BLIZZARD'S code, in a stack trace that names the addon responsible.
+--
+-- Tuono's entire highlight design exists to avoid this: the overlay is our own frame
+-- parented to UIParent and merely ANCHORED to an action button, because SetPoint against
+-- a secure frame READS it and writes nothing. That property is currently maintained by
+-- discipline. This makes it a gate.
+local TAINT_FORBIDDEN = {
+  { pattern = "%f[%w_]hooksecurefunc%s*%(", why = "hooksecurefunc taints the hooked path" },
+  { pattern = "%f[%w_]securecall%s*%(",     why = "securecall is a secure-execution API" },
+  { pattern = ":SetAttribute%s*%(",         why = "writing an attribute to a secure frame taints it" },
+  { pattern = "CooldownViewer",             why = "Blizzard's cooldown UI is not ours to touch" },
+  { pattern = "%f[%w_]InCombatLockdown%s*%(", why = "only needed when mutating protected frames" },
+}
+
+describe("taint", function()
+  it("never writes to, hooks, or reaches into a Blizzard secure surface", function()
+    local findings = {}
+    for _, rel in ipairs(harness.tocFiles()) do
+      if rel:match("%.lua$") then
+        local src = readFile(harness.root .. "/" .. rel)
+        if src then
+          local code = lines(stripNonCode(src))
+          for i, line in ipairs(code) do
+            for _, rule in ipairs(TAINT_FORBIDDEN) do
+              if line:find(rule.pattern) then
+                findings[#findings + 1] = string.format("%s:%d  %s", rel, i, rule.why)
+              end
+            end
+          end
+        end
+      end
+    end
+    table.sort(findings)
+    expect.listEqual(findings, {},
+      "tainting a Blizzard frame produces an error in BLIZZARD's stack trace that names "
+        .. "this addon; see the header above this test")
+  end)
+end)
+
 describe("no runtime code generation", function()
   it("no shipping file can execute a string", function()
     local found = scan()

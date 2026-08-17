@@ -32,6 +32,51 @@ Blizzard hides more, the interval widens. If Blizzard unhides something, it tigh
 model does not change either way. **A design that has to be told what is secret is not
 inverted.**
 
+## 1a. What a "secret" actually is — taint, not absence
+
+VERIFIED from a live 12.1.0 error report, 2026-08-17. Blizzard's own
+`Blizzard_CooldownViewer` threw:
+
+```
+CooldownViewer.lua:987: attempt to perform arithmetic on field 'startTime'
+(a secret number value, while execution tainted by 'CooldownManagerCentered')
+
+spellCooldownInfo = {
+  modRate   = <secret number>
+  isEnabled = true
+  startTime = <secret number>
+  isActive  = false
+  duration  = <secret number>
+}
+```
+
+Read that carefully, because it corrects the obvious mental model. Blizzard's own code
+performs arithmetic on `startTime` every frame without incident. It threw **only because
+execution was tainted by an addon**. The value is not absent and it is not encrypted — it
+is *operable by untainted code and inoperable by tainted code*.
+
+Three consequences that matter:
+
+1. **Addon code is tainted by definition.** There is no cleverness that recovers the
+   value directly, ever. The inversion is not a workaround for a temporary limitation; it
+   is the only approach available to an addon, permanently.
+2. **Blizzard deliberately left decision-grade predicates non-secret.** `isEnabled` and
+   `isActive` came back as plain booleans in the same table whose numbers were secret.
+   `C_Spell.IsSpellUsable` likewise returns a plain boolean. These are choices, not
+   oversights — the raw quantity is withheld while the *answer an addon actually needs*
+   is handed over. Building on them is using the surface as designed. (Whether recovering
+   a precise value from MANY such predicates is equally intended is a separate and less
+   settled question; see STATE.md.)
+3. **Taint is contagious and it breaks Blizzard's code, not just yours.** The error above
+   is an addon causing a denial of service in a Blizzard UI component, 52 times. This is
+   why `Highlight.lua` anchors its own frame to an action button and never writes to one,
+   and why `tests/lint_codegen.lua` gates `hooksecurefunc` and friends.
+
+Also confirmed incidentally: the timer fields were secret while `isActive` was **false**,
+so cooldown secrecy is not gated on the cooldown running. And Blizzard's own
+`MIN_GLOBAL_RECOVERY_TIME` appeared in the locals as `0.750000`, independently confirming
+the `GCD_FLOOR = 0.75` constant in `CooldownModel.lua`.
+
 ## 2. Why reading loses, structurally
 
 A read is a single point in time that either succeeds or fails, and failure carries no
