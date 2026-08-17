@@ -219,6 +219,19 @@ local function pinSingleTarget()
 end
 
 local function resetRotationState(keepEnemyCount)
+  -- THE ENGINE IS STATEFUL NOW, so "reset the rotation state" has to include it.
+  --
+  -- Engine.Evaluate commits a PLAN with a cursor and only re-derives it when a named
+  -- trigger fires. That is deliberate -- it is what stopped the bar re-deriving the whole
+  -- lookahead ten times a second -- but it means a second Evaluate with different input
+  -- can legitimately republish the previous one's sequence.
+  --
+  -- This file shares a single Tuono across every assertion, so without clearing the plan
+  -- each test inherits the last test's answer. It showed up as a stealthed rogue being
+  -- told to Stealth: the recommendation was correct for the PREVIOUS test's world.
+  if Tuono.Engine and Tuono.Engine.ResetCommitment then
+    Tuono.Engine.ResetCommitment()
+  end
   if not keepEnemyCount then
     Tuono.Assist.Update()
     Tuono.State.RefreshFast()
@@ -2973,63 +2986,89 @@ test("display-clarity: low confidence renders clearly dimmed", function()
   assert_true(alpha >= 0.4 and alpha <= 0.55, "low confidence icon has alpha ~0.45, got " .. tostring(alpha))
 end)
 
--- Display Test 4: Static-fallback renders distinctly dimmed and marked
--- REPLACES the "static-fallback" rendering test. That confidence tier existed only to
--- mark Blizzard's fallback pick, which is no longer rendered at all.
+-- Display Test 4: Pooling is distinct from a command -- REWRITTEN.
 --
--- "pooling" inherits the role: the one entry type that must be visually distinct from a
--- normal recommendation, because it means "wait for this", not "press this". The
--- position-1 authority ring is what says press-now, so it must be muted here too --
--- dimming alone reads as low confidence, which is a different message entirely.
-test("display-clarity: pooling entry renders as a wait, not a command", function()
+-- The old assertion was `alpha 0.3..0.4` plus a badge, i.e. pooling was encoded as DIMMER
+-- than a normal recommendation. docs/UI.md 2.1 established that this was backwards:
+-- pooling is a HIGH-confidence claim -- "I am certain you cannot press this yet" -- and it
+-- was drawing dimmer (0.35) than genuine uncertainty (0.40), so the more certain state
+-- read as the less certain one. Alpha also could not port to the action bar, since dimming
+-- a Blizzard button means writing to a secure frame.
+--
+-- The property being protected is unchanged and still worth protecting: a pooling entry
+-- must be visually distinguishable from "press this now", because pressing it now does
+-- nothing. Only the channel changed -- from opacity to ring colour, backed by a
+-- greyscale-survivable luminance gap so it is never carried by hue alone.
+-- Render one entry and SNAPSHOT what was drawn. Returning the live icon would alias:
+-- Display.Init is idempotent, so anchor.icons[1] is the same object on every render, and
+-- reading two of them after two renders reports the second one twice. The first draft of
+-- these tests did exactly that and compared a value against itself.
+local function renderSnapshot(confidence)
   Tuono.Display.Init()
-  local result = {
-    queue = {
-      {spellID = 193315, kind = "rotation", source = "SS_last_resort", confidence = "pooling", degraded = false}
-    },
-    advisories = {}
-  }
-  Tuono.Display.Render(result)
-
+  Tuono.Display.Render({
+    queue = { { spellID = 193315, kind = "rotation", source = "t", confidence = confidence } },
+    advisories = {},
+  })
   local icon = Tuono.Display.anchor.icons[1]
-  local alpha = icon:GetAlpha()
-  assert_true(alpha >= 0.3 and alpha <= 0.4, "pooling icon is dimmed (~0.35), got " .. tostring(alpha))
-
-  if icon.badge then
-    assert_true(icon.badge:IsShown(), "pooling icon shows its wait marker")
+  local seg = icon.ring and icon.ring.top
+  local lum
+  if seg and seg.color then
+    lum = 0.2126 * seg.color[1] + 0.7152 * seg.color[2] + 0.0722 * seg.color[3]
   end
+  return { alpha = icon:GetAlpha(), pattern = icon.ringPattern, luminance = lum }
+end
+
+test("display-clarity: pooling is a confident claim, not a dim one", function()
+  local pooling = renderSnapshot("pooling")
+  local unknown = renderSnapshot("unknown")
+  -- THE INVERSION, asserted directly. This is what the old test had backwards: pooling
+  -- rendered at 0.35 against unknown's 0.40, so the more certain state drew dimmer.
+  assert_true(pooling.alpha > unknown.alpha,
+    "pooling is MORE certain than unknown and must not render dimmer; got pooling="
+    .. tostring(pooling.alpha) .. " unknown=" .. tostring(unknown.alpha))
+  -- Solid ring: we are SURE you cannot press it yet. Dashed would say the opposite.
+  assert_eq(pooling.pattern, "solid", "pooling draws a solid ring")
 end)
 
--- Display Test 5: Position-1 gets distinct treatment (authority ring visible)
-test("display-clarity: position-1 gets distinct authority ring treatment", function()
+test("display-clarity: pooling is distinguishable from a command without colour vision", function()
+  local pooling = renderSnapshot("pooling")
+  local certain = renderSnapshot("certain")
+  assert_true(pooling.luminance ~= nil and certain.luminance ~= nil, "both rings are painted")
+  -- Not colour alone. Pressing a pooling entry now does nothing, so a colourblind or
+  -- low-vision player must still be able to tell it from "press this".
+  assert_true(math.abs(certain.luminance - pooling.luminance) > 0.15,
+    "pooling and a command must separate in luminance, not just hue; got "
+    .. string.format("%.3f vs %.3f", certain.luminance, pooling.luminance))
+end)
+
+test("display-clarity: position 1 is distinguishable from the lookahead", function()
   Tuono.Display.Init()
-  local result = {
+  Tuono.Display.Render({
     queue = {
-      {spellID = 193315, kind = "rotation", source = "blizzard", confidence = "high", degraded = false},
-      {spellID = 13750, kind = "cooldown", source = "rule", confidence = "high", degraded = false}
+      { spellID = 193315, kind = "rotation", source = "t", confidence = "certain" },
+      { spellID = 13750,  kind = "cooldown", source = "t", confidence = "certain" },
     },
-    advisories = {}
-  }
-  Tuono.Display.Render(result)
+    advisories = {},
+  })
+  local one, two = Tuono.Display.anchor.icons[1], Tuono.Display.anchor.icons[2]
+  assert_true(one ~= nil and two ~= nil, "both icons exist")
 
-  local icon1 = Tuono.Display.anchor.icons[1]
-  local icon2 = Tuono.Display.anchor.icons[2]
+  -- Non-colour cue, so it survives every form of colour vision and any art underneath.
+  assert_true((one.ringThickness or 0) > (two.ringThickness or 0),
+    "position 1 draws a thicker ring than the lookahead; got "
+    .. tostring(one.ringThickness) .. " vs " .. tostring(two.ringThickness))
 
-  assert_true(icon1 ~= nil, "position 1 exists")
-  assert_true(icon2 ~= nil, "position 2 exists")
+  -- Authority is luminance, never hue -- and deliberately not blue, which is Blizzard's
+  -- own Assisted Highlight.
+  local seg = one.ring and one.ring.top
+  assert_true(seg ~= nil and seg.color ~= nil, "position 1 ring is painted")
+  local r, g, b = seg.color[1], seg.color[2], seg.color[3]
+  assert_true(r > 0.9 and g > 0.9 and b > 0.9, "position 1 ring is near-white")
 
-  -- Position 1 should have authRing visible (silver, non-kind encoding)
-  if icon1.authRing then
-    assert_true(icon1.authRing:IsShown(), "position-1 has authRing visible")
-  end
-
-  -- Position 2 should have kindRing (not authRing)
-  if icon2.kindRing then
-    assert_true(icon2.kindRing:IsShown(), "position-2 has kindRing visible")
-  end
-  if icon1.kindRing then
-    assert_false(icon1.kindRing:IsShown(), "position-1 does NOT show kindRing")
-  end
+  -- The retired regions must stay retired; two competing ring systems is how the old
+  -- encoding drifted.
+  if one.kindRing then assert_false(one.kindRing:IsShown(), "kindRing retired") end
+  if two.kindRing then assert_false(two.kindRing:IsShown(), "kindRing retired") end
 end)
 
 -- Display Test 6: Degraded flag shows hazard overlay
@@ -3852,7 +3891,13 @@ test("the rendered queue is a coherent sequence, not a rule-spliced list", funct
   Tuono.State.comboPoints = 2
   Tuono.State.cooldowns.adrenalineRush = { known = true, ready = true, remaining = 0 }
 
-  local predicted = Tuono.Rotation.Predict(Tuono.State, 4)
+  -- Predict at the depth the ENGINE uses, not a shorter one. Evaluate simulates 8 steps
+  -- (PREDICT_DEPTH), so predicting 4 here made the comparison loop walk off the end of
+  -- its own expectation and index nil -- a test failure that looked like an engine crash.
+  -- The engine is also stateful now: it commits a plan and only re-derives on a trigger,
+  -- so a pure comparison against a fresh simulation has to clear that first.
+  if Tuono.Engine.ResetCommitment then Tuono.Engine.ResetCommitment() end
+  local predicted = Tuono.Rotation.Predict(Tuono.State, 8)
   local r = Tuono.Engine.Evaluate()
 
   local seenNonSequence = false
@@ -3976,6 +4021,16 @@ local function evaluateSteps(steps, rules)
   local realPredict, realRules = Tuono.Rotation.Predict, Tuono.Rules
   Tuono.Rotation.Predict = function() return steps end
   Tuono.Rules = rules or {}
+  -- THE ENGINE CARRIES STATE BETWEEN CALLS NOW. Engine.Evaluate commits a PLAN with a
+  -- cursor and only re-derives on a named trigger, so a second call with different input
+  -- can legitimately republish the first call's sequence. This file shares one Tuono
+  -- across all its assertions, so without a reset each test inherits the previous test's
+  -- plan -- which showed up as a two-step fixture returning four entries.
+  --
+  -- Resetting here is the same discipline as saving and restoring Tuono.Rules above: the
+  -- helper is asking for a PURE evaluation of `steps`, and must therefore clear the state
+  -- that makes Evaluate impure.
+  if Tuono.Engine.ResetCommitment then Tuono.Engine.ResetCommitment() end
   Tuono.State.knownUnavailable = false
   Tuono.State.knownSpells = Tuono.State.knownSpells or {}
   for _, s in ipairs(steps) do Tuono.State.knownSpells[s.spellID] = true end
@@ -4055,12 +4110,16 @@ test("an uncertain step does not delete the cooldown and trinket reminders behin
     { spellID = 193315, confidence = "certain", reason = "s1" },
     { spellID = 8676,   confidence = "unknown", reason = "s2" },
   }, reminder)
-  assert_eq(#seq, 1, "the unknown step 2 was cut")
+  -- The sequence is no longer cut at the uncertain step (see the note above the
+  -- superseded truncation tests), so BOTH steps are present. The property this test
+  -- actually guards is unchanged and is the one below: an advisory is a fact about now
+  -- and must never be collateral damage from a prediction being uncertain.
+  assert_eq(#seq, 2, "the uncertain step is marked, not removed")
   local found = false
   for _, e in ipairs(r.queue) do
     if not e.isSequence and e.spellID == 13877 then found = true end
   end
-  assert_true(found, "the cooldown reminder behind the cut survived truncation")
+  assert_true(found, "the cooldown reminder survives behind an uncertain sequence step")
 end)
 
 test("a buff observed via the overlay channel is certain even while auras are degraded", function()
@@ -4595,7 +4654,12 @@ test("state-transition: keybind follows the same spellID across a stealth swap",
   stub.state.actionSlots = { [73] = { "spell", testSpellID } }
   stub.state.bonusBarOffset = 0  -- not stealthed yet
 
-  local result = { queue = { { spellID = testSpellID, kind = "rotation", source = "test" } } }
+  -- isSequence is now the marking criterion: Highlight deliberately does NOT glow the
+  -- cooldown and trinket advisories appended behind the sequence, because they are facts
+  -- about what is ready rather than instructions about what to press. This fixture
+  -- predates that flag, so it was silently being treated as an advisory and skipped.
+  local result = { queue = { { spellID = testSpellID, kind = "rotation", source = "test",
+                               isSequence = true, confidence = "certain" } } }
   Tuono.Display.Render(result)
   assert_false(Tuono.Display.anchor.icons[1].keyText.visible,
     "not stealthed: a spell that ONLY exists on the stealth bonus-bar slot must not resolve to a live ACTIONBUTTON keybind")
@@ -4623,7 +4687,12 @@ test("state-transition: highlight glow follows the same spellID across a stealth
   stub.state.actionSlots = { [73] = { "spell", testSpellID } }
   stub.state.bonusBarOffset = 0
 
-  local result = { queue = { { spellID = testSpellID, kind = "rotation", source = "test" } } }
+  -- isSequence is now the marking criterion: Highlight deliberately does NOT glow the
+  -- cooldown and trinket advisories appended behind the sequence, because they are facts
+  -- about what is ready rather than instructions about what to press. This fixture
+  -- predates that flag, so it was silently being treated as an advisory and skipped.
+  local result = { queue = { { spellID = testSpellID, kind = "rotation", source = "test",
+                               isSequence = true, confidence = "certain" } } }
   Tuono.Highlight.Update(result)
 
   local function captureDebugField(pattern)
@@ -4746,7 +4815,12 @@ test("state-transition: every registered event invalidates the keybind cache", f
     stub.state.actionSlots = {}
     stub.state.bonusBarOffset = 0
 
-    local result = { queue = { { spellID = testSpellID, kind = "rotation", source = "test" } } }
+    -- isSequence is now the marking criterion: Highlight deliberately does NOT glow the
+  -- cooldown and trinket advisories appended behind the sequence, because they are facts
+  -- about what is ready rather than instructions about what to press. This fixture
+  -- predates that flag, so it was silently being treated as an advisory and skipped.
+  local result = { queue = { { spellID = testSpellID, kind = "rotation", source = "test",
+                               isSequence = true, confidence = "certain" } } }
     Tuono.Display.Render(result)
     assert_false(Tuono.Display.anchor.icons[1].keyText.visible,
       eventName .. ": no keybind before the spell is placed on any slot")

@@ -719,6 +719,13 @@ function Tuono.Highlight.AppendDebugOutput()
 	table.insert(debugInfo, "Combat-only: " .. (Tuono.db and Tuono.db.highlight and Tuono.db.highlight.combatOnly and "ON" or "OFF"))
 	table.insert(debugInfo, "Glow mechanism: " .. (glowMechanism or "none"))
 	table.insert(debugInfo, "Max action slot: " .. tostring(MAX_ACTION_SLOT))
+	-- The PRIMARY marked button, as one line. Multi-step marking replaced this with a
+	-- per-mark list, which answers "what is marked" but no longer answers "what am I
+	-- supposed to press", and that is the question a player -- or a diagnostic -- asks
+	-- first. It is also the only single-valued handle anything outside this file has on
+	-- the glow, so removing it silently broke every consumer of the debug output.
+	table.insert(debugInfo, "Button frame: " ..
+		(Tuono.Highlight.LastButtonName() or "none"))
 	for _, m in ipairs(Tuono.Highlight.ActiveMarks()) do
 		table.insert(debugInfo, string.format("  #%d spell %s x%d on %s (%s)",
 			m.ordinal, tostring(m.spellID), m.repeatCount,

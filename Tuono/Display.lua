@@ -21,7 +21,12 @@ local function GetInventoryItemTexture(unit, slot)
 	return nil
 end
 
-local FALLBACK_TEXTURE = 134400
+-- FALLBACK_TEXTURE deliberately removed. It was a hardcoded FileDataID (134400), and
+-- Blizzard no longer names new icons, so that number is not a stable reference to the
+-- question-mark art it was chosen for -- it renders whatever now occupies the ID. An icon
+-- the player cannot identify is not a degraded recommendation, it is a wrong one. Entries
+-- with no identity at all are dropped; entries whose art merely failed to load draw a
+-- neutral block and are identified by their keybind.
 local TRINKET_SLOTS = { 13, 14 }
 
 -- How far the reconstructed end instant of a cooldown may move before we treat it as a
@@ -328,20 +333,38 @@ local CERTAINTY = {
 	pooling  = { alpha = 0.90, pattern = "solid"  },
 	fallback = { alpha = 0.50, pattern = "dashed" },
 	-- Legacy tiers, still accepted so older profiles and tests keep rendering.
+	-- `high` was MISSING here while medium and low were kept, so anything still passing
+	-- the old name fell through to the `bounded` default and rendered at 0.75 instead of
+	-- full opacity -- a silent downgrade of a confident recommendation, which is the
+	-- unknown-as-default defect class this codebase keeps re-shipping. An incomplete
+	-- compatibility map is worse than none, because it fails quietly for a subset.
+	high     = { alpha = 1.00, pattern = "solid"  },
 	medium   = { alpha = 0.75, pattern = "dashed" },
 	low      = { alpha = 0.50, pattern = "dashed" },
 }
 
-local RING_THICKNESS = 2
+-- AUTHORITY IS THICKNESS AS WELL AS LUMINANCE.
+--
+-- docs/UI.md 5.2 specifies a 2px ring on position 1 and 1px on the lookahead. Only the
+-- colour half was implemented, so position 1 differed from position 2 by HUE ALONE --
+-- near-white against the kind colour. Measured in greyscale that is a 1.82x luminance
+-- contrast, and against the pooling blue only 1.63x: perceptible, but thin to be the sole
+-- carrier of "this is the one to press", and it violates the rule that no meaning may
+-- rest on colour alone. Thickness is a second, independent channel that survives every
+-- form of colour vision and any icon art underneath.
+local RING_THICKNESS_AUTHORITY = 3
+local RING_THICKNESS_LEAD = 1
 local RING_INSET = 7   -- how far a dashed edge pulls back from each corner
 
 -- Paint the four-edge ring. "solid" is a closed outline; "dashed" pulls each edge back
 -- from the corners so the outline is literally incomplete -- the suppressed resolution IS
 -- the encoding, which reads instantly and needs no legend. "none" hides it entirely.
-local function setRing(icon, pattern, r, g, b, a)
+local function setRing(icon, pattern, r, g, b, a, thickness)
 	local ring = icon.ring
 	if not ring then return end
 	icon.ringPattern = pattern
+	thickness = thickness or RING_THICKNESS_LEAD
+	icon.ringThickness = (pattern ~= "none") and thickness or 0
 
 	if pattern == "none" then
 		for _, t in pairs(ring) do t:Hide() end
@@ -355,19 +378,19 @@ local function setRing(icon, pattern, r, g, b, a)
 			if edge == "top" then
 				t:SetPoint("TOPLEFT", icon, "TOPLEFT", inset, 0)
 				t:SetPoint("TOPRIGHT", icon, "TOPRIGHT", -inset, 0)
-				t:SetHeight(RING_THICKNESS)
+				t:SetHeight(thickness)
 			elseif edge == "bottom" then
 				t:SetPoint("BOTTOMLEFT", icon, "BOTTOMLEFT", inset, 0)
 				t:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", -inset, 0)
-				t:SetHeight(RING_THICKNESS)
+				t:SetHeight(thickness)
 			elseif edge == "left" then
 				t:SetPoint("TOPLEFT", icon, "TOPLEFT", 0, -inset)
 				t:SetPoint("BOTTOMLEFT", icon, "BOTTOMLEFT", 0, inset)
-				t:SetWidth(RING_THICKNESS)
+				t:SetWidth(thickness)
 			else
 				t:SetPoint("TOPRIGHT", icon, "TOPRIGHT", 0, -inset)
 				t:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", 0, inset)
-				t:SetWidth(RING_THICKNESS)
+				t:SetWidth(thickness)
 			end
 		end)
 		t:SetColorTexture(r, g, b, a)
@@ -682,12 +705,30 @@ function Tuono.Display.Render(result)
 	-- spellID and depends on GetInventoryItemTexture, which answers nil when there is
 	-- nothing to draw -- so the entries that had been invisible became visible AND broken
 	-- in the same change.
+	-- IDENTIFIABLE, OR NOT SHOWN. But "identifiable" is not the same as "has art".
+	--
+	-- The first version of this dropped every entry whose texture would not resolve. That
+	-- over-corrects: C_Spell.GetSpellTexture can answer nil transiently before the client
+	-- has cached a spell's data, and silently deleting a REAL recommendation is worse than
+	-- the placeholder it was meant to prevent -- the player is left with no answer at all
+	-- and no way to know one was withheld.
+	--
+	-- The two cases are genuinely different:
+	--   * has a spellID, art missing -- still identifiable. The keybind names the button
+	--     and the position carries the order, so keep it and draw a neutral block.
+	--   * no spellID and no item art -- a trinket advisory with nothing equipped. Nothing
+	--     on screen could tell the player what it is. Drop it.
 	local function resolveTexture(entry)
 		if entry.itemSlot and (entry.itemSlot == 13 or entry.itemSlot == 14) then
 			return GetInventoryItemTexture("player", entry.itemSlot)
 		end
 		if not entry.spellID then return nil end
 		return GetSpellTexture(entry.spellID)
+	end
+
+	-- Can the player tell WHAT this is, by any channel we have?
+	local function isIdentifiable(entry)
+		return (entry.__tex ~= nil) or (entry.spellID ~= nil)
 	end
 
 	local collapsed = {}
@@ -697,7 +738,7 @@ function Tuono.Display.Render(result)
 		end
 		local drawable = {}
 		for _, entry in ipairs(result.queue) do
-			if entry.__tex then table.insert(drawable, entry) end
+			if isIdentifiable(entry) then table.insert(drawable, entry) end
 		end
 		result = { queue = drawable, advisories = result.advisories }
 		for _, entry in ipairs(result.queue) do
@@ -767,8 +808,17 @@ function Tuono.Display.Render(result)
 				local repeatCount = slot and slot.count or 1
 				if entry then
 					-- Determine texture based on entry type
-					-- Resolved above; an entry with no art never reaches here.
-					icon.texture:SetTexture(entry.__tex or FALLBACK_TEXTURE)
+					-- NO HARDCODED FileDataID. The old FALLBACK_TEXTURE was 134400 -- the
+					-- classic question-mark ID -- and since Blizzard stopped naming new
+					-- icons that number now points at unrelated art, which is how the bar
+					-- came to show a stranger's face. There is no stable numeric icon to
+					-- fall back to, so we stop pretending there is: draw a flat neutral
+					-- block and let the keybind identify the button.
+					if entry.__tex then
+						icon.texture:SetTexture(entry.__tex)
+					else
+						icon.texture:SetColorTexture(0.16, 0.16, 0.18, 1)
+					end
 
 					-- The multiplier. Shown only when it means something: "x1" is noise.
 					if icon.countText then
@@ -820,7 +870,8 @@ function Tuono.Display.Render(result)
 						-- 0.40, so the stall signal was silently swallowed.
 						setRing(icon, "none")
 					else
-						setRing(icon, tier.pattern, rr, rg, rb, 0.95)
+						setRing(icon, tier.pattern, rr, rg, rb, 0.95,
+							(i == 1) and RING_THICKNESS_AUTHORITY or RING_THICKNESS_LEAD)
 					end
 					icon.stalled = stalled
 

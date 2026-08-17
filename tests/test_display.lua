@@ -461,3 +461,60 @@ describe("display: text scales independently of icons", function()
     expect.equal(Tuono.Display.FontSize(11), 11)
   end)
 end)
+
+describe("display: an unidentifiable entry never reaches the bar", function()
+  -- Reported live as "some dude's face with a blue icon". Entries whose art would not
+  -- resolve rendered a hardcoded FileDataID (134400 -- the old question-mark ID). Blizzard
+  -- no longer names new icons, so that number is not a stable reference to the art it was
+  -- chosen for; it draws whatever now occupies the ID.
+  --
+  -- The distinction that matters is IDENTITY, not art. An entry with a spellID is
+  -- identifiable by its keybind and position even if the texture failed to load, and
+  -- dropping it would delete a real recommendation. An entry with neither a spellID nor
+  -- item art cannot be identified by any channel we have.
+  local function renderQueue(Tuono, queue)
+    Tuono.Display.Init()
+    Tuono.Display.Render({ queue = queue, advisories = {} })
+    return Tuono.Display.anchor.icons
+  end
+
+  it("drops a trinket advisory with nothing equipped", function()
+    local Tuono, stub = harness.boot({ inCombat = true })
+    stub.state.trinkets = {}   -- nothing in slot 13
+    local icons = renderQueue(Tuono, {
+      { spellID = 193315, kind = "rotation", confidence = "certain", isSequence = true },
+      { spellID = nil, itemSlot = 13, kind = "trinket", confidence = "certain" },
+    })
+    expect.truthy(icons[1].visible, "the real recommendation still renders")
+    expect.falsy(icons[2].visible,
+      "an entry with no spellID and no item art cannot be identified and must not occupy "
+        .. "a slot; drawing a placeholder there is what produced the stranger's face")
+  end)
+
+  it("KEEPS a real spell whose art merely failed to load", function()
+    -- The over-correction to guard against: C_Spell.GetSpellTexture can answer nil
+    -- transiently before the client caches a spell, and silently deleting a genuine
+    -- recommendation is worse than the placeholder it was meant to prevent.
+    local Tuono, stub = harness.boot({ inCombat = true })
+    local realGet = _G.C_Spell.GetSpellTexture
+    _G.C_Spell.GetSpellTexture = function() return nil end
+    local ok = pcall(function()
+      local icons = renderQueue(Tuono, {
+        { spellID = 193315, kind = "rotation", confidence = "certain", isSequence = true },
+      })
+      expect.truthy(icons[1].visible,
+        "a spell we can name must still be shown; the keybind identifies it even with no art")
+    end)
+    _G.C_Spell.GetSpellTexture = realGet
+    if not ok then error("assertions failed", 0) end
+  end)
+
+  it("never falls back to a hardcoded icon id", function()
+    -- There is no stable numeric icon to fall back to, so the code must not pretend there
+    -- is. A flat colour block is honest; a FileDataID is a guess that ages badly.
+    local src = io.open("Tuono/Display.lua"):read("*a")
+    local stripped = src:gsub("%-%-[^\n]*", "")
+    expect.falsy(stripped:find("134400", 1, true),
+      "a hardcoded FileDataID reappeared in Display.lua")
+  end)
+end)
