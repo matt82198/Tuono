@@ -162,6 +162,56 @@ technical reason. See `docs/FRAMEWORK.md`.
 
 ---
 
+## HEKILI: DESIGN REFERENCE ONLY, AND THE ONE IDEA THAT MATTERS
+
+**Licence, checked before anything else: Hekili has NO licence file and no licence line in
+its TOC.** Default is all-rights-reserved. Reimplementing its *ideas* is fine; copying or
+transcribing its code is not. `docs/HEKILI.md` is written so the design can be implemented
+from the description alone — nothing in it is to be pasted. Any future work that reads
+`/tmp/hekili` inherits this constraint.
+
+**The idea Tuono is missing**, located precisely (`State.lua:2174`):
+
+```
+query_time = now + offset + delay
+```
+
+Every state query — cooldown remaining, buff remaining, resource amount — resolves against
+`query_time`, not `now`. The same state table answers "is this buff up?" differently
+depending on where the virtual clock sits, and the APL never knows it is being evaluated
+in the future.
+
+And `Core.lua:895`, which is the whole difference:
+
+```
+wait_time = state:TimeToReady()
+state.delay = wait_time
+```
+
+For each priority entry Hekili moves the clock to the moment that entry becomes ready and
+*then* evaluates its condition. `TimeToReady` is `max(cooldown remains, GCD remains,
+resource.time_to_X)`. **It never asks "can I afford this?" — it asks "WHEN can I afford
+this?" and gets a number.**
+
+Tuono asks `canAfford` and `cdOf(...).ready`, both strictly present-tense, and only pools
+— a whole GCD at a time, at most three — when nothing matched at all. That is the
+reactive-versus-predictive gap, exactly.
+
+**This is squarely an inversion play.** The interval model can already answer "when will
+energy reach 45" as precisely as it answers "is energy above 45", because it carries regen
+bounds. We compute the harder quantity and then throw it away to answer the easier
+question. See `docs/INVERSION.md` §4.
+
+**One place Tuono is already ahead, do not regress it:** Hekili rebuilds every
+recommendation from scratch each pass and has no committed plan, so it structurally cannot
+tell you *why* a recommendation changed. Tuono's plan-with-cursor plus the named
+`Engine.TRIGGER` set can.
+
+**Do not build:** the SimC script compiler (it parses expressions into Lua, reintroducing
+exactly the attack surface `tests/lint_codegen.lua` was added to prevent), multiple
+simultaneous displays, target cycling (structurally impossible under Midnight — enemy
+auras are unreadable), or a second snapshot system.
+
 ## EXISTENTIAL RISK: the inversion is a side channel
 
 Stated plainly because the whole product rests on it.
