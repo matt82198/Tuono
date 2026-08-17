@@ -30,6 +30,11 @@ local MAX_PLAN_AGE = 3.0
 -- came from in the first place.
 local DISAGREE_TICKS_BEFORE_REPLAN = 3
 
+-- How far the simulation runs. Deliberately deeper than the icon count: Display collapses
+-- consecutive repeats into a single icon with a multiplier, so depth buys sequence SHAPE
+-- rather than screen space. Rotation.Predict caps at 8.
+local PREDICT_DEPTH = 8
+
 -- ==========================================================================
 -- RECALCULATION TRIGGERS
 -- ==========================================================================
@@ -308,7 +313,25 @@ function Tuono.Engine.Evaluate()
   -- for drift in our own estimates. It just never becomes an icon.
   --
   -- Step 0: Get our rotation predictions -- the only source for the queue.
-  local predictions = Tuono.safe(Tuono.Rotation.Predict, S, 4)
+  -- SIMULATE DEEPER THAN WE DISPLAY.
+  --
+  -- This was 4, exactly the number of icons shown, which quietly capped what the bar
+  -- could ever reveal. Outlaw needs up to 5 builders before a finisher at a 5-point cap,
+  -- so the finisher sat at position 5 and was invisible until the player was already at
+  -- 3 combo points -- producing a wall of Sinister Strike with occasional cooldowns
+  -- popping into slot 1. Reported as "the whole bar is sinister strike while random
+  -- things pop into the first slot".
+  --
+  -- The sequence was never wrong. Simulated 6 deep it reads
+  --   cp=0  SS > SS > SS > SS > BtE > SS
+  --   cp=2  SS > SS > BtE > SS > SS > SS
+  --   cp=4  BtE > SS > SS > SS > SS > Dispatch
+  -- -- the finisher marching left as combo points build, which is exactly the shape a
+  -- rotation helper exists to show. It was simply off the end of the bar.
+  --
+  -- Display collapses runs of the same ability into one icon with a count, so the extra
+  -- depth costs no screen space and buys the whole shape.
+  local predictions = Tuono.safe(Tuono.Rotation.Predict, S, PREDICT_DEPTH)
   local queueIndex = 1
 
   if predictions and type(predictions) == "table" then

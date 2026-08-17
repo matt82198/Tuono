@@ -291,6 +291,17 @@ local function CreateIcon(parent, name, size, x, y, isPosition1)
 	cooldownText:Hide()
 	btn.cooldownText = cooldownText
 
+	-- Run multiplier, top-left. "x4" on one Sinister Strike says the same thing as four
+	-- identical icons, in a quarter of the space, and without implying four decisions.
+	-- Top-LEFT because bottom-right is the keybind and centre is the cooldown countdown;
+	-- three numbers on one icon need three unambiguous homes.
+	local countText = btn:CreateFontString(nil, "OVERLAY")
+	countText:SetPoint("TOPLEFT", btn, "TOPLEFT", 2, -2)
+	countText:SetTextColor(1, 1, 1, 1)
+	pcall(function() countText:SetFont(STANDARD_TEXT_FONT, isPosition1 and 13 or 11, "THICKOUTLINE") end)
+	countText:Hide()
+	btn.countText = countText
+
 	local keyText = btn:CreateFontString(nil, "OVERLAY")
 	keyText:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", -2, 1)
 	keyText:SetTextColor(1, 1, 1, 1)
@@ -498,11 +509,43 @@ function Tuono.Display.Render(result)
 	-- so the "assist unavailable" status text below was unreachable.
 	local assistAvailable = not (Tuono.Assist and Tuono.Assist.available == false)
 
-	-- Calculate visible entry count for dynamic strip resize
-	local visibleCount = 0
+	-- ========================================================================
+	-- COLLAPSE RUNS: FOUR SINISTER STRIKES IS ONE DECISION, NOT FOUR
+	-- ========================================================================
+	-- The engine simulates 8 steps but the bar shows 4, and an Outlaw at a 5-point cap
+	-- needs up to 5 builders before a finisher -- so the finisher fell off the end and the
+	-- player saw a wall of one icon with cooldowns popping into slot 1. The sequence was
+	-- correct the whole time; it was being truncated at exactly the point where it became
+	-- interesting.
+	--
+	-- Repeats carry no extra information as separate icons. "Sinister Strike x4 then
+	-- Between the Eyes" is the same fact in a quarter of the space, and it is MORE honest:
+	-- four identical icons imply four decisions when there is one decision repeated. The
+	-- count then ticks down as the player presses, and the finisher visibly approaches,
+	-- which is the predictive behaviour the wheel exists for.
+	--
+	-- Only consecutive identical SEQUENCE steps merge. The cooldown and trinket reminders
+	-- appended after the sequence are independent facts and are never folded together.
+	local collapsed = {}
 	if show.queue and result and result.queue then
-		visibleCount = math.min(iconCount, 8, #result.queue)
+		for _, entry in ipairs(result.queue) do
+			local prev = collapsed[#collapsed]
+			if prev and prev.entry.isSequence and entry.isSequence
+				and prev.entry.spellID == entry.spellID and entry.spellID ~= nil then
+				prev.count = prev.count + 1
+				-- Keep the WEAKEST confidence across the run: the bar must not claim more
+				-- certainty about the fourth press than it has about the fourth press.
+				if entry.confidence == "unknown" or prev.entry.confidence == "pooling" then
+					prev.worst = entry.confidence
+				end
+			else
+				table.insert(collapsed, { entry = entry, count = 1 })
+			end
+		end
 	end
+
+	-- Calculate visible entry count for dynamic strip resize
+	local visibleCount = math.min(iconCount, 8, #collapsed)
 
 	-- Dynamic strip resize: only call SetSize if count actually changed
 	if visibleCount ~= anchor.lastCount then
@@ -524,7 +567,9 @@ function Tuono.Display.Render(result)
 		for i = 1, 8 do
 			local icon = anchor.icons[i]
 			if i <= visibleCount then
-				local entry = result.queue[i]
+				local slot = collapsed[i]
+				local entry = slot and slot.entry
+				local repeatCount = slot and slot.count or 1
 				if entry then
 					-- Determine texture based on entry type
 					local tex = nil
@@ -534,6 +579,16 @@ function Tuono.Display.Render(result)
 						tex = GetSpellTexture(entry.spellID) or FALLBACK_TEXTURE
 					end
 					icon.texture:SetTexture(tex)
+
+					-- The multiplier. Shown only when it means something: "x1" is noise.
+					if icon.countText then
+						if repeatCount > 1 then
+							icon.countText:SetText("x" .. repeatCount)
+							icon.countText:Show()
+						else
+							icon.countText:Hide()
+						end
+					end
 
 					-- PROVENANCE-DRIVEN ALPHA. Confidence now describes what the decision
 					-- was DERIVED FROM, not how far down the queue it sits, so a step

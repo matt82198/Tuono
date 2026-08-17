@@ -254,3 +254,41 @@ describe("display: the GCD owns position 1's sweep", function()
     expect.falsy(icon(Tuono, 1).cooldownWidget.visible)
   end)
 end)
+
+describe("display: runs collapse so the shape fits on the bar", function()
+  local function render(Tuono, ids)
+    local queue = {}
+    for i, id in ipairs(ids) do
+      queue[i] = { spellID = id, kind = "rotation", confidence = "certain",
+                   step = i, isSequence = true }
+    end
+    Tuono.Display.Render({ queue = queue, advisories = {} })
+    return Tuono.Display.anchor.icons
+  end
+
+  it("shows a repeated builder once, with a count", function()
+    -- Reported as "the whole bar is sinister strike". The engine simulates 8 steps but
+    -- the bar shows 4, and an Outlaw at a 5-point cap needs up to 5 builders before a
+    -- finisher -- so the finisher fell off the end and the interesting part of the
+    -- sequence was never visible.
+    local Tuono = harness.boot({ inCombat = true })
+    local SS, BTE = 193315, 315341
+    local icons = render(Tuono, { SS, SS, SS, SS, BTE, SS, SS, SS })
+    expect.truthy(icons[1].countText.visible, "no multiplier shown on a run of four")
+    expect.equal(icons[1].countText.text, "x4")
+    expect.truthy(icons[2].visible, "the finisher should now be on the bar")
+  end)
+
+  it("does not label a single step with a multiplier", function()
+    local Tuono = harness.boot({ inCombat = true })
+    local icons = render(Tuono, { 193315, 315341, 2098, 13750 })
+    expect.falsy(icons[1].countText.visible, "'x1' is noise")
+  end)
+
+  it("never merges two different abilities", function()
+    local Tuono = harness.boot({ inCombat = true })
+    local icons = render(Tuono, { 193315, 315341, 193315, 2098 })
+    expect.falsy(icons[1].countText.visible,
+      "a run must be consecutive AND identical")
+  end)
+end)
