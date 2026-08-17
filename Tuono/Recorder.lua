@@ -450,6 +450,10 @@ function R.Snapshot()
 		-- Icons actually on screen after run-collapsing, which is NOT the engine depth: a
 		-- sequence of 8 can render as 1 icon. Three live reports turned on that gap.
 		shown = Tuono.Display and Tuono.Display.shownCount or nil,
+		-- Why position 1 was filtered out, when it was. Distinguishes 'nothing matched'
+		-- from 'something matched and we removed it' -- the filler makes those identical
+		-- on screen, and a live trace was empty on 36% of ticks with no way to tell.
+		drop = E and E.lastDrop or nil,
 		err = (errCount > 0) and errCount or nil,
 		errMsg = firstErr,
 		-- Rules that THREW during the priority walk. These are pcall'd per rule and

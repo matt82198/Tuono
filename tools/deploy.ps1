@@ -23,6 +23,11 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $repo = Split-Path -Parent $PSScriptRoot
+# The addon lives in a Tuono/ subdirectory alongside docs/, tests/ and tools/. Only that
+# subdirectory is shipped; everything beside it is developer tooling the client must never
+# see -- tests/wow_stub.lua in particular defines globals named after real WoW API
+# functions.
+$src  = Join-Path $repo 'Tuono' 
 $dest = Join-Path $AddOnsPath 'Tuono'
 
 if (-not (Test-Path $AddOnsPath)) {
@@ -32,7 +37,7 @@ if (-not (Test-Path $AddOnsPath)) {
 # The .toc is the manifest: it names every file the client will load, in order. Deploying
 # anything not listed there is dead weight; deploying a file listed but absent is a silent
 # load failure. So the .toc drives the copy rather than a directory sweep.
-$toc = Join-Path $repo 'Tuono.toc'
+$toc = Join-Path $src 'Tuono.toc'
 if (-not (Test-Path $toc)) { throw "Missing Tuono.toc at $toc" }
 
 $files = @('Tuono.toc')
@@ -41,7 +46,7 @@ foreach ($line in (Get-Content $toc)) {
     $trimmed = $line.Trim()
     if ($trimmed -eq '' -or $trimmed.StartsWith('#')) { continue }
     $files += $trimmed
-    if (-not (Test-Path (Join-Path $repo $trimmed))) { $missing += $trimmed }
+    if (-not (Test-Path (Join-Path $src $trimmed))) { $missing += $trimmed }
 }
 
 if ($missing.Count -gt 0) {
@@ -50,16 +55,16 @@ if ($missing.Count -gt 0) {
 
 # Non-Lua assets the .toc does not list but the addon references at runtime.
 foreach ($asset in @('logo.tga')) {
-    if (Test-Path (Join-Path $repo $asset)) { $files += $asset }
+    if (Test-Path (Join-Path $src $asset)) { $files += $asset }
 }
 
 if ($PSCmdlet.ShouldProcess($dest, "Deploy $($files.Count) files")) {
     foreach ($rel in $files) {
-        $src = Join-Path $repo $rel
+        $from = Join-Path $src $rel
         $dst = Join-Path $dest $rel
         $dstDir = Split-Path -Parent $dst
         if (-not (Test-Path $dstDir)) { New-Item -ItemType Directory -Path $dstDir -Force | Out-Null }
-        Copy-Item $src -Destination $dst -Force
+        Copy-Item $from -Destination $dst -Force
     }
     Write-Host "Deployed $($files.Count) files to $dest" -ForegroundColor Green
     Write-Host "Run /reload in game to pick them up." -ForegroundColor DarkGray

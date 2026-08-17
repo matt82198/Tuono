@@ -573,6 +573,12 @@ function Tuono.Engine.Evaluate()
       if entry.spellID and not S.knownUnavailable then
         if S.knownSpells[entry.spellID] == false then
           skip = true
+          -- WHY A STEP WAS DROPPED, recorded for the flight recorder. A live trace showed
+          -- the sequence EMPTY on 36% of ticks with no way to tell which of the four
+          -- reasons below did it, and the engine-level filler then covered every one of
+          -- them with an identical single icon. Silent filtering reads as "the addon has
+          -- no idea"; a named reason is diagnosable.
+          if i == 1 then Tuono.Engine.lastDrop = "unknown-spell:" .. tostring(entry.spellID) end
         end
       end
 
@@ -596,6 +602,7 @@ function Tuono.Engine.Evaluate()
           local cd = key and S.cooldowns[key]
           if cd and cd.known and not cd.ready then
             skip = true
+            Tuono.Engine.lastDrop = "on-cooldown:" .. tostring(entry.spellID)
           end
         end
       end

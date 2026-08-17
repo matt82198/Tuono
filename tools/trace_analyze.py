@@ -261,6 +261,9 @@ def report(path: Path) -> int:
                 hs = Counter(shown)
                 print(f"  ICONS ON SCREEN       : median {sorted(shown)[len(shown)//2]}, "
                       f"[{'  '.join(f'{k}:{hs[k]}' for k in sorted(hs))}]")
+            drops = Counter(t.get("drop") for t in ticks if t.get("drop"))
+            if drops:
+                print(f"  POSITION 1 DROPPED    : {dict(drops)}")
             errs = [t for t in ticks if t.get("err")]
             if errs:
                 worst = max(t["err"] for t in errs)
