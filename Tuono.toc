@@ -1,0 +1,30 @@
+## Interface: 120005, 120007, 120100
+## IconTexture: Interface\Icons\ability_rogue_rollthebones
+## Title: Tuono
+## Notes: Configurable rotation-helper framework for Midnight. Legal by construction.
+## Author: Matt Culliton
+## Version: 2.2.1
+## X-License: MIT
+## X-Website: https://github.com/matt82198/Tuono
+## SavedVariables: TuonoDB, TuonoDiagDB
+
+Core.lua
+Migration.lua
+Profiles.lua
+UserRules.lua
+profiles/OutlawRogue.lua
+data/rules.lua
+StateTracker.lua
+AssistReader.lua
+Rotation.lua
+CooldownModel.lua
+Observers.lua
+EnergyModel.lua
+IntelligenceLayer.lua
+Display.lua
+Highlight.lua
+Config.lua
+Options.lua
+Secrets.lua
+Recorder.lua
+ApiTest.lua

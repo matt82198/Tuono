@@ -1,0 +1,229 @@
+local ADDON_NAME, Tuono = ...
+
+-- ============================================================================
+-- PROFILE REGISTRY
+-- ============================================================================
+-- A PROFILE is everything spec-specific: which spells exist, what they cost, and the
+-- ordered priority list that decides what to press. The engine (Rotation.lua) knows
+-- none of it. Outlaw Rogue is just the first registered profile, not a special case --
+-- that separation is the whole point of the framework.
+--
+-- LOAD-ORDER CONTRACT (this is load-bearing, do not reorder the TOC casually):
+--   Profiles.lua        creates the SHARED Tuono.SpellIDs table
+--   profiles/*.lua      register profiles; the first one registered activates
+--                       immediately so that load-time readers see populated data
+--   StateTracker.lua    reads Tuono.SpellIDs
+--   Rotation.lua        publishes Tuono.RuleHelpers and consumes the active profile
+--
+-- Tuono.SpellIDs is MUTATED IN PLACE on activation, never reassigned. Half this addon
+-- captured a reference to it at load; swapping the table would silently strand every
+-- one of those references pointing at the old spec's data.
+-- ============================================================================
+
+Tuono.Profiles = Tuono.Profiles or {}
+local P = Tuono.Profiles
+
+P.registry = P.registry or {}
+P.order = P.order or {}
+P.active = nil
+
+-- Shared, mutated in place. See the contract note above.
+Tuono.SpellIDs = Tuono.SpellIDs or {}
+
+-- Callbacks fired after a profile becomes active, so modules can rebuild anything they
+-- derived from the old profile (Rotation's spellID->cooldown-key map, for one).
+P.activationHooks = P.activationHooks or {}
+
+function P.OnActivate(fn)
+	table.insert(P.activationHooks, fn)
+end
+
+-- profile = {
+--   id, name, class, specIndex,
+--   spells    = { key = spellID },
+--   abilities = { [spellID] = { cost, cpGen, cpSpend, cd, gcd } },
+--   priority  = { { name, spellKey, requiresSpell, when(S, A) }, ... },  -- first match wins
+--   resources = { primary = Enum.PowerType.X, secondary = ... },
+-- }
+function P.Register(profile)
+	if type(profile) ~= "table" or not profile.id then
+		return false, "profile needs an id"
+	end
+	if not P.registry[profile.id] then
+		table.insert(P.order, profile.id)
+	end
+	profile.priority = profile.priority or {}
+	profile.spells = profile.spells or {}
+	profile.abilities = profile.abilities or {}
+	P.registry[profile.id] = profile
+
+	-- First profile in wins the default slot so load-time consumers (data/rules.lua
+	-- reads Tuono.SpellIDs while loading) never see an empty table.
+	if not P.active then
+		P.Activate(profile.id)
+	end
+	return true
+end
+
+function P.Get(id)
+	return P.registry[id]
+end
+
+function P.Active()
+	return P.active and P.registry[P.active] or nil
+end
+
+function P.List()
+	local out = {}
+	for _, id in ipairs(P.order) do
+		local prof = P.registry[id]
+		if prof then
+			table.insert(out, { id = id, name = prof.name or id, class = prof.class })
+		end
+	end
+	return out
+end
+
+-- Resolve spell IDs that Blizzard has renumbered between patches. A profile lists the
+-- candidates newest-first; whichever the character actually KNOWS wins.
+--
+-- This exists because Roll the Bones moved in Midnight (315508 -> 1214909) and the
+-- addon silently kept using the dead ID: cooldown polling returned nothing, cast
+-- detection never matched, and the known-spell probe filtered the rule out. A stale
+-- spell ID fails quietly in every direction, so guessing one is worse than asking.
+local function resolveAliases(profile)
+	if not profile.spellAliases then return end
+	-- ASK EVERY PROBE, NOT THE FIRST ONE THAT EXISTS.
+	--
+	-- This used to pick C_SpellBook.IsSpellKnown if it was present and fall back to
+	-- IsPlayerSpell only when it was ABSENT -- never when it was present and answered
+	-- false. The two disagree in practice: spec-granted spells can be IsPlayerSpell-true
+	-- and IsSpellKnown-false. So every candidate was rejected, the profile kept its
+	-- declared default, and with that default being the dead pre-Midnight Roll the Bones
+	-- ID the engine's known-spell filter deleted every Roll the Bones recommendation. The
+	-- player's report was simply "it never recommends RtB".
+	--
+	-- A "no" from one probe is not evidence when another probe has not been asked.
+	local checks = {}
+	if C_SpellBook and C_SpellBook.IsSpellKnown then
+		checks[#checks + 1] = function(id) return C_SpellBook.IsSpellKnown(id) end
+	end
+	if _G.IsPlayerSpell then
+		checks[#checks + 1] = function(id) return _G.IsPlayerSpell(id) end
+	end
+	if C_Spell and C_Spell.IsSpellDataCached and C_Spell.GetSpellInfo then
+		-- Weakest of the three: proves the ID EXISTS, not that the character has it. Only
+		-- consulted when the two ownership probes have both declined, where the choice is
+		-- otherwise between a live ID and a dead one.
+		checks[#checks + 1] = function(id)
+			local info = C_Spell.GetSpellInfo(id)
+			return info and info.name ~= nil
+		end
+	end
+	if #checks == 0 then return end   -- cannot tell; keep whatever the profile declared
+
+	for key, candidates in pairs(profile.spellAliases) do
+		local resolved = nil
+		-- Probe-major, candidate-minor: a strong probe's answer for the SECOND candidate
+		-- must still beat a weak probe's answer for the first.
+		for _, check in ipairs(checks) do
+			for _, id in ipairs(candidates) do
+				local ok, known = pcall(check, id)
+				if ok and known then resolved = id break end
+			end
+			if resolved then break end
+		end
+		if resolved then profile.spells[key] = resolved end
+	end
+end
+
+-- Does `spellID` refer to the profile's `key` ability, under ANY of its known IDs?
+--
+-- Cast CORRELATION has to be more permissive than recommendation. We recommend exactly one
+-- ID -- the one the client says the character knows -- but the cast we observe may arrive
+-- under a renumbered sibling, and treating that as "some other spell" silently breaks the
+-- correlation channel that reconstructs aura state. Recommending is a choice; recognising
+-- is not, so recognise all of them.
+function P.MatchesSpell(key, spellID)
+	if not key or not spellID then return false end
+	local profile = P.Active and P.Active()
+	if not profile then return false end
+	if profile.spells and profile.spells[key] == spellID then return true end
+	local candidates = profile.spellAliases and profile.spellAliases[key]
+	if candidates then
+		for _, id in ipairs(candidates) do
+			if id == spellID then return true end
+		end
+	end
+	return false
+end
+
+function P.Activate(id)
+	local profile = P.registry[id]
+	if not profile then return false end
+
+	pcall(resolveAliases, profile)
+
+	P.active = id
+
+	-- Mutate the shared table in place.
+	for k in pairs(Tuono.SpellIDs) do Tuono.SpellIDs[k] = nil end
+	for k, v in pairs(profile.spells) do Tuono.SpellIDs[k] = v end
+
+	for _, fn in ipairs(P.activationHooks) do
+		pcall(fn, profile)
+	end
+	return true
+end
+
+-- Pick the profile matching the player's class and spec. Falls back to whatever is
+-- already active rather than blanking the display on an unsupported spec.
+function P.ResolveForPlayer()
+	local ok, _, classToken = pcall(UnitClass, "player")
+	if not ok then return end
+	local specIndex = _G.GetSpecialization and _G.GetSpecialization() or nil
+
+	for _, id in ipairs(P.order) do
+		local prof = P.registry[id]
+		if prof and prof.class == classToken then
+			if prof.specIndex == nil or prof.specIndex == specIndex then
+				P.Activate(id)
+				return id
+			end
+		end
+	end
+	return nil
+end
+
+-- Does the active profile match who the player actually is? Display uses this instead
+-- of its own hardcoded ROGUE/spec-2 check, so a second profile does not need the UI
+-- edited to become visible.
+function P.MatchesPlayer()
+	local prof = P.Active()
+	if not prof then return false end
+	local ok, _, classToken = pcall(UnitClass, "player")
+	if not ok then return false end
+	if prof.class and prof.class ~= classToken then return false end
+	if prof.specIndex then
+		local specIndex = _G.GetSpecialization and _G.GetSpecialization() or nil
+		if specIndex and specIndex ~= prof.specIndex then return false end
+	end
+	return true
+end
+
+Tuono.RegisterEvent("PLAYER_LOGIN", function()
+	-- A saved manual choice beats auto-detection; the player may be theorycrafting a
+	-- spec they are not currently in.
+	local saved = Tuono.db and Tuono.db.activeProfile
+	if saved and P.registry[saved] then
+		P.Activate(saved)
+	else
+		P.ResolveForPlayer()
+	end
+end)
+
+Tuono.RegisterEvent("PLAYER_SPECIALIZATION_CHANGED", function(event, unit)
+	if unit and unit ~= "player" then return end
+	if Tuono.db and Tuono.db.activeProfile then return end
+	P.ResolveForPlayer()
+end)
