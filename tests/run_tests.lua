@@ -125,6 +125,7 @@ local SUITE_FILES = {
   "test_profile.lua",
   "test_cooldown.lua",
   "test_statetracker.lua",
+  "test_recorder.lua",
   "test_observers.lua",
   "test_userrules.lua",
   "test_display.lua",
