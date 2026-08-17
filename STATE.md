@@ -203,6 +203,43 @@ its README says the project ENDED with the Midnight prepatch, its TOC targets 11
 applying its Outlaw priority would have REGRESSED five of our rules. It declares Blade Rush
 at cooldown 45; 12.0.0 raised it to 60. Ours was right.
 
+## Recalculation semantics (the Hekili question)
+
+Hekili rebuilds every recommendation from scratch on every pass and holds no committed
+plan; its stability comes from stable inputs plus a rate cap (5Hz in combat, UI.lua:2377).
+Tuono commits a plan with a cursor and re-derives on a NAMED trigger. That is better in one
+respect Hekili structurally cannot match -- it can report WHY a recommendation changed --
+and worse in one: a plan can be held past a state change nothing triggered on.
+
+Verified behaviour, measured rather than assumed:
+
+    waste BtE at low combo points   pressed BtE     -> replanned, trigger = deviated
+    hit the wrong button entirely   pressed Vanish  -> replanned, trigger = deviated
+
+Both re-derive on the spot, with no disagreement counter involved. The trigger set is
+`Engine.TRIGGER`, and each member is built so it cannot fire on a blinking sensor:
+
+  DEVIATED   cast != plan[cursor], off-GCD weaves exempt (they do not consume the press)
+  PROC       activation overlay show/hide -- never-secret, fires on BOTH edges
+  COOLDOWN   known-not-ready -> known-ready, so no `unknown` at either end
+  RTB_STAGE  modelled stage, compared known-to-known only
+  RESOURCE   combo points moved with no cast of ours behind them
+  TARGET / MODE / TALENTS / COMBAT
+  DISAGREE   fresh prediction persistently differs from the cursor
+  EXHAUSTED / AGED
+
+DELIBERATELY NOT A TRIGGER: the energy interval crossing an affordability boundary. The
+interval breathes -- it widens with time and tightens on observation at 4Hz -- so a cost
+sitting near a bound flips yes/maybe/no repeatedly. It is the highest churn risk available
+and it is already covered: a genuine change moves Predict's head, and the persistence check
+catches that with noise rejection intact.
+
+CONSEQUENCE FOR TESTS, worth knowing before writing one: Engine.Evaluate is no longer a
+pure function of Tuono.State. Any test that changes state and evaluates once must call
+Engine.ResetCommitment() first, or it inherits the previous evaluation's plan. The legacy
+suite shares one Tuono across every assertion and this surfaced there as a stealthed rogue
+being told to Stealth -- the recommendation was correct, for the previous test's world.
+
 ## Known limitations
 
 - Enemy state is gone permanently: no health, debuffs, casts. No interrupt planning.
