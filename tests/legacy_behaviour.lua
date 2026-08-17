@@ -3989,18 +3989,34 @@ local function evaluateSteps(steps, rules)
   return seq, r
 end
 
-test("lookahead stops at the first sequence step rated unknown", function()
+-- SUPERSEDED 2026-08-17. These four tests pinned length-as-a-confidence-signal, which was
+-- correct while `unknown` was the common case. It is not any more: buffs.degraded went
+-- 100% -> 0%, the Roll the Bones stage is modelled rather than read (27% -> 92% readable),
+-- and confidence derives from the model instead of from whether a raw read succeeded.
+--
+-- Measured consequence of keeping the cut: in a live trace the AoE list planned 8 steps on
+-- ALL 43 of its ticks while the single-target list -- same engine, same tick loop, cursor
+-- at 1 in both -- planned 0 to 3. At one sample the player had 4 combo points and an energy
+-- interval pinned to exactly [100,100] and still saw ONE icon; offline that state predicts
+-- 8. Length had stopped meaning "we are unsure" and started meaning "one rule out of
+-- thirteen touched something hidden".
+--
+-- Uncertainty was not dropped, it moved to a better channel: per-icon provenance, which
+-- dims one icon instead of deleting every icon behind it. These now assert THAT.
+test("an uncertain step no longer deletes the steps behind it", function()
   local seq = evaluateSteps({
     { spellID = 193315, confidence = "certain", reason = "s1" },
     { spellID = 8676,   confidence = "bounded", reason = "s2" },
     { spellID = 185763, confidence = "unknown", reason = "s3" },
     { spellID = 2098,   confidence = "certain", reason = "s4" },
   })
-  assert_eq(#seq, 2, "sequence truncated at the unknown step")
-  assert_true(seq[1] == 193315 and seq[2] == 8676, "the two justified steps survive in order")
+  assert_eq(#seq, 4, "the whole sequence survives; uncertainty is shown per icon")
+  assert_true(seq[1] == 193315 and seq[2] == 8676, "order is preserved")
+  assert_eq(seq[3], 185763, "the uncertain step is still SHOWN, marked rather than cut")
+  assert_eq(seq[4], 2098, "and the step behind it is no longer collateral damage")
 end)
 
-test("a certain lookahead is not truncated", function()
+test("a certain lookahead is shown in full", function()
   local seq = evaluateSteps({
     { spellID = 193315, confidence = "certain", reason = "s1" },
     { spellID = 8676,   confidence = "certain", reason = "s2" },
@@ -4010,18 +4026,19 @@ test("a certain lookahead is not truncated", function()
   assert_eq(#seq, 4, "bounded steps are shown - only unknown ends the sequence")
 end)
 
-test("position 1 is never truncated, however uncertain it is", function()
+test("an uncertain position 1 still renders, and so does the step after it", function()
   -- Refusing to answer "what do I press now" is strictly worse than answering it with a
   -- visible uncertainty tint. Only the lookahead has to earn its place.
   local seq = evaluateSteps({
     { spellID = 193315, confidence = "unknown", reason = "s1" },
     { spellID = 8676,   confidence = "unknown", reason = "s2" },
   })
-  assert_eq(#seq, 1, "an unknown position 1 still renders; the unknown step 2 does not")
+  assert_eq(#seq, 2, "refusing to answer 'what now' is worse than answering with a tint")
   assert_eq(seq[1], 193315, "position 1 survived")
+  assert_eq(seq[2], 8676, "and so does the lookahead, marked uncertain rather than removed")
 end)
 
-test("truncation does not delete the cooldown and trinket reminders behind it", function()
+test("an uncertain step does not delete the cooldown and trinket reminders behind it", function()
   -- Those entries are not predicting the future -- they report a cooldown that is ready
   -- NOW -- so an uncertain step 2 must not silently take them with it.
   -- One deterministic reminder rule, rather than whichever of the 24 shipped rules happens

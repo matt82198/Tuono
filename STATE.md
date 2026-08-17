@@ -37,9 +37,25 @@ README and `docs/SECRET-VALUES-FINDINGS.md`.
    in slot 4; one gated on hidden aura state is uncertain in slot 1. Provenance is
    per-input, never a global "degraded" flag — and it must survive into the simulator's
    scratch state, or every predicted step inherits the worst case.
-6. **The length of the queue is a signal.** The lookahead stops at the first step whose
-   provenance is `unknown`. One icon is too little to react to; four icons where the
-   fourth is a guess is worse than none.
+6. **SUPERSEDED 2026-08-17 — uncertainty is per-icon, not per-length.** This said the
+   length of the queue was the signal, and the lookahead stopped at the first step rated
+   `unknown`. That was right while `unknown` was the common case. It no longer is:
+   `buffs.degraded` went 100% -> 0% of ticks, the Roll the Bones stage is modelled rather
+   than read (27% -> 92% readable), and confidence now derives from the model instead of
+   from whether a raw read succeeded.
+
+   What settled it was measurement. In a live trace the AoE list planned 8 steps on ALL 43
+   of its ticks while the single-target list -- same engine, same tick loop, cursor at 1 in
+   both -- planned 0 to 3 and never more. At one sample the player held 4 combo points with
+   an energy interval pinned to exactly [100, 100] and still saw a single icon; that state
+   predicts 8 steps offline. The entire difference was this cut. A short bar had stopped
+   meaning "we cannot stand behind more" and started meaning "one rule out of thirteen
+   touched something hidden", which is not a signal anyone can act on.
+
+   Uncertainty was not dropped, it moved to a better channel: every step carries its
+   provenance and Display renders it per icon. One uncertain step now dims one icon instead
+   of deleting every icon behind it -- strictly more information in the same space, and
+   stable, which length never was.
 7. **One rotation on the bar.** Blizzard's pick is a sensor, never an icon.
 8. **The gate is not overridden.** `secret_scan.py --staged` before every push; a false
    positive is fixed in the code, not waived.

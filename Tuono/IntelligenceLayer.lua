@@ -649,20 +649,34 @@ function Tuono.Engine.Evaluate()
   -- Only sequence steps are cut. The cooldown and trinket reminders appended after them
   -- are independently sourced -- they are not predicting the future, they are reporting a
   -- cooldown that is ready now -- so an uncertain step 2 must not silently delete them.
-  local cut = nil
-  for i, entry in ipairs(resultQueue) do
-    if i > 1 and entry.isSequence and entry.confidence == "unknown" then
-      cut = i
-      break
-    end
-  end
-  if cut then
-    for i = #resultQueue, cut, -1 do
-      if resultQueue[i].isSequence then
-        table.remove(resultQueue, i)
-      end
-    end
-  end
+  -- RETIRED 2026-08-17. Length is no longer a certainty signal; it is per-icon now.
+  --
+  -- This cut the sequence at the first step rated `unknown`, and it was the right design
+  -- when `unknown` was the common case: aura data was flagged degraded on 100% of ticks
+  -- and the Roll the Bones stage was a per-tick read that answered only 27% of the time.
+  -- Under those conditions a short bar genuinely meant "we cannot stand behind more".
+  --
+  -- Both of those are fixed. `degraded` is 0%, the stage is modelled and reads 92%, and
+  -- confidence now comes from the model rather than from whether a raw read succeeded. So
+  -- a short bar stopped meaning "we are unsure" and started meaning "one rule out of
+  -- thirteen touched something hidden" -- which is not a signal a player can use.
+  --
+  -- Measured, and this is what settled it: in a live trace the AoE list produced a plan of
+  -- 8 on ALL 43 of its ticks, while the single-target list -- identical engine, identical
+  -- tick loop, cursor at 1 in both -- produced 0 to 3, never more. At one sample the
+  -- player had 4 combo points and a fully pinned energy interval of exactly [100, 100],
+  -- and the bar still showed a single icon. Offline, that same state predicts 8 steps.
+  -- The difference was entirely this cut. Reported as "single combat the bar just does not
+  -- have enough signal to predict anything", and separately as "the truncation is super
+  -- confusing now". Both were right.
+  --
+  -- Uncertainty has not been dropped, it has MOVED, and to a better channel: every step
+  -- carries its provenance and Display renders it per icon (ring pattern for certainty,
+  -- alpha for confidence, an amber wash for `unknown`). One uncertain step now dims one
+  -- icon instead of deleting every icon behind it. That is strictly more information in
+  -- the same space, and it is stable -- which length never was.
+  --
+  -- Locked decision 6 in STATE.md is superseded by this and says so.
 
   -- ==========================================================================
   -- LOOKAHEAD COMMITMENT
