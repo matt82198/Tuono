@@ -24,6 +24,12 @@ end
 local FALLBACK_TEXTURE = 134400
 local TRINKET_SLOTS = { 13, 14 }
 
+-- How far the reconstructed end instant of a cooldown may move before we treat it as a
+-- DIFFERENT cooldown and restart the sweep. `remaining` is recomputed every refresh, so
+-- the derived end wobbles by fractions of a frame; the smallest real change is Restless
+-- Blades at 1.0s per combo point. This sits comfortably between the two.
+local CD_REARM_EPSILON = 0.25
+
 -- Keybind cache: spellID -> "S-1" (already abbreviated, ready to display)
 -- Module-local to avoid per-tick allocations; invalidated only on binding changes
 -- Sentinel for "looked up, found nothing". Storing plain nil means the cache never
@@ -268,6 +274,10 @@ local function CreateIcon(parent, name, size, x, y, isPosition1)
 	local okCD, cooldownWidget = pcall(CreateFrame, "Cooldown", nil, btn, "CooldownFrameTemplate")
 	if okCD and cooldownWidget and cooldownWidget.SetAllPoints then
 		pcall(cooldownWidget.SetAllPoints, cooldownWidget, btn)
+		-- Born hidden, like every other overlay below. Render only ever SHOWS this when
+		-- there is a sweep to draw, so a widget that starts shown is a sweep asserted
+		-- before anything has been measured.
+		if cooldownWidget.Hide then pcall(cooldownWidget.Hide, cooldownWidget) end
 		btn.cooldownWidget = cooldownWidget
 	end
 
@@ -374,8 +384,9 @@ function Tuono.Display.Init()
 		table.insert(anchor.icons, icon)
 		icon.queueIndex = i
 		icon.isSizeLarge = isPos1
-		icon.lastCDStart = nil
-		icon.lastCDDuration = nil
+		-- Absolute instant this icon's current cooldown ends. Identity for the sweep, so
+		-- the same cooldown arms it exactly once. See CD_REARM_EPSILON.
+		icon.cdEndsAt = nil
 	end
 
 	-- ========================================================================
@@ -620,57 +631,82 @@ function Tuono.Display.Render(result)
 						icon.keyText:Hide()
 					end
 
-					-- Cooldown widget: cache-guard to avoid resetting animation every tick
-					if icon.cooldownWidget then
-						local remaining = 0
-						-- Default TRUE so trinkets and the no-cooldown case behave as before;
-						-- only a spell cooldown whose timer went secret sets this false.
-						local remainingIsKnown = true
-						if entry.kind == "cooldown" and entry.spellID then
-							-- Resolve via the shared spellID->key map rather than a hand-written
-							-- chain: the old inline version knew only AR/Blade Rush/Preparation,
-							-- so every other cooldown silently rendered no sweep at all.
-							local cdKey = Tuono.Rotation and Tuono.Rotation.SPELL_TO_CDKEY
-								and Tuono.Rotation.SPELL_TO_CDKEY[entry.spellID]
-							local cd = cdKey and Tuono.State.cooldowns[cdKey]
-							if cd then
-								remaining = cd.remaining or 0
-								remainingIsKnown = cd.remainingKnown ~= false
-							end
-						elseif entry.kind == "trinket" and entry.itemSlot then
-							if Tuono.State.trinkets[entry.itemSlot] then
-								remaining = Tuono.State.trinkets[entry.itemSlot].remaining
-							end
+					-- How much cooldown this entry has left. The NUMBER and the SWEEP are
+					-- driven separately below, because position 1's sweep belongs to the GCD.
+					local remaining = 0
+					-- Default TRUE so trinkets and the no-cooldown case behave as before;
+					-- only a spell cooldown whose timer went secret sets this false.
+					local remainingIsKnown = true
+					if entry.kind == "cooldown" and entry.spellID then
+						-- Resolve via the shared spellID->key map rather than a hand-written
+						-- chain: the old inline version knew only AR/Blade Rush/Preparation,
+						-- so every other cooldown silently rendered no sweep at all.
+						local cdKey = Tuono.Rotation and Tuono.Rotation.SPELL_TO_CDKEY
+							and Tuono.Rotation.SPELL_TO_CDKEY[entry.spellID]
+						local cd = cdKey and Tuono.State.cooldowns[cdKey]
+						if cd then
+							remaining = cd.remaining or 0
+							remainingIsKnown = cd.remainingKnown ~= false
 						end
+					elseif entry.kind == "trinket" and entry.itemSlot then
+						if Tuono.State.trinkets[entry.itemSlot] then
+							remaining = Tuono.State.trinkets[entry.itemSlot].remaining or 0
+						end
+					end
 
-						-- Cache-guard. `(GetTime() - icon.lastCDStart or 0)` parsed as
-						-- `(GetTime() - lastCDStart) or 0`, so it performed arithmetic on nil
-						-- whenever the first branch did not short-circuit -- a latent throw that
-						-- would abort the whole render. Compare against an explicit default.
-						local sinceLast = GetTime() - (icon.lastCDStart or 0)
-						if remaining ~= icon.lastCDDuration or sinceLast > 0.1 then
-							if remaining > 0 then
+					-- Only draw a countdown we actually measured. Under Midnight the timer
+					-- goes secret while readiness stays readable, so `remaining` is
+					-- legitimately 0-with-unknown-duration; printing "0" there would assert a
+					-- precision we do not have. CooldownModel.Reconcile also parks an
+					-- unobserved cooldown at a 1s placeholder and flags it inferred -- neither
+					-- a number nor a sweep may be drawn from that.
+					local drawable = remaining > 0 and remainingIsKnown
+
+					if icon.cooldownText then
+						if drawable then
+							icon.cooldownText:SetText(string.format("%.0f", remaining))
+							icon.cooldownText:Show()
+						else
+							icon.cooldownText:Hide()
+						end
+					end
+
+					-- ARM THE SWEEP ONCE PER COOLDOWN, NOT ONCE PER TICK.
+					--
+					-- The old guard also fired on `sinceLast > 0.1`, so SetCooldown restarted
+					-- the animation from full ten times a second and the icon strobed. That is
+					-- the same defect the GCD block below was already fixed for, and it takes
+					-- the same fix: identify the cooldown by something that does NOT move while
+					-- it runs.
+					--
+					-- `remaining` counts down every tick, so it can never be that identity. The
+					-- absolute instant the cooldown ENDS can: it holds still for the whole
+					-- sweep and shifts only on a genuine change -- a recast, or Restless Blades
+					-- cutting it short.
+					--
+					-- POSITION 1 IS EXCLUDED. The GCD block below owns that widget, and two
+					-- writers on one Cooldown frame re-arm over each other every tick. Nothing
+					-- is lost: Engine's castability filter already drops a position-1 entry
+					-- whose cooldown is known and not ready, so there is no sweep to draw there.
+					if icon.cooldownWidget and i > 1 then
+						if drawable then
+							local endsAt = GetTime() + remaining
+							if icon.cdEndsAt == nil
+								or math.abs(icon.cdEndsAt - endsAt) > CD_REARM_EPSILON then
+								icon.cdEndsAt = endsAt
 								icon.cooldownWidget:SetCooldown(GetTime(), remaining)
 							end
-							if icon.cooldownText then
-								-- Only draw a countdown we actually measured. Under Midnight the
-								-- timer goes secret while readiness stays readable, so `remaining`
-								-- is legitimately 0-with-unknown-duration; printing "0" there would
-								-- assert a precision we do not have.
-								if remaining and remaining > 0 and remainingIsKnown then
-									icon.cooldownText:SetText(string.format("%.0f", remaining))
-									icon.cooldownText:Show()
-								else
-									icon.cooldownText:Hide()
-								end
-								icon.lastCDStart = GetTime()
-								icon.lastCDDuration = remaining
-								icon.cooldownWidget:Show()
-							else
-								icon.cooldownWidget:Hide()
-								icon.lastCDStart = nil
-								icon.lastCDDuration = nil
+							icon.cooldownWidget:Show()
+						else
+							-- Show() used to be called here unconditionally: it sat inside
+							-- `if icon.cooldownText then`, whose else branch is unreachable
+							-- because CreateIcon always creates cooldownText. A finished sweep
+							-- therefore stayed on screen over a ready ability.
+							if icon.cdEndsAt ~= nil then
+								icon.cdEndsAt = nil
+								icon.cooldownWidget:SetCooldown(0, 0)
 							end
+							icon.cooldownWidget:Hide()
 						end
 					end
 
@@ -712,10 +748,14 @@ function Tuono.Display.Render(result)
 					elseif i == 1 then
 						-- GCD over: clear the sweep so a stale one cannot linger on an icon
 						-- that has since been replaced. Guarded, or this would fire 10x/sec.
+						-- Hidden as well as zeroed: SetCooldown(0, 0) stops the animation but
+						-- leaves the frame shown, which is the same lingering-overlay defect
+						-- the cooldown block above was just fixed for.
 						if icon.gcdStart then
 							icon.gcdStart = nil
 							if icon.cooldownWidget then
 								icon.cooldownWidget:SetCooldown(0, 0)
+								icon.cooldownWidget:Hide()
 							end
 						end
 					end

@@ -6,6 +6,10 @@
 SavedVariables/
 *.lua.bak
 
+# Python bytecode from tools/
+__pycache__/
+*.pyc
+
 # Editor
 .vscode/
 .idea/

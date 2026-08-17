@@ -21,7 +21,20 @@
 local stub = {}
 
 local SECRET = setmetatable({}, { __tostring = function() return "SECRET_MARKER" end })
-local real_type = type
+
+-- CAPTURE THE PRISTINE type/print EXACTLY ONCE, ACROSS REPEATED LOADS.
+--
+-- harness.load() re-executes this file for every test, to get a clean world. But the
+-- overrides below install wrappers into _G, so a plain `local real_type = type` on the
+-- second load captures the FIRST load's wrapper rather than Lua's own. Each load then
+-- adds a frame to every type() call, and type() is called thousands of times per boot.
+-- At ~60 tests that is quadratic and the suite stops finishing -- which is exactly the
+-- "full run hangs but every suite passes alone" symptom this stub produced.
+--
+-- Stashing the originals in _G makes re-execution idempotent.
+_G.__wow_stub_pristine_type = _G.__wow_stub_pristine_type or type
+_G.__wow_stub_pristine_print = _G.__wow_stub_pristine_print or print
+local real_type = _G.__wow_stub_pristine_type
 
 -- --- secret values ----------------------------------------------------------
 
@@ -408,7 +421,8 @@ end
 
 _G.SlashCmdList = {}
 
-local realPrint = print
+-- Same reasoning as real_type above: take the pristine print, never the last wrapper.
+local realPrint = _G.__wow_stub_pristine_print
 function _G.print(msg)
   table.insert(stub.printed, tostring(msg))
 end

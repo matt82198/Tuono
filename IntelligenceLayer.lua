@@ -17,6 +17,12 @@ Tuono.Engine = Tuono.Engine or {}
 Tuono.Engine.stallCount = 0
 local STALL_THRESHOLD = 3
 
+-- Longest the lookahead may be held without re-derivation. One second is above any real
+-- GCD (which floors at 0.75s) so it never pre-empts the GCD boundary that normally does
+-- the refreshing; it exists only so a player standing still out of combat, where no GCD
+-- ever starts and position 1 never moves, still sees cooldowns coming up.
+local MAX_COMMIT_HOLD = 1.0
+
 Tuono.RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player", function(event, unit, castGUID, spellID)
   if unit ~= "player" then return end
   local id = Tuono.readNum(spellID)
@@ -224,8 +230,13 @@ function Tuono.Engine.Evaluate()
               table.insert(resultQueue, trinketEntry)
             end
           elseif rule.kind == "rtb" then
-            -- RtB entry
-            if S.buffs.rtb.stage == 0 then
+            -- FAIL CLOSED ON AN UNREADABLE STAGE. This was a bare `stage == 0`, which is
+            -- the same unknown-as-no defect the profile rules already carry a shared
+            -- helper for -- and it is reachable, because the ADVISE path is live even
+            -- though PIN/PREFER are inert. Unguarded it flips with the sensor and
+            -- re-orders the bar behind position 1.
+            local _, rtbKnown = Tuono.RuleHelpers.rtbStage(S)
+            if rtbKnown and S.buffs.rtb.stage == 0 then
               local rtbEntry = {
                 spellID = Tuono.SpellIDs.rollTheBones,
                 source = rule.name,
@@ -401,6 +412,86 @@ function Tuono.Engine.Evaluate()
     end
   end
 
+  -- ==========================================================================
+  -- LOOKAHEAD COMMITMENT
+  -- ==========================================================================
+  -- Position 1 is re-derived from ground truth every tick and is supposed to move. The
+  -- LOOKAHEAD is different, and it was being recomputed just as often -- which is the
+  -- reported complaint: "the first button is optimal, it switches the entire list a lot
+  -- and it's not smooth".
+  --
+  -- The engine is not at fault. Rotation.Predict is a pure, idempotent function of its
+  -- input (proven in tests/test_churn.lua). The problem is that its INPUT flaps: a
+  -- recorded trace had the Roll the Bones stage readable on only 27% of ticks, and every
+  -- flip legitimately reorders the sequence, because a stage-gated rule correctly enters
+  -- and leaves the priority walk with it. Correct engine, blinking sensor, no damping.
+  --
+  -- THE GCD IS THE FRAME RATE OF THE DECISION LOOP. The player cannot act on a change
+  -- faster than one press per global cooldown, so a lookahead that changes faster than
+  -- that is showing information nobody can use, at the cost of being unreadable. So the
+  -- lookahead is committed for the duration of a GCD and only re-derived when something
+  -- material happens:
+  --
+  --   * a new GCD started        -- a press landed; this is the natural decision boundary
+  --   * position 1 changed       -- the world moved enough to change the immediate answer
+  --   * the hold aged out        -- nothing is happening (out of combat, or idle), so
+  --                                 refresh anyway rather than freeze indefinitely
+  --
+  -- ONLY THE SEQUENCE IS HELD. The cooldown and trinket entries appended after it are
+  -- not predictions -- they report something that is ready NOW -- so freezing them would
+  -- make the bar lie about live facts.
+  local seqHead, seqTail, extras = nil, {}, {}
+  for i, entry in ipairs(resultQueue) do
+    if entry.isSequence then
+      if seqHead == nil then seqHead = entry else table.insert(seqTail, entry) end
+    else
+      table.insert(extras, entry)
+    end
+  end
+
+  -- WHAT IS HELD, AND WHEN. The rule is "truth at the moment you can act on it":
+  --
+  --   GCD RUNNING  -- the player physically cannot press anything, so the whole sequence
+  --                   (position 1 included) is frozen. This is when the bar has to be
+  --                   readable, because it is when the player is reading it to plan the
+  --                   next press. A recommendation that changes during a window in which
+  --                   no action is possible is pure noise.
+  --   GCD FREE     -- the player can act right now, so the bar must be live and exact.
+  --                   Any damping here would mean recommending something stale at the
+  --                   one instant correctness matters.
+  --
+  -- Position 1 was originally exempted from the hold. Measurement killed that: with a
+  -- sensor flapping, position 1 was the LARGEST source of change (39 of 40 frames in
+  -- tests/test_churn.lua), so exempting it defeated the whole layer. Freezing it is safe
+  -- precisely because it is only frozen while it is unpressable.
+  local now = GetTime()
+  local gcdKey = Tuono.CooldownModel and Tuono.CooldownModel.GCDStart
+    and Tuono.CooldownModel.GCDStart() or nil
+  local gcdActive = Tuono.CooldownModel and Tuono.CooldownModel.GCDActive
+    and Tuono.CooldownModel.GCDActive() or false
+
+  local adopt = (Tuono.Engine.committedSeq == nil)
+    or (not gcdActive)
+    or (gcdKey ~= Tuono.Engine.committedGCD)
+    or ((now - (Tuono.Engine.committedAt or 0)) > MAX_COMMIT_HOLD)
+
+  local seq = {}
+  if seqHead then table.insert(seq, seqHead) end
+  for _, entry in ipairs(seqTail) do table.insert(seq, entry) end
+
+  if adopt then
+    Tuono.Engine.committedSeq = seq
+    Tuono.Engine.committedGCD = gcdKey
+    Tuono.Engine.committedAt = now
+  else
+    seq = Tuono.Engine.committedSeq
+  end
+  Tuono.Engine.committedHead = seq[1] and seq[1].spellID or nil
+
+  wipeTable(resultQueue)
+  for _, entry in ipairs(seq) do table.insert(resultQueue, entry) end
+  for _, entry in ipairs(extras) do table.insert(resultQueue, entry) end
+
   -- Step 5: Truncate queue to 8
   while #resultQueue > 8 do
     table.remove(resultQueue)
@@ -408,3 +499,17 @@ function Tuono.Engine.Evaluate()
 
   return { queue = resultQueue, advisories = resultAdvisories }
 end
+
+-- Drop the held lookahead. Combat boundaries are a hard reset: carrying a sequence
+-- committed against the last pull into the next one is exactly the staleness this layer
+-- must not introduce.
+function Tuono.Engine.ResetCommitment()
+  Tuono.Engine.committedSeq = nil
+  Tuono.Engine.committedGCD = nil
+  Tuono.Engine.committedHead = nil
+  Tuono.Engine.committedAt = nil
+end
+
+Tuono.RegisterEvent("PLAYER_REGEN_ENABLED", Tuono.Engine.ResetCommitment)
+Tuono.RegisterEvent("PLAYER_REGEN_DISABLED", Tuono.Engine.ResetCommitment)
+Tuono.RegisterEvent("PLAYER_ENTERING_WORLD", Tuono.Engine.ResetCommitment)

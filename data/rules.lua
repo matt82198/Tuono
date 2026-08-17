@@ -213,8 +213,10 @@ Tuono.Rules = {
     when = function(S, A)
       -- `expires` is an ABSOLUTE GetTime() timestamp, not a remaining duration. Compared
       -- raw it is a 5-6 digit number, so `< 10` was never true and this rule was dead.
+      local stage, known = Tuono.RuleHelpers.rtbStage(S)
+      if not known then return false end
       local remaining = (S.buffs.rtb.expires or 0) - GetTime()
-      return S.buffs.rtb.stage > 0 and (S.buffs.rtb.expires or 0) > 0 and remaining < 10
+      return stage > 0 and (S.buffs.rtb.expires or 0) > 0 and remaining < 10
     end,
     source = "outlaw-rotation.md §1 (Roll the Bones Mechanics: 'Stage resets if the buff expires')"
   },
@@ -287,7 +289,13 @@ Tuono.Rules = {
     spellID = nil,
     itemSlot = nil,
     when = function(S, A)
-      return S.buffs.rtb.stage == 0 and not (S.buffs.rtb.expires > 0)
+      -- COPY FIVE OF THE SAME GUARD. `stage` reads 0 both when there is no Roll the
+      -- Bones buff and when we could not see one, and the live trace had it unreadable
+      -- on 73% of ticks -- so unguarded, this advisory blinks on and off ten times a
+      -- second and drags the whole bar with it.
+      local _, known = Tuono.RuleHelpers.rtbStage(S)
+      if not known then return false end
+      return S.buffs.rtb.stage == 0 and not ((S.buffs.rtb.expires or 0) > 0)
     end,
     source = "outlaw-rotation.md §1 (Roll the Bones Mechanics: 'Use on cooldown unless already at Stage 2+')"
   },

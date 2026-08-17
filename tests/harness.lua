@@ -101,7 +101,23 @@ end
 function harness.boot(opts)
   local Tuono, stub = harness.load(opts)
   harness.login(Tuono, stub)
+  if opts and opts.inCombat then harness.enterCombat(stub) end
   return Tuono, stub
+end
+
+-- COMBAT IS AN EVENT, NOT A FLAG. StateTracker learns it only from
+-- PLAYER_REGEN_DISABLED (StateTracker.lua:1002); setting stub.state.inCombat alone
+-- leaves the addon believing it is standing around before a pull, which silently turns
+-- any combat test into a test of the opener. That produced a queue of
+-- Stealth -> Ambush and a trivially stable bar.
+function harness.enterCombat(stub)
+  stub.state.inCombat = true
+  stub.FireEvent("PLAYER_REGEN_DISABLED")
+end
+
+function harness.leaveCombat(stub)
+  stub.state.inCombat = false
+  stub.FireEvent("PLAYER_REGEN_ENABLED")
 end
 
 -- Run the engine once and return its result, bypassing the tick throttle. Tests that
@@ -124,13 +140,22 @@ function harness.fakeState(over)
     enemyCount = 1, enemyCountKnown = true,
     knownSpells = setmetatable({}, { __index = function() return true end }),
     knownUnavailable = false,
-    cooldowns = setmetatable({}, {
-      __index = function(t, k)
-        local row = { known = true, ready = true, remaining = 0, remainingKnown = true }
-        rawset(t, k, row)
-        return row
-      end,
-    }),
+    -- A PLAIN TABLE, pre-populated. It must not auto-vivify, because deepCopyState
+    -- clears stale scratch rows with `if srcCD[key] == nil` -- an __index metamethod
+    -- makes that test never fire, the simulator's own writes survive into the next
+    -- call, and Predict stops being a pure function of its input. That produced a
+    -- harness which reported the engine as non-idempotent when the engine was fine.
+    cooldowns = (function()
+      local t = {}
+      for _, key in ipairs({
+        "adrenalineRush", "bladeRush", "preparation", "betweenTheEyes", "rollTheBones",
+        "sinisterStrike", "bladeFlurry", "stealth", "pistolShot", "ambush",
+        "killingSpree", "dispatch", "keepItRolling",
+      }) do
+        t[key] = { known = true, ready = true, remaining = 0, remainingKnown = true }
+      end
+      return t
+    end)(),
     trinkets = {},
     buffs = {
       degraded = false,
@@ -160,6 +185,120 @@ function harness.queueIDs(result)
     table.insert(out, entry.spellID or ("item:" .. tostring(entry.itemSlot)))
   end
   return out
+end
+
+-- ---------------------------------------------------------------------------
+-- CHURN MEASUREMENT
+-- ---------------------------------------------------------------------------
+-- "It switches the entire list a lot and it's not smooth" is a feeling. This turns it
+-- into a number, so a fix can be shown to work rather than asserted to.
+--
+-- Drives the engine for `ticks` iterations at `dt` seconds apart and returns the queue
+-- seen at each one. `onTick(i, stub, Tuono)` runs BEFORE each evaluation, which is where
+-- a scenario injects casts, cooldowns and resource changes.
+--
+-- `observe(Tuono, stub)` runs AFTER each evaluation and its return value is stored on
+-- the frame as `.obs`. Use it to record what the engine actually saw, so a test can
+-- prove its input really varied. Poking Tuono.State from onTick does NOT work:
+-- harness.evaluate runs State.RefreshFast first and overwrites it, which quietly turns
+-- a flapping-input test into a constant-input one.
+--
+-- `opts.rawEngine` calls Engine.Evaluate WITHOUT the State.RefreshFast that normally
+-- precedes it. Use it when the scenario drives Tuono.State directly: RefreshFast
+-- re-derives that state from the client every tick and would silently overwrite the
+-- input, leaving the test measuring a constant. That is not hypothetical -- it made two
+-- earlier tests here vacuous.
+function harness.runTicks(Tuono, stub, ticks, dt, onTick, observe, opts)
+  local frames = {}
+  local raw = opts and opts.rawEngine
+  for i = 1, ticks do
+    if onTick then onTick(i, stub, Tuono) end
+    stub.state.time = stub.state.time + dt
+    local result = raw and Tuono.Engine.Evaluate() or harness.evaluate(Tuono)
+    local ids = harness.queueIDs(result)
+    table.insert(frames, {
+      t = stub.state.time,
+      ids = ids,
+      len = #ids,
+      obs = observe and observe(Tuono, stub) or nil,
+    })
+  end
+  return frames
+end
+
+-- Prove a driven input actually varied across the run. Without this, a test that claims
+-- "flapping X does not move the queue" passes just as happily when X never flapped.
+function harness.assertVaried(frames, why)
+  local first, varied = nil, false
+  for _, f in ipairs(frames) do
+    if first == nil then
+      first = f.obs
+    elseif f.obs ~= first then
+      varied = true
+      break
+    end
+  end
+  if not varied then
+    error({ __testfail = true, msg =
+      "vacuous: the observed input never varied across the run -- " .. tostring(why) }, 2)
+  end
+end
+
+local function sameList(a, b)
+  if #a ~= #b then return false end
+  for i = 1, #a do
+    if a[i] ~= b[i] then return false end
+  end
+  return true
+end
+
+-- Churn statistics over a run of frames.
+--
+--   tailChanges  positions 2..N differed from the previous frame. This is the number the
+--                complaint is about: position 1 is re-derived from ground truth every
+--                tick and is SUPPOSED to move, but the lookahead flipping under a
+--                stationary player is noise with no information in it.
+--   headChanges  position 1 differed. Expected to be non-zero in real combat.
+--   lenChanges   the visible length changed, which reads as the bar growing and
+--                shrinking even when the contents are right.
+function harness.churn(frames)
+  local stats = { frames = #frames, tailChanges = 0, headChanges = 0, lenChanges = 0 }
+  for i = 2, #frames do
+    local prev, cur = frames[i - 1], frames[i]
+    if prev.ids[1] ~= cur.ids[1] then stats.headChanges = stats.headChanges + 1 end
+    if prev.len ~= cur.len then stats.lenChanges = stats.lenChanges + 1 end
+
+    local prevTail, curTail = {}, {}
+    for j = 2, #prev.ids do table.insert(prevTail, prev.ids[j]) end
+    for j = 2, #cur.ids do table.insert(curTail, cur.ids[j]) end
+    if not sameList(prevTail, curTail) then stats.tailChanges = stats.tailChanges + 1 end
+  end
+  local span = (#frames > 1) and (frames[#frames].t - frames[1].t) or 1
+  stats.span = span
+  stats.tailPerSec = stats.tailChanges / span
+  stats.headPerSec = stats.headChanges / span
+  return stats
+end
+
+-- ANTI-VACUITY GUARD. "The lookahead never changed" is trivially true of a lookahead
+-- that was never there, so every stability assertion has to prove there was something
+-- to be stable. Call this before asserting on churn.
+function harness.assertLookahead(frames, minLen)
+  minLen = minLen or 2
+  for _, f in ipairs(frames) do
+    if f.len < minLen then
+      error({ __testfail = true, msg = string.format(
+        "vacuous: a frame carried only %d entries (need >= %d), so a stability "
+        .. "assertion would pass without testing anything", f.len, minLen) }, 2)
+    end
+  end
+end
+
+function harness.describeChurn(stats)
+  return string.format(
+    "%d frames over %.1fs: tail changed %d (%.2f/s), head changed %d (%.2f/s), length changed %d",
+    stats.frames, stats.span, stats.tailChanges, stats.tailPerSec,
+    stats.headChanges, stats.headPerSec, stats.lenChanges)
 end
 
 return harness

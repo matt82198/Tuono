@@ -116,6 +116,7 @@ end
 local SUITE_FILES = {
   "toc_check.lua",
   "lint_lua51.lua",
+  "lint_secrets.lua",
   "test_load.lua",
   "test_energy.lua",
   "test_rotation.lua",
