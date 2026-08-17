@@ -4,9 +4,15 @@
 forward-simulating APL engine and renders the next N presses. Outlaw Rogue is the
 reference profile; the engine itself is spec-agnostic. MIT, Lua 5.1.
 
-**The thesis, in one line**: Midnight hides combat state behind "secret values", so Tuono
-never reads the hidden value — it *bounds* it from never-secret signals and reports how
-sure it is. Certainty is a first-class output, not a hidden assumption.
+**The thesis, in one line**: don't read state — **model it**, and correct the model against
+never-secret observations. Certainty is a first-class output, not a hidden assumption.
+
+**Read `docs/INVERSION.md` before changing anything in the engine or the sensing layer.**
+It is the design doctrine and it is load-bearing. The short version: secrecy is not a
+problem to be defended against, it is a property of a channel we deliberately do not use.
+`EnergyModel` contains no branch anywhere asking whether energy is hidden — it models
+energy and tightens on observation. A design that has to be *told* what is secret is not
+inverted. When a value blinks, the fix is to invert it, not to guard every reader of it.
 
 ## Key commands
 
@@ -32,6 +38,9 @@ sure it is. Certainty is a first-class output, not a hidden assumption.
 - **Unknown is never "no".** Treating an unreadable value as a negative is the single
   defect class this codebase has shipped most often (it emptied the bar, suppressed the
   rotation, and told players to reroll a Jackpot). Fail open, lower confidence, say so.
+  But note the ordering: this is the *fallback*. A modelled value is rarely unknown in the
+  first place, so inverting the quantity beats guarding every reader of it. See
+  `docs/INVERSION.md` §6.4.
 - **Never write to a Blizzard secure frame.** Anchoring our own frame *to* a button reads
   it and is safe; `CreateTexture` on an `ActionButton` taints it and produces "Interface
   action failed because of an AddOn".

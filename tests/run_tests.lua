@@ -122,7 +122,11 @@ local SUITE_FILES = {
   "test_rotation.lua",
   "test_mode.lua",
   "test_profile.lua",
+  "test_cooldown.lua",
+  "test_observers.lua",
+  "test_userrules.lua",
   "test_display.lua",
+  "test_highlight.lua",
   "test_churn.lua",
 }
 
