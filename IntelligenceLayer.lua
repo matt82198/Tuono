@@ -348,6 +348,13 @@ function Tuono.Engine.Evaluate()
           kind = "rotation",
           confidence = pred.confidence,
           step = queueIndex,
+          -- CARRY THE TIMELINE THROUGH. Rotation.Predict stamps every step with `at`
+          -- (seconds until it should be cast) and `since` (the gap after the previous
+          -- one), and this was dropping both on the floor -- so Display's wait rendering,
+          -- written to read entry.at, could never fire and every entry arrived at=nil.
+          -- The engine computed the harder quantity and then discarded it.
+          at = pred.at,
+          since = pred.since,
           isSequence = true
         })
         tempDedup[pred.spellID] = true

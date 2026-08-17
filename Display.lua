@@ -687,8 +687,31 @@ function Tuono.Display.Render(result)
 		end
 	end
 
+	-- COLLAPSING MUST EARN ITS PLACE.
+	--
+	-- Reported from live play: "it literally just drops to 1 icon when there is one target
+	-- and 4 when there are multi". Collapsing a run is only a win when it FREES SPACE FOR
+	-- SOMETHING ELSE. When the whole sequence is one ability -- a builder chain with no
+	-- reachable finisher -- collapsing turns the entire bar into a single box, which reads
+	-- as broken and destroys the lead time the wheel exists to give.
+	--
+	-- So: if collapsing does not reveal a second distinct ability, do not collapse. The
+	-- player gets their icons back and the run is shown as the row of presses it is.
+	if #collapsed < 2 and result and result.queue and #result.queue >= 2 then
+		collapsed = {}
+		for _, entry in ipairs(result.queue) do
+			table.insert(collapsed, { entry = entry, count = 1 })
+		end
+	end
+
 	-- Calculate visible entry count for dynamic strip resize
 	local visibleCount = math.min(iconCount, 8, #collapsed)
+
+	-- What the player actually SEES, published for the flight recorder. Every trace so far
+	-- has recorded engine-side depth, which is not the same number: a sequence of 8 can
+	-- render as 1 icon after collapsing, and three separate live reports turned on exactly
+	-- that gap.
+	Tuono.Display.shownCount = visibleCount
 
 	-- Dynamic strip resize: only call SetSize if count actually changed
 	if visibleCount ~= anchor.lastCount then

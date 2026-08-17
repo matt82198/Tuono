@@ -447,6 +447,9 @@ function R.Snapshot()
 		k = "tick",
 		-- Sequence depth as rendered, plus why it might be short.
 		vis = visible, planLen = planLen, cur = cursor,
+		-- Icons actually on screen after run-collapsing, which is NOT the engine depth: a
+		-- sequence of 8 can render as 1 icon. Three live reports turned on that gap.
+		shown = Tuono.Display and Tuono.Display.shownCount or nil,
 		err = (errCount > 0) and errCount or nil,
 		errMsg = firstErr,
 		-- Rules that THREW during the priority walk. These are pcall'd per rule and

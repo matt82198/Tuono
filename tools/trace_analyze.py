@@ -256,6 +256,11 @@ def report(path: Path) -> int:
             fb = sum(1 for t in ticks if t.get("fb") is True)
             if fb:
                 print(f"  fell back to filler   : {fb} ticks")
+            shown = [t["shown"] for t in ticks if isinstance(t.get("shown"), int)]
+            if shown:
+                hs = Counter(shown)
+                print(f"  ICONS ON SCREEN       : median {sorted(shown)[len(shown)//2]}, "
+                      f"[{'  '.join(f'{k}:{hs[k]}' for k in sorted(hs))}]")
             errs = [t for t in ticks if t.get("err")]
             if errs:
                 worst = max(t["err"] for t in errs)
