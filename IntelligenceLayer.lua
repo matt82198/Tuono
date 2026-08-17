@@ -17,21 +17,61 @@ Tuono.Engine = Tuono.Engine or {}
 Tuono.Engine.stallCount = 0
 local STALL_THRESHOLD = 3
 
--- Longest the lookahead may be held without re-derivation. One second is above any real
--- GCD (which floors at 0.75s) so it never pre-empts the GCD boundary that normally does
--- the refreshing; it exists only so a player standing still out of combat, where no GCD
--- ever starts and position 1 never moves, still sees cooldowns coming up.
-local MAX_COMMIT_HOLD = 1.0
+-- How long a plan may survive without the player following it. This is a BACKSTOP, not
+-- the primary invalidation path -- deviation and persistent disagreement both re-plan
+-- immediately. It exists so a player who stops pressing things (target died, ran out of
+-- range, walked away) still sees the bar catch up rather than holding a stale plan.
+local MAX_PLAN_AGE = 3.0
+
+-- Ticks of disagreement before the plan is abandoned. The tick loop runs at 10Hz in
+-- combat, so 3 is ~0.3s -- long enough that a single blinking sensor reading cannot
+-- unseat a plan, short enough to be imperceptible when the world genuinely changed.
+-- One tick would make this identical to having no plan at all, which is where the churn
+-- came from in the first place.
+local DISAGREE_TICKS_BEFORE_REPLAN = 3
 
 Tuono.RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player", function(event, unit, castGUID, spellID)
   if unit ~= "player" then return end
   local id = Tuono.readNum(spellID)
   if not id then return end
-  local recommended = Tuono.Engine.lastPos1
+  local E = Tuono.Engine
+
+  local recommended = E.lastPos1
   if recommended and id ~= recommended then
-    Tuono.Engine.stallCount = (Tuono.Engine.stallCount or 0) + 1
+    E.stallCount = (E.stallCount or 0) + 1
   else
-    Tuono.Engine.stallCount = 0
+    E.stallCount = 0
+  end
+
+  -- ADVANCE THE PLAN, OR ABANDON IT.
+  --
+  -- This is the whole point of planning: following the plan must be CHEAP. The
+  -- simulation already computed the state this cast produces, so the remaining steps are
+  -- still correct and the bar should simply slide left.
+  --
+  -- Deviating is different in kind. Every later step was conditioned on this press
+  -- happening; once it did not, they describe a world that does not exist. A plan built
+  -- on a press that never happened is worse than no plan, so it goes immediately -- no
+  -- disagreement counter, no grace.
+  --
+  -- Off-GCD abilities are deliberately NOT treated as deviation. Adrenaline Rush and
+  -- Preparation do not consume the GCD, so weaving one does not invalidate the plan for
+  -- the ability the player is still about to press.
+  if E.plan and E.cursor then
+    local planned = E.plan[E.cursor]
+    if planned and planned.spellID == id then
+      E.cursor = E.cursor + 1
+      E.disagreeTicks = 0
+    else
+      local ability = Tuono.Rotation and Tuono.Rotation.ABILITIES
+        and Tuono.Rotation.ABILITIES[id]
+      local offGCD = ability and ability.gcd == false
+      if not offGCD then
+        E.plan = nil
+        E.cursor = nil
+        E.disagreeTicks = 0
+      end
+    end
   end
 end)
 
@@ -449,44 +489,81 @@ function Tuono.Engine.Evaluate()
     end
   end
 
-  -- WHAT IS HELD, AND WHEN. The rule is "truth at the moment you can act on it":
+  -- ==========================================================================
+  -- THE SEQUENCE IS A PLAN, AND FOLLOWING IT ADVANCES A CURSOR
+  -- ==========================================================================
+  -- The requirement, in the player's words: "if I press the optimal button I should be
+  -- in the optimal sequence -- but it should still check."
   --
-  --   GCD RUNNING  -- the player physically cannot press anything, so the whole sequence
-  --                   (position 1 included) is frozen. This is when the bar has to be
-  --                   readable, because it is when the player is reading it to plan the
-  --                   next press. A recommendation that changes during a window in which
-  --                   no action is possible is pure noise.
-  --   GCD FREE     -- the player can act right now, so the bar must be live and exact.
-  --                   Any damping here would mean recommending something stale at the
-  --                   one instant correctness matters.
+  -- That is exactly right, and it falls out of what the sequence already IS. Predict
+  -- returns a CAUSAL CHAIN: step 3 is only correct because the simulator spent step 1's
+  -- energy, banked its combo points and started its cooldowns. So once the player
+  -- actually casts step 1, steps 2..N are still valid BY CONSTRUCTION -- the world moved
+  -- to the state we predicted. Re-deriving them from scratch throws away work we already
+  -- did and correctly own, and it is why pressing the right button produced a whole new
+  -- list instead of the old one sliding left.
   --
-  -- Position 1 was originally exempted from the hold. Measurement killed that: with a
-  -- sensor flapping, position 1 was the LARGEST source of change (39 of 40 frames in
-  -- tests/test_churn.lua), so exempting it defeated the whole layer. Freezing it is safe
-  -- precisely because it is only frozen while it is unpressable.
+  -- So: publish a plan, advance a cursor when the player follows it, and re-plan only
+  -- when reality disagrees.
+  --
+  --   FOLLOWED     cast == plan[cursor]  -> cursor advances. The bar slides left. This
+  --                is the common case and it costs nothing.
+  --   DEVIATED     cast ~= plan[cursor]  -> the premise of every later step is void.
+  --                Re-plan immediately; a plan conditioned on a press that did not
+  --                happen is worse than no plan.
+  --   SURPRISED    a fresh prediction persistently disagrees with the cursor -> the
+  --                world changed under us (a proc landed, a cooldown reset, the target
+  --                died). Re-plan. This is the "it should still check" half.
+  --   EXHAUSTED    cursor ran off the end -> re-plan.
+  --
+  -- The disagreement test is deliberately NOT instantaneous. Predict is idempotent, but
+  -- its INPUTS blink -- Roll the Bones stage was readable on 27% of ticks before it was
+  -- modelled -- and a single tick of disagreement is far more likely to be sensor noise
+  -- than a changed world. Requiring the disagreement to persist is what separates
+  -- "checking" from "thrashing".
   local now = GetTime()
-  local gcdKey = Tuono.CooldownModel and Tuono.CooldownModel.GCDStart
-    and Tuono.CooldownModel.GCDStart() or nil
-  local gcdActive = Tuono.CooldownModel and Tuono.CooldownModel.GCDActive
-    and Tuono.CooldownModel.GCDActive() or false
+  local E = Tuono.Engine
 
-  local adopt = (Tuono.Engine.committedSeq == nil)
-    or (not gcdActive)
-    or (gcdKey ~= Tuono.Engine.committedGCD)
-    or ((now - (Tuono.Engine.committedAt or 0)) > MAX_COMMIT_HOLD)
+  local fresh = {}
+  if seqHead then table.insert(fresh, seqHead) end
+  for _, entry in ipairs(seqTail) do table.insert(fresh, entry) end
 
-  local seq = {}
-  if seqHead then table.insert(seq, seqHead) end
-  for _, entry in ipairs(seqTail) do table.insert(seq, entry) end
+  local plan = E.plan
+  local replan = (plan == nil) or (E.cursor == nil) or (E.cursor > #plan)
 
-  if adopt then
-    Tuono.Engine.committedSeq = seq
-    Tuono.Engine.committedGCD = gcdKey
-    Tuono.Engine.committedAt = now
-  else
-    seq = Tuono.Engine.committedSeq
+  if not replan then
+    local planned = plan[E.cursor]
+    local freshHead = fresh[1] and fresh[1].spellID or nil
+    if planned and freshHead and planned.spellID ~= freshHead then
+      E.disagreeTicks = (E.disagreeTicks or 0) + 1
+      if E.disagreeTicks >= DISAGREE_TICKS_BEFORE_REPLAN then replan = true end
+    else
+      E.disagreeTicks = 0
+      -- The plan and the world agree, so refresh the head's provenance from the fresh
+      -- rating rather than showing a rating computed several GCDs ago. The CHOICE is
+      -- held; how sure we are about it stays current.
+      if planned and fresh[1] then
+        planned.confidence = fresh[1].confidence
+      end
+    end
+    -- A plan is a short-lived object. This is a backstop against holding one across
+    -- something we failed to notice, not the primary invalidation path.
+    if (now - (E.planAt or 0)) > MAX_PLAN_AGE then replan = true end
   end
-  Tuono.Engine.committedHead = seq[1] and seq[1].spellID or nil
+
+  local seq
+  if replan then
+    E.plan = fresh
+    E.cursor = 1
+    E.planAt = now
+    E.disagreeTicks = 0
+    seq = fresh
+  else
+    -- Publish from the cursor onward: the tail the player has not reached yet.
+    seq = {}
+    for i = E.cursor, #plan do table.insert(seq, plan[i]) end
+  end
+  E.committedHead = seq[1] and seq[1].spellID or nil
 
   wipeTable(resultQueue)
   for _, entry in ipairs(seq) do table.insert(resultQueue, entry) end
@@ -504,10 +581,11 @@ end
 -- committed against the last pull into the next one is exactly the staleness this layer
 -- must not introduce.
 function Tuono.Engine.ResetCommitment()
-  Tuono.Engine.committedSeq = nil
-  Tuono.Engine.committedGCD = nil
+  Tuono.Engine.plan = nil
+  Tuono.Engine.cursor = nil
+  Tuono.Engine.planAt = nil
+  Tuono.Engine.disagreeTicks = 0
   Tuono.Engine.committedHead = nil
-  Tuono.Engine.committedAt = nil
 end
 
 Tuono.RegisterEvent("PLAYER_REGEN_ENABLED", Tuono.Engine.ResetCommitment)

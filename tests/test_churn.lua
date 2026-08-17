@@ -202,100 +202,150 @@ describe("churn: flapping readability must not flap the bar", function()
   end)
 end)
 
-describe("churn: the lookahead is committed for a GCD", function()
-  -- Flip Roll the Bones readability on every tick, straight into the engine's input,
-  -- and measure what reaches the bar. Uncommitted, this reorders the sequence on every
-  -- single tick: measured at 39 changes across 40 frames, head and tail alike.
-  local function flapRun(Tuono, stub, ticks)
-    return harness.runTicks(Tuono, stub, ticks, TICK,
+describe("plan: pressing the recommended button advances the sequence", function()
+  it("slides left by one instead of producing a new list", function()
+    local Tuono, stub = harness.boot({ world = stationaryWorld, inCombat = true })
+    local before = harness.queueIDs(harness.evaluate(Tuono))
+    expect.truthy(#before >= 3, "need a lookahead to advance; got " .. #before)
+
+    stub.FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", "c1", before[1])
+    stub.state.time = stub.state.time + TICK
+    local after = harness.queueIDs(harness.evaluate(Tuono))
+
+    -- The whole requirement, in one assertion: what was step 2 is now step 1, what was
+    -- step 3 is now step 2. The player pressed the optimal button and is now IN the
+    -- optimal sequence, rather than being handed a freshly derived one.
+    for i = 1, #before - 1 do
+      expect.equal(after[i], before[i + 1],
+        "position " .. i .. " should be the old position " .. (i + 1)
+          .. "; the sequence restarted instead of advancing")
+    end
+  end)
+
+  it("advances again on a second correct press", function()
+    local Tuono, stub = harness.boot({ world = stationaryWorld, inCombat = true })
+    local before = harness.queueIDs(harness.evaluate(Tuono))
+    expect.truthy(#before >= 3, "need depth")
+    for i = 1, 2 do
+      stub.FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", "c" .. i, before[i])
+      stub.state.time = stub.state.time + TICK
+      harness.evaluate(Tuono)
+    end
+    expect.equal(Tuono.Engine.cursor, 3, "the cursor did not track two presses")
+  end)
+
+  it("abandons the plan the moment the player deviates", function()
+    local Tuono, stub = harness.boot({ world = stationaryWorld, inCombat = true })
+    harness.evaluate(Tuono)
+    expect.truthy(Tuono.Engine.plan, "no plan was made")
+
+    -- Cast something that is NOT the recommendation. Every later step was conditioned on
+    -- the press that did not happen, so the plan describes a world that does not exist.
+    stub.FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", "cx", 1856)  -- Vanish, not in the plan
+    expect.falsy(Tuono.Engine.plan,
+      "a plan built on a press that never happened is worse than no plan")
+  end)
+
+  it("does not treat an off-GCD weave as deviation", function()
+    local Tuono, stub = harness.boot({ world = stationaryWorld, inCombat = true })
+    harness.evaluate(Tuono)
+    local planBefore = Tuono.Engine.plan
+    expect.truthy(planBefore, "no plan was made")
+    -- Adrenaline Rush is off-GCD: weaving it does not consume the press the plan is
+    -- waiting for, so the plan must survive.
+    stub.FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", "car", 13750)
+    expect.truthy(Tuono.Engine.plan, "an off-GCD weave wrongly invalidated the plan")
+  end)
+
+  it("holds the plan through a single tick of sensor disagreement", function()
+    local Tuono, stub = harness.boot({ world = liveLikeWorld, inCombat = true })
+    harness.evaluate(Tuono)
+    local planned = Tuono.Engine.plan[Tuono.Engine.cursor].spellID
+
+    -- One tick of disagreement is far likelier to be a blinking sensor than a changed
+    -- world. This is what separates "checking" from "thrashing".
+    Tuono.State.buffs.rtb.stageKnown = false
+    Tuono.State.buffs.rtb.stage = 0
+    Tuono.Engine.Evaluate()
+    expect.equal(Tuono.Engine.plan[Tuono.Engine.cursor].spellID, planned,
+      "one tick of disagreement unseated the plan")
+  end)
+
+  it("re-plans when the disagreement persists", function()
+    local Tuono, stub = harness.boot({ world = liveLikeWorld, inCombat = true })
+    harness.evaluate(Tuono)
+    local planAt = Tuono.Engine.planAt
+
+    -- Sustained disagreement means the world really did change under us.
+    for _ = 1, 5 do
+      Tuono.State.buffs.rtb.stageKnown = false
+      Tuono.State.buffs.rtb.stage = 0
+      stub.state.time = stub.state.time + TICK
+      Tuono.Engine.Evaluate()
+    end
+    expect.truthy(Tuono.Engine.planAt ~= planAt,
+      "a persistent disagreement must re-plan; that is the 'it should still check' half")
+  end)
+
+  it("re-plans once the plan is used up", function()
+    local Tuono, stub = harness.boot({ world = stationaryWorld, inCombat = true })
+    local ids = harness.queueIDs(harness.evaluate(Tuono))
+    for i = 1, #ids do
+      stub.FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", "c" .. i, ids[i])
+      stub.state.time = stub.state.time + TICK
+      harness.evaluate(Tuono)
+    end
+    expect.truthy(#harness.queueIDs(harness.evaluate(Tuono)) > 0,
+      "the bar went empty after the plan was exhausted instead of re-planning")
+  end)
+
+  it("drops the plan at a combat boundary", function()
+    local Tuono, stub = harness.boot({ world = stationaryWorld, inCombat = true })
+    harness.evaluate(Tuono)
+    expect.truthy(Tuono.Engine.plan, "no plan was made")
+    harness.leaveCombat(stub)
+    expect.falsy(Tuono.Engine.plan,
+      "a plan made against the last pull must not survive into the next")
+  end)
+end)
+
+describe("churn: what the player actually sees", function()
+  -- The outcome test. Everything above pins a mechanism; this pins the result the
+  -- complaint was about: "it switches the entire list a lot and it's not smooth."
+  it("holds the whole bar still while a sensor blinks every tick", function()
+    local Tuono, stub = harness.boot({ world = liveLikeWorld, inCombat = true })
+    harness.evaluate(Tuono)
+    local frames = harness.runTicks(Tuono, stub, 20, TICK,
       function(i, s, T)
         T.State.buffs.rtb.stageKnown = (i % 2 == 0)
         T.State.buffs.rtb.stage = (i % 2 == 0) and 4 or 0
       end,
-      -- Prove the flap survived. An identical-looking test was silently vacuous twice
-      -- for exactly this reason, so the input is asserted rather than assumed.
       function(T) return T.State.buffs.rtb.stageKnown end,
-      -- rawEngine: skip State.RefreshFast, which re-derives rtb from the client and
-      -- would overwrite the flap. This is about what the ENGINE does with a blinking
-      -- input, not about how StateTracker produces one.
       { rawEngine = true })
-  end
-
-  it("freezes the whole sequence while the GCD is running", function()
-    local Tuono, stub = harness.boot({ world = liveLikeWorld, inCombat = true })
-    harness.evaluate(Tuono)   -- prime Tuono.State; the run below skips RefreshFast
-
-    -- A cast starts a GCD of ~0.85s. Everything inside that window is unpressable, so
-    -- everything inside it must hold still.
-    stub.FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-1", SINISTER_STRIKE)
-    local frames = flapRun(Tuono, stub, 6)   -- 0.6s, inside one GCD
-
     harness.assertLookahead(frames, 2)
     harness.assertVaried(frames, "rtb.stageKnown never varied, so nothing flapped")
     local stats = harness.churn(frames)
-    expect.equal(stats.headChanges, 0,
-      "position 1 changed while the player could not press anything. "
-        .. harness.describeChurn(stats))
-    expect.equal(stats.tailChanges, 0,
-      "the lookahead followed a sensor blinking inside a single GCD. "
-        .. harness.describeChurn(stats))
+    -- Uncommitted, this measured 39 changes across 40 frames, head and tail alike.
+    --
+    -- One change is allowed, and only one: the first plan is formed against the state
+    -- left by the priming evaluate, and the flap contradicts it once on the next tick.
+    -- That is a plan settling onto a new world, which is the behaviour we want; what we
+    -- are excluding is it happening again every 100ms thereafter.
+    expect.truthy(stats.headChanges <= 1,
+      "position 1 followed a blinking sensor. " .. harness.describeChurn(stats))
+    expect.truthy(stats.tailChanges <= 1,
+      "the lookahead followed a blinking sensor. " .. harness.describeChurn(stats))
   end)
 
-  it("is live again once the GCD frees, even mid-flap", function()
-    local Tuono, stub = harness.boot({ world = liveLikeWorld, inCombat = true })
-    harness.evaluate(Tuono)
-    stub.FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-1", SINISTER_STRIKE)
-    -- Run well past the GCD. Once the player can act, correctness outranks stability,
-    -- so the bar must start tracking the input again rather than staying frozen.
-    local frames = flapRun(Tuono, stub, 30)
-    local stats = harness.churn(frames)
-    expect.truthy(stats.headChanges > 0,
-      "the sequence stayed frozen after the GCD ended, so the bar would recommend "
-        .. "stale advice at the one instant it matters. " .. harness.describeChurn(stats))
-  end)
-
-  it("releases the hold when a new GCD starts", function()
+  it("still catches up when the player stops pressing things", function()
+    -- The backstop: a plan nobody is following must not be held forever, or a player
+    -- whose target died would stare at a stale sequence.
     local Tuono, stub = harness.boot({ world = stationaryWorld, inCombat = true })
     harness.evaluate(Tuono)
-    local held = Tuono.Engine.committedAt
-    expect.truthy(held, "nothing was committed")
-
-    -- A cast starts a GCD, which is the decision boundary the commitment keys on.
-    stub.FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-1", SINISTER_STRIKE)
-    stub.state.time = stub.state.time + TICK
+    local planAt = Tuono.Engine.planAt
+    stub.state.time = stub.state.time + 4.0
     harness.evaluate(Tuono)
-    expect.truthy(Tuono.Engine.committedAt ~= held,
-      "a new GCD must re-derive the lookahead, or the bar goes stale after a press")
-  end)
-
-  it("re-derives at least once a second even when nothing happens", function()
-    local Tuono, stub = harness.boot({ world = stationaryWorld, inCombat = true })
-    harness.evaluate(Tuono)
-    local held = Tuono.Engine.committedAt
-    stub.state.time = stub.state.time + 1.5
-    harness.evaluate(Tuono)
-    expect.truthy(Tuono.Engine.committedAt ~= held,
-      "an idle player must still see a cooldown come up; the hold must age out")
-  end)
-
-  it("drops the held sequence at a combat boundary", function()
-    local Tuono, stub = harness.boot({ world = stationaryWorld, inCombat = true })
-    harness.evaluate(Tuono)
-    expect.truthy(Tuono.Engine.committedSeq, "nothing was committed")
-    harness.leaveCombat(stub)
-    expect.falsy(Tuono.Engine.committedSeq,
-      "a sequence committed against the last pull must not survive into the next")
-  end)
-
-  it("never holds position 1, which must stay live", function()
-    local Tuono, stub = harness.boot({ world = stationaryWorld, inCombat = true })
-    local before = harness.queueIDs(harness.evaluate(Tuono))[1]
-    -- Put the recommended builder out of reach: at 0 energy nothing affordable changes
-    -- position 1 to a pooling entry or another ability, and that must show immediately.
-    stub.state.energy = 0
-    stub.state.time = stub.state.time + TICK
-    local after = harness.queueIDs(harness.evaluate(Tuono))[1]
-    expect.truthy(before ~= nil and after ~= nil, "queue emptied")
+    expect.truthy(Tuono.Engine.planAt ~= planAt, "the plan never aged out")
   end)
 end)
 
