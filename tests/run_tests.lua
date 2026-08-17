@@ -133,6 +133,8 @@ local SUITE_FILES = {
   "test_fallback.lua",
   "test_confidence.lua",
   "test_triggers.lua",
+  "test_timeline.lua",
+  "test_apl.lua",
   "test_churn.lua",
 }
 

@@ -20,17 +20,38 @@ Tuono.Rotation = Tuono.Rotation or {}
 Tuono.Rotation.ABILITIES = {}
 Tuono.Rotation.SPELL_TO_CDKEY = {}
 
+-- The spec's energy costs, ascending and de-duplicated. Outlaw's ladder is
+-- 15/25/35/40/45/50, and every one of those is a moment where waiting stops being
+-- pointless: cross it and something new becomes castable.
+--
+-- Precomputed per profile activation rather than derived per pooling iteration. Pooling
+-- can run a dozen times per step across eight steps, and rebuilding this inside that loop
+-- would be the same per-tick waste the scratch table exists to avoid.
+Tuono.Rotation.COSTS = {}
+
 local ABILITIES = Tuono.Rotation.ABILITIES
 local SPELL_TO_CDKEY = Tuono.Rotation.SPELL_TO_CDKEY
+local COSTS = Tuono.Rotation.COSTS
 
 local function rebuildFromProfile(profile)
 	for k in pairs(ABILITIES) do ABILITIES[k] = nil end
 	for k in pairs(SPELL_TO_CDKEY) do SPELL_TO_CDKEY[k] = nil end
+	for i = #COSTS, 1, -1 do COSTS[i] = nil end
 	if not profile then return end
 
 	for spellID, data in pairs(profile.abilities or {}) do
 		ABILITIES[spellID] = data
 	end
+
+	local seen = {}
+	for _, data in pairs(profile.abilities or {}) do
+		local cost = data.cost or 0
+		if cost > 0 and not seen[cost] then
+			seen[cost] = true
+			table.insert(COSTS, cost)
+		end
+	end
+	table.sort(COSTS)
 	-- The cooldown-key map is keyed by spellID and valued by the profile's spell KEY,
 	-- which is also the key StateTracker files cooldown state under.
 	for key, spellID in pairs(profile.spells or {}) do
@@ -343,6 +364,15 @@ local function calcGCD(hasteBuffUp)
 	return hasteBuffUp and 0.8 or 1.0
 end
 
+-- Smallest pooling advance. Guarantees the loop makes forward progress even when the next
+-- interesting moment computes to zero, so the budget is always reached and the loop always
+-- terminates.
+local MIN_POOL_STEP = 0.05
+
+-- CPU guard only. MIN_POOL_STEP already guarantees termination against the time budget;
+-- this bounds the worst case if a profile ever has a very dense cost ladder.
+local MAX_POOL_ITERATIONS = 16
+
 -- Interval regen for the simulation. Regen is itself only known within bounds (haste is
 -- secret since 12.0.5, Combat Potency is stochastic), so elapsed time makes the interval
 -- WIDER, not merely higher. That widening IS the honest representation of a forward
@@ -377,6 +407,68 @@ end
 local function hasteBuffUp(S)
 	local ar = S and S.buffs and S.buffs.adrenalineRush
 	return (ar and ar.up) and true or false
+end
+
+-- ============================================================================
+-- WAITING, IN SECONDS
+-- ============================================================================
+-- How long until this ability becomes affordable at the modelled regen rate. Returns 0
+-- when it already is.
+--
+-- This is what turns the "pooling" label into a number. "You cannot press this yet" and
+-- "you can press this in 1.4 seconds" are the same fact, but only the second one can be
+-- acted on -- and lead time is the entire reason a rotation helper exists.
+--
+-- It is a POINT estimate off an interval model, which normally this codebase refuses
+-- (INVERSION.md 6.5). The distinction: the interval governs the DECISION -- what to
+-- recommend -- and that still runs through the three-valued AffordState and never
+-- consults this. This number only annotates a decision already made, and the step it
+-- annotates is already flagged as a wait rather than a command. A countdown that is a
+-- few tenths out is useful; refusing to give one at all is not.
+local function timeToAfford(S, spellID)
+	local ability = ABILITIES[spellID]
+	if not ability then return 0 end
+	local cost = ability.cost or 0
+	if cost <= 0 or cost <= (S.energy or 0) then return 0 end
+	local regen = calcEnergyRegen(hasteBuffUp(S))
+	if regen <= 0 then return 0 end
+	return (cost - S.energy) / regen
+end
+
+-- The soonest moment anything the priority walk cares about could change: a cost
+-- threshold crossed by regeneration, or a cooldown coming up.
+--
+-- Pooling used to advance by a blind full GCD, which quantises every wait to a whole
+-- second. That is wrong in both directions -- an ability affordable 0.4s from now was
+-- reported as a 1.0s wait, and the clock the timeline is read off inherited the error.
+-- Stepping to the next thing that actually changes makes the reported time exact without
+-- changing WHICH ability the walk selects.
+--
+-- Only measured cooldowns count. A remainder the client never gave us is a placeholder
+-- (see advanceTime), and stepping the clock to a moment we invented would be claiming a
+-- precision we do not have.
+local function nextInterestingDelta(S)
+	local best = nil
+
+	local regen = calcEnergyRegen(hasteBuffUp(S))
+	if regen > 0 then
+		local energy = S.energy or 0
+		for i = 1, #COSTS do
+			local cost = COSTS[i]
+			if cost > energy then
+				best = (cost - energy) / regen
+				break   -- COSTS is ascending, so the first one above us is the nearest
+			end
+		end
+	end
+
+	for _, cd in pairs(S.cooldowns) do
+		if cd.remaining and cd.remaining > 0 and cd.remainingKnown ~= false then
+			if not best or cd.remaining < best then best = cd.remaining end
+		end
+	end
+
+	return best
 end
 
 -- ============================================================================
@@ -756,11 +848,32 @@ function Tuono.Rotation.Predict(state, steps)
 
 	local result = {}
 
+	-- THE TIMELINE'S ORIGIN. Every reported time is an offset from this instant, so it is
+	-- captured once rather than re-read: GetTime() moves between steps of a long
+	-- simulation, and a drifting origin would make the offsets disagree with each other.
+	local baseNow = S.simNow
+	local lastAt = 0
+
 	for step = 1, steps do
 		local spellID, reason = nil, nil
-		local poolAttempts, maxPoolAttempts = 0, 3
 		local pooled = false
 		local firedRule = nil
+
+		-- POOLING IS BOUNDED BY TIME, NOT BY ITERATIONS.
+		--
+		-- This was three fixed GCDs. Now that each advance steps only as far as the next
+		-- thing that changes, a fixed count would cover far less wall-clock -- and the
+		-- runway is what stops the sequence truncating the moment the simulated player
+		-- runs dry, which cost 58% of a live fight showing one icon or none. Budgeting the
+		-- same ~3 GCDs of simulated time keeps that runway exactly as long while making
+		-- every intermediate instant precise.
+		--
+		-- The iteration cap is a CPU guard, not a policy: a small MIN_POOL_STEP already
+		-- guarantees forward progress, so the loop terminates on the budget alone. This
+		-- bounds the worst case if a future profile has a very dense cost ladder.
+		local pooledTime = 0
+		local poolIterations = 0
+		local maxPoolTime = 3 * calcGCD(hasteBuffUp(S))
 
 		repeat
 			for _, rule in ipairs(priorityList) do
@@ -795,11 +908,23 @@ function Tuono.Rotation.Predict(state, steps)
 				pooled = true
 			end
 
-			if not spellID and poolAttempts < maxPoolAttempts then
+			if not spellID and pooledTime < maxPoolTime and poolIterations < MAX_POOL_ITERATIONS then
 				-- Haste is sampled BEFORE the advance, because the length of the interval
 				-- being waited through is fixed by the state at its start.
-				advanceTime(S, calcGCD(hasteBuffUp(S)))
-				poolAttempts = poolAttempts + 1
+				local gcd = calcGCD(hasteBuffUp(S))
+
+				-- Step to the next moment something could change, never past a full GCD --
+				-- the player cannot act sooner than that anyway, so a longer jump would
+				-- skip a decision point.
+				local dt = nextInterestingDelta(S) or gcd
+				if dt > gcd then dt = gcd end
+				local remaining = maxPoolTime - pooledTime
+				if dt > remaining then dt = remaining end
+				if dt < MIN_POOL_STEP then dt = MIN_POOL_STEP end
+
+				advanceTime(S, dt)
+				pooledTime = pooledTime + dt
+				poolIterations = poolIterations + 1
 			else
 				break
 			end
@@ -855,6 +980,29 @@ function Tuono.Rotation.Predict(state, steps)
 
 		if not spellID then break end
 
+		-- ====================================================================
+		-- A WAIT IS OVER WHEN YOU CAN ACTUALLY PRESS IT
+		-- ====================================================================
+		-- Affordability is decided on the INTERVAL, and "maybe" passes -- deliberately, so
+		-- an unprovable answer never suppresses a recommendation. That means a rule can
+		-- fire the instant the interval's optimistic UPPER bound clears the cost, which
+		-- under a wide regen band is much earlier than the model's own best guess.
+		--
+		-- Measured: from a bracketed 14 energy, Sinister Strike's rule matched at 0.88s
+		-- because the upper bound had crossed 45, while the point estimate did not reach 45
+		-- until 2.48s. Reporting 0.88 would put a countdown on screen that expires while
+		-- the ability is still uncastable -- the player presses, and nothing happens. That
+		-- is precisely the failure the pooling label exists to prevent, reintroduced as a
+		-- number.
+		--
+		-- So the DECISION keeps using the interval (unchanged), and the reported TIME uses
+		-- the model's best estimate of when the cost is actually covered. Only a step that
+		-- had to wait is adjusted; a step castable now is untouched and stays at zero.
+		if pooled then
+			local wait = timeToAfford(S, spellID)
+			if wait > 0 then advanceTime(S, wait) end
+		end
+
 		-- Rate by PROVENANCE, not by slot index. See rateRule above for why.
 		local confidence = firedRule and rateRule(firedRule, S, spellID) or "bounded"
 
@@ -873,10 +1021,37 @@ function Tuono.Rotation.Predict(state, steps)
 			end
 		end
 
+		-- ====================================================================
+		-- WHERE THIS STEP SITS ON THE TIMELINE
+		-- ====================================================================
+		-- The clock has been advanced by every pooling wait and every prior GCD, so at
+		-- this instant S.simNow IS the simulated moment of this cast. Reading it here --
+		-- after the walk and any rescue, before the post-cast GCD -- is what makes the
+		-- number the time of THIS press rather than the next one.
+		--
+		--   at     offset in seconds from now. 0 means "press it this instant".
+		--   since  seconds after the previous step. This is the one a rolling display
+		--          wants: it is the gap the player has to react in, and it is 0 for an
+		--          off-GCD weave, which is exactly the case a purely ordinal list hid.
+		--
+		-- Named after Hekili's slot.time / slot.since (Core.lua:2015-2018), which is where
+		-- the idea comes from. Its slot.exact_time is deliberately NOT mirrored: an
+		-- absolute timestamp is `GetTime() + at` and derivable by any consumer, and storing
+		-- one invites a stale value being rendered as a countdown.
+		--
+		-- Clamped monotonic. Time cannot run backwards, and a consumer computing
+		-- `at - previous.at` must never see a negative gap.
+		local at = (S.simNow or baseNow) - baseNow
+		if at < lastAt then at = lastAt end
+		local since = at - lastAt
+		lastAt = at
+
 		table.insert(result, {
 			spellID = spellID,
 			confidence = confidence,
 			reason = reason,
+			at = at,
+			since = since,
 			-- Later steps additionally assume you FOLLOW the sequence. That is a
 			-- conditional rather than missing knowledge, so it is reported separately
 			-- and the display encodes it by size, not by fading.

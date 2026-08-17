@@ -168,6 +168,10 @@ function harness.fakeState(over)
       return t
     end)(),
     trinkets = {},
+    -- StateTracker ALWAYS provides this, so a fixture without it makes rules throw
+    -- against the harness rather than against anything the addon can produce. Two
+    -- advisory rules did exactly that and were nearly "fixed" to suit the fixture.
+    tier = { twoPc = false, fourPc = false },
     buffs = {
       degraded = false,
       rtb = { stage = 4, stageKnown = true, expires = 0, names = {} },

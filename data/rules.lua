@@ -1,5 +1,37 @@
 local ADDON_NAME, Tuono = ...
 
+-- ============================================================================
+-- SAFE READS FOR THE ADVISORY LAYER
+-- ============================================================================
+-- These rules are walked on EVERY tick by Engine.Evaluate, and they read cooldown rows
+-- and resource fields directly. That throws on states the engine legitimately produces:
+-- a cooldown key the profile does not track, a state rebuilt after a reload before any
+-- cooldown has been observed, or -- since inferred cooldowns stopped inventing a
+-- countdown -- a `remaining` that is honestly nil.
+--
+-- Six of these rules were measured throwing on exactly those states. A throwing rule is
+-- skipped rather than fatal, but it is skipped SILENTLY, so a rule that throws every tick
+-- is indistinguishable from one that never matches -- and in the priority walk's rescue
+-- path a throw could empty the bar outright.
+--
+-- cd() mirrors RuleHelpers.cdOf: a missing key reads as an untracked cooldown rather than
+-- an index error. num() answers the "unknown is never a number" question in one place, so
+-- a comparison against an unmeasured remainder fails closed instead of raising.
+local UNTRACKED_CD = { known = false, ready = true, remaining = 0, remainingKnown = false }
+
+local function cd(S, key)
+	if not (S and S.cooldowns and key) then return UNTRACKED_CD end
+	return S.cooldowns[key] or UNTRACKED_CD
+end
+
+-- Returns the number, or nil when it is absent or unreadable. Callers must treat nil as
+-- "cannot answer" and decline, never as zero -- reading an unknown as zero is the defect
+-- class this codebase has shipped most often.
+local function num(v)
+	if type(v) ~= "number" then return nil end
+	return v
+end
+
 Tuono.Rules = {
   -- Mandatory Rule 1: Adrenaline Rush PIN when combo points low and CD ready
   {
@@ -10,7 +42,7 @@ Tuono.Rules = {
     spellID = 13750,
     itemSlot = nil,
     when = function(S, A)
-      return S.inCombat and S.comboPoints <= 2 and S.cooldowns.adrenalineRush.ready
+      return S.inCombat and S.comboPoints <= 2 and cd(S, "adrenalineRush").ready
     end,
     source = "outlaw-rotation.md §1 (Priority Order: 'Use on cooldown with 2 or fewer Combo Points'); §2 (APL syntax: adrenaline_rush,if=combo_points<=2); FIX: gated on S.inCombat to prevent pre-pull override of stealth opener"
   },
@@ -38,7 +70,10 @@ Tuono.Rules = {
     spellID = nil,
     itemSlot = nil,
     when = function(S, A)
-      return S.buffs.rtb.stage == 1 and S.cooldowns.adrenalineRush.remaining > 20
+      local stage, known = Tuono.RuleHelpers.rtbStage(S)
+      if not known or stage ~= 1 then return false end
+      local rem = num(cd(S, "adrenalineRush").remaining)
+      return rem ~= nil and rem > 20
     end,
     source = "PLAN.md §3 (Sim-Data Pipeline: 'ADVISE rule when RtB stage=1 and AR CD remaining > 20'); outlaw-rotation.md §1 (Reroll Mechanics)"
   },
@@ -120,7 +155,7 @@ Tuono.Rules = {
     spellID = 271877,
     itemSlot = nil,
     when = function(S, A)
-      return S.cooldowns.bladeRush.ready
+      return cd(S, "bladeRush").ready
     end,
     source = "outlaw-rotation.md §1 (Priority Order: 'Blade Rush – Use on cooldown as a regular combo-point builder')"
   },
@@ -183,7 +218,8 @@ Tuono.Rules = {
     end,
     itemSlot = nil,
     when = function(S, A)
-      return S.cooldowns.preparation.ready and S.cooldowns.adrenalineRush.remaining > 5
+      local rem = num(cd(S, "adrenalineRush").remaining)
+      return cd(S, "preparation").ready and rem ~= nil and rem > 5
     end,
     source = "outlaw-rotation.md §2 (Major DPS Cooldowns: 'Preparation - Resets offensive ability cooldowns when those are unavailable')"
   },
@@ -197,7 +233,8 @@ Tuono.Rules = {
     spellID = nil,
     itemSlot = nil,
     when = function(S, A)
-      return S.cooldowns.adrenalineRush.remaining < 3 and S.cooldowns.adrenalineRush.remaining > 0 and S.energy >= 80
+      local rem = num(cd(S, "adrenalineRush").remaining)
+      return rem ~= nil and rem < 3 and rem > 0 and (num(S.energy) or 0) >= 80
     end,
     source = "PLAN.md §3 (Architecture: 'Cooldown Pooling - Query Adrenaline Rush cooldown via C_Spell.GetSpellCooldown()')"
   },
@@ -261,7 +298,7 @@ Tuono.Rules = {
     spellID = 271877,
     itemSlot = nil,
     when = function(S, A)
-      return S.tier.fourPc and S.cooldowns.bladeRush.ready
+      return S.tier.fourPc and cd(S, "bladeRush").ready
     end,
     source = "outlaw-rotation.md §4 (Tier Set Bonuses: '4-Piece Bonus: Blade Rush cooldown reduced by 6 seconds')"
   },
@@ -275,7 +312,7 @@ Tuono.Rules = {
     spellID = 271877,
     itemSlot = nil,
     when = function(S, A)
-      return S.tier.twoPc and S.cooldowns.bladeRush.ready
+      return S.tier.twoPc and cd(S, "bladeRush").ready
     end,
     source = "outlaw-rotation.md §4 (Tier Set Bonuses: '2-Piece Bonus: Blade Rush damage increased by 30%')"
   },

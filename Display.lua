@@ -261,6 +261,120 @@ local function GetKindBorderColor(kind)
 	end
 end
 
+-- ============================================================================
+-- FONT SCALE, INDEPENDENT OF ICON SCALE
+-- ============================================================================
+-- There was exactly one control, `display.scale`, and it scaled the whole anchor. At a
+-- common 1440p UI scale of ~0.64 an 11px glyph renders around 7px of actual screen, and
+-- the only way a low-vision player could enlarge the keybind was to enlarge the icons
+-- too. The coupling is backwards for precisely the population that needs the text bigger.
+--
+-- Pure function so the arithmetic is testable without a font engine: the stub's SetFont
+-- is a no-op and records nothing.
+local MIN_FONT_PX = 8
+
+function Tuono.Display.FontSize(base)
+	local db = Tuono.db and Tuono.db.display
+	local mult = db and db.fontScale or 1
+	if type(mult) ~= "number" or mult <= 0 then mult = 1 end
+	local px = math.floor((base or 11) * mult + 0.5)
+	if px < MIN_FONT_PX then px = MIN_FONT_PX end
+	return px
+end
+
+-- SetFont can fail (a missing font path, a locale without the glyph). The old code
+-- wrapped it in a bare pcall and moved on, which leaves the string at whatever default it
+-- had -- a silent degradation on exactly the accessibility path that matters. Fall back to
+-- a Blizzard font OBJECT, which always exists, so text is never left unreadable.
+local function applyFont(fs, base)
+	if not fs then return end
+	local ok = pcall(function()
+		fs:SetFont(STANDARD_TEXT_FONT, Tuono.Display.FontSize(base), "THICKOUTLINE")
+	end)
+	if not ok and fs.SetFontObject then
+		pcall(fs.SetFontObject, fs, _G.GameFontNormalSmall)
+	end
+	return ok
+end
+Tuono.Display.ApplyFont = applyFont
+
+-- ============================================================================
+-- CERTAINTY LIVES ON THE RING, NOT ON ALPHA
+-- ============================================================================
+-- Alpha was multiplexing three unrelated statements onto one channel that can only say
+-- "less", and the player cannot decode which of the three they are seeing:
+--
+--   unknown -> 0.40   "we do not know if this is right"   (epistemic)
+--   pooling -> 0.35   "you cannot afford this yet"        (timing)
+--   stalled -> <=0.45 "you keep ignoring us"              (social)
+--
+-- Two defects followed. The stall clamp was `math.min(baseAlpha, 0.45)` against an
+-- `unknown` alpha of 0.40, so min(0.40, 0.45) = 0.40 -- a STALLED recommendation was
+-- pixel-identical to a merely uncertain one, discarding the stall detector's output
+-- exactly when the player is most likely ignoring the addon BECAUSE it is uncertain. And
+-- pooling drew dimmer than unknown despite being a HIGH-confidence claim ("I am certain
+-- you cannot press this yet"), so the more certain state read as the less certain one.
+--
+-- Alpha now carries ONE meaning: how sure we are. Everything else moved to the ring,
+-- which also ports to the action bar -- we cannot dim a Blizzard button without writing
+-- to a secure frame, so alpha was structurally unavailable on the surface that matters.
+--
+-- Ring PATTERN carries certainty; ring COLOUR stays free for kind. No collision, and the
+-- pattern survives greyscale, which matters because deuteranopia is ~6% of men.
+local CERTAINTY = {
+	certain  = { alpha = 1.00, pattern = "solid"  },
+	bounded  = { alpha = 0.75, pattern = "dashed" },
+	unknown  = { alpha = 0.45, pattern = "dashed" },
+	pooling  = { alpha = 0.90, pattern = "solid"  },
+	fallback = { alpha = 0.50, pattern = "dashed" },
+	-- Legacy tiers, still accepted so older profiles and tests keep rendering.
+	medium   = { alpha = 0.75, pattern = "dashed" },
+	low      = { alpha = 0.50, pattern = "dashed" },
+}
+
+local RING_THICKNESS = 2
+local RING_INSET = 7   -- how far a dashed edge pulls back from each corner
+
+-- Paint the four-edge ring. "solid" is a closed outline; "dashed" pulls each edge back
+-- from the corners so the outline is literally incomplete -- the suppressed resolution IS
+-- the encoding, which reads instantly and needs no legend. "none" hides it entirely.
+local function setRing(icon, pattern, r, g, b, a)
+	local ring = icon.ring
+	if not ring then return end
+	icon.ringPattern = pattern
+
+	if pattern == "none" then
+		for _, t in pairs(ring) do t:Hide() end
+		return
+	end
+
+	local inset = (pattern == "dashed") and RING_INSET or 0
+	for edge, t in pairs(ring) do
+		pcall(function()
+			t:ClearAllPoints()
+			if edge == "top" then
+				t:SetPoint("TOPLEFT", icon, "TOPLEFT", inset, 0)
+				t:SetPoint("TOPRIGHT", icon, "TOPRIGHT", -inset, 0)
+				t:SetHeight(RING_THICKNESS)
+			elseif edge == "bottom" then
+				t:SetPoint("BOTTOMLEFT", icon, "BOTTOMLEFT", inset, 0)
+				t:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", -inset, 0)
+				t:SetHeight(RING_THICKNESS)
+			elseif edge == "left" then
+				t:SetPoint("TOPLEFT", icon, "TOPLEFT", 0, -inset)
+				t:SetPoint("BOTTOMLEFT", icon, "BOTTOMLEFT", 0, inset)
+				t:SetWidth(RING_THICKNESS)
+			else
+				t:SetPoint("TOPRIGHT", icon, "TOPRIGHT", 0, -inset)
+				t:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", 0, inset)
+				t:SetWidth(RING_THICKNESS)
+			end
+		end)
+		t:SetColorTexture(r, g, b, a)
+		t:Show()
+	end
+end
+
 local function CreateIcon(parent, name, size, x, y, isPosition1)
 	local btn = CreateFrame("Button", name, parent)
 	btn:SetSize(size, size)
@@ -288,6 +402,10 @@ local function CreateIcon(parent, name, size, x, y, isPosition1)
 	local cooldownText = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
 	cooldownText:SetPoint("CENTER", btn, "CENTER", 0, 0)
 	cooldownText:SetTextColor(1, 0.9, 0.4, 1)
+	-- Scaled like the others: a countdown a low-vision player cannot read is not a
+	-- countdown. The template supplies a fallback if SetFont fails.
+	btn.cdBaseFont = isPosition1 and 14 or 12
+	applyFont(cooldownText, btn.cdBaseFont)
 	cooldownText:Hide()
 	btn.cooldownText = cooldownText
 
@@ -298,18 +416,43 @@ local function CreateIcon(parent, name, size, x, y, isPosition1)
 	local countText = btn:CreateFontString(nil, "OVERLAY")
 	countText:SetPoint("TOPLEFT", btn, "TOPLEFT", 2, -2)
 	countText:SetTextColor(1, 1, 1, 1)
-	pcall(function() countText:SetFont(STANDARD_TEXT_FONT, isPosition1 and 13 or 11, "THICKOUTLINE") end)
+	btn.countBaseFont = isPosition1 and 13 or 11
+	applyFont(countText, btn.countBaseFont)
 	countText:Hide()
 	btn.countText = countText
+
+	-- WHEN, not just what. Hekili stores an absolute time per button and recomputes the
+	-- delay every frame (Hekili UI.lua:1493), which is what lets "wait 1.4s then press
+	-- this" look different from "press this now". Tuono rendered both identically.
+	-- Top-RIGHT: top-left is the repeat count, bottom-right the keybind, centre the
+	-- cooldown countdown. Four numbers need four unambiguous homes.
+	local delayText = btn:CreateFontString(nil, "OVERLAY")
+	delayText:SetPoint("TOPRIGHT", btn, "TOPRIGHT", -2, -2)
+	delayText:SetTextColor(0.4, 0.7, 1, 1)   -- blue: the pooling/timing channel
+	btn.delayBaseFont = isPosition1 and 13 or 11
+	applyFont(delayText, btn.delayBaseFont)
+	delayText:Hide()
+	btn.delayText = delayText
 
 	local keyText = btn:CreateFontString(nil, "OVERLAY")
 	keyText:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", -2, 1)
 	keyText:SetTextColor(1, 1, 1, 1)
-	-- Use THICKOUTLINE for contrast against arbitrary spell art
-	local fontSize = isPosition1 and 13 or 11
-	pcall(function() keyText:SetFont(STANDARD_TEXT_FONT, fontSize, "THICKOUTLINE") end)
+	-- THICKOUTLINE for contrast against arbitrary spell art
+	btn.keyBaseFont = isPosition1 and 13 or 11
+	applyFont(keyText, btn.keyBaseFont)
 	keyText:Hide()
 	btn.keyText = keyText
+
+	-- Certainty ring: four edges, so "incomplete outline" is expressible without a font,
+	-- a colour, or a texture file. See the CERTAINTY block above for why this is not alpha.
+	local ring = {}
+	for _, edge in ipairs({ "top", "bottom", "left", "right" }) do
+		local seg = btn:CreateTexture(nil, "OVERLAY")
+		seg:Hide()
+		ring[edge] = seg
+	end
+	btn.ring = ring
+	btn.ringPattern = "none"
 
 	-- Kind ring (BORDER layer, thin 2px effect via alpha)
 	local kindRing = btn:CreateTexture(nil, "BORDER")
@@ -597,79 +740,102 @@ function Tuono.Display.Render(result)
 					-- unknown even in slot 1. The sequence visibly dissolves at exactly
 					-- the step where we stopped knowing things, which is the honest
 					-- picture rather than an arbitrary fade.
-					local confidence = entry.confidence or "bounded"
-					local baseAlpha = 1.0
-					if confidence == "bounded" then
-						baseAlpha = 0.72         -- real bounds, but a threshold could straddle them
-					elseif confidence == "unknown" then
-						baseAlpha = 0.4          -- depends on something Midnight hides
-					elseif confidence == "pooling" then
-						baseAlpha = 0.35
-					-- Legacy tiers, still accepted so older profiles/tests keep rendering.
-					elseif confidence == "medium" then
-						baseAlpha = 0.7
-					elseif confidence == "low" then
-						baseAlpha = 0.45
-					end
+					-- The run keeps the WEAKEST confidence across its members: the bar must
+					-- not claim more certainty about the fourth press than it has.
+					local confidence = (slot and slot.worst) or entry.confidence or "bounded"
+					local tier = CERTAINTY[confidence] or CERTAINTY.bounded
+					local baseAlpha = tier.alpha
 
-					-- Position 1 gets authority ring (silver, always opaque)
+					-- Alpha now says ONE thing: how sure we are. Timing lives on the delay
+					-- text and the blue ring; the social "you are ignoring us" signal recedes
+					-- the icon rather than dimming it (further down).
+					local stalled = (i == 1) and Tuono.Engine and Tuono.Engine.IsStalled
+						and Tuono.Engine.IsStalled() or false
+
+					local kind = entry.kind or "rotation"
+					local rr, rg, rb = GetKindBorderColor(kind)
 					if i == 1 then
-						if icon.authRing then
-							icon.authRing:SetVertexColor(0.9, 0.9, 0.9, 0.4)
-						end
-						if icon.kindRing then
-							icon.kindRing:Hide()
-						end
-						if icon.badge then
-							icon.badge:Hide()
-						end
-					else
-						-- Positions 2-8: kind ring + badge
-						local kind = entry.kind or "rotation"
-						local r, g, b = GetKindBorderColor(kind)
-						if icon.kindRing then
-							icon.kindRing:SetColorTexture(r, g, b, baseAlpha * 0.6)
-							icon.kindRing:Show()
-						end
-						if icon.badge then
-							-- Badge would be a shape texture here; for now hide
-							icon.badge:Hide()
-						end
+						-- Authority is carried by LUMINANCE, not hue: near-white reads against
+						-- arbitrary spell art for every form of colour vision, and deliberately
+						-- avoids blue, which is Blizzard's own Assisted Highlight.
+						rr, rg, rb = 0.95, 0.95, 0.95
 					end
-
-					-- UNKNOWN provenance gets an amber hazard wash, the same language the
-					-- degraded-data state already uses. Dimness alone is ambiguous -- it
-					-- reads as "less preferred" rather than "we could not check this".
-					if confidence == "unknown" and icon.hazard then
-						icon.hazard:SetColorTexture(1, 0.6, 0, 0.22)
-						icon.hazard:Show()
-					end
-
-					-- POOLING: this is "wait for it", not "press it". Dim alpha alone reads as
-					-- low confidence, which is a different message, so position 1 also gets
-					-- a blue marker and its authority ring is muted -- the ring is what says
-					-- "press this now" and it must not say that here.
 					if confidence == "pooling" then
-						if icon.badge then
-							icon.badge:SetColorTexture(0.3, 0.6, 1, 0.9)
-							icon.badge:Show()
-						end
-						if i == 1 and icon.authRing then
-							icon.authRing:SetVertexColor(0.3, 0.6, 1, 0.25)
-						end
+						-- Timing channel. Solid ring, because we are SURE you cannot press it
+						-- yet -- that is a high-confidence claim, not a doubtful one.
+						rr, rg, rb = 0.30, 0.60, 1.00
 					end
 
-					-- Degraded overlay: amber hazard stripes
-					if entry.degraded then
-						if icon.hazard then
-							icon.hazard:SetColorTexture(1, 0.6, 0, 0.35)
-							icon.hazard:Show()
-						end
+					if stalled then
+						-- RECEDE, DO NOT DIM. A faded icon reads as "less important"; dropping
+						-- the ring reads as the addon stepping back while staying available.
+						-- The old encoding clamped alpha to 0.45 against an unknown alpha of
+						-- 0.40, so the stall signal was silently swallowed.
+						setRing(icon, "none")
 					else
-						if icon.hazard then
+						setRing(icon, tier.pattern, rr, rg, rb, 0.95)
+					end
+					icon.stalled = stalled
+
+					-- Legacy regions retired: the ring now carries both kind and certainty.
+					if icon.kindRing then icon.kindRing:Hide() end
+					if icon.authRing then icon.authRing:SetVertexColor(0, 0, 0, 0) end
+					if icon.badge then icon.badge:Hide() end
+
+					-- HAZARD, DECIDED ONCE. An amber wash ON TOP of the dashed ring: two
+					-- independent cues, and the hatch is borrowed from hazard signage so it
+					-- needs no learning. Dimness alone is ambiguous -- it reads as "less
+					-- preferred" rather than "we could not check this".
+					--
+					-- This used to be two blocks: one showing it for `unknown`, and a later
+					-- one that showed it for `entry.degraded` and HID it otherwise -- which
+					-- unconditionally undid the first. One decision, one place.
+					--
+					-- Per-step, never global. `Tuono.State.buffs.degraded` was true on 100%
+					-- of ticks in a recorded trace, so a display-wide treatment marks
+					-- everything suspect permanently, which is the same as marking nothing.
+					if icon.hazard then
+						if confidence == "unknown" or entry.degraded then
+							icon.hazard:SetColorTexture(1, 0.6, 0, entry.degraded and 0.35 or 0.22)
+							icon.hazard:Show()
+						else
 							icon.hazard:Hide()
 						end
 					end
+
+					-- ============================================================
+					-- WHEN TO PRESS IT
+					-- ============================================================
+					-- Inspired by Hekili UI.lua:1487-1566. The critical detail there is the
+					-- EARLIEST-TIME SUBTRACTION: it only shows a delay when the recommendation
+					-- is later than the soonest it could physically happen. Waiting out the
+					-- GCD is not news -- the player can see the sweep. Waiting BEYOND it, to
+					-- pool energy, is news, and it is the one thing our simulation knows that
+					-- Blizzard's highlighter structurally cannot.
+					--
+					-- Defensive: `at` is supplied by Rotation.Predict and may be absent, in
+					-- which case we simply say nothing rather than invent a number.
+					if icon.delayText then
+						local at = entry.at
+						local shown = false
+						if type(at) == "number" and at > 0 then
+							local earliest = 0
+							if i == 1 and Tuono.CooldownModel and Tuono.CooldownModel.GCDRemaining then
+								local okG, g = pcall(Tuono.CooldownModel.GCDRemaining)
+								if okG and type(g) == "number" then earliest = g end
+							end
+							if at > earliest + 0.05 then
+								icon.delayText:SetText(string.format("%.1f", at))
+								icon.delayText:SetAlpha(baseAlpha)
+								icon.delayText:Show()
+								shown = true
+							end
+						end
+						if not shown then icon.delayText:Hide() end
+					end
+
+					-- (Hazard is decided in one place above. This block used to re-decide it
+					-- and hid whatever the confidence branch had just shown.)
 
 					-- Display keybind text (bottom-right, large, THICKOUTLINE)
 					if entry.spellID then
@@ -765,16 +931,12 @@ function Tuono.Display.Render(result)
 						end
 					end
 
-					-- STALLED: the same advice, ignored repeatedly. Fade position 1 rather
-					-- than keep asserting it. Silent by design -- a warning here would be
-					-- alarm fatigue for something the player is doing on purpose.
-					if i == 1 and Tuono.Engine and Tuono.Engine.IsStalled
-						and Tuono.Engine.IsStalled() then
-						baseAlpha = math.min(baseAlpha, 0.45)
-						if icon.authRing then
-							icon.authRing:SetVertexColor(0.6, 0.6, 0.6, 0.15)
-						end
-					end
+					-- (Stalling is handled above by dropping the ring rather than clamping
+					-- alpha. The old clamp was `math.min(baseAlpha, 0.45)` against an
+					-- `unknown` alpha of 0.40, so min(0.40, 0.45) = 0.40 and a stalled
+					-- recommendation was pixel-identical to a merely uncertain one --
+					-- discarding the stall detector's output in precisely the case where the
+					-- player is most likely ignoring the addon BECAUSE it is uncertain.)
 
 					-- GLOBAL COOLDOWN on position 1. A live trace showed Sinister Strike
 					-- failing 31 times against 14 successes, every failure paired with
