@@ -809,6 +809,36 @@ end
 -- ---------------------------------------------------------------------------
 -- Predict: returns an array of { spellID, confidence, reason }, possibly empty.
 -- ---------------------------------------------------------------------------
+-- ============================================================================
+-- THE FALLBACK IS AN APL WALK, NOT A CONSTANT
+-- ============================================================================
+-- When the normal walk produces nothing, the honest answer is not a filler spell. It is
+-- "here is what the priority list says given what we currently model, with affordability
+-- suspended" -- a real sequence, derived the same way every other sequence is derived.
+--
+-- The distinction matters more than it looks, because this system is fed by what the
+-- player casts. A bar that answers with a hardcoded Sinister Strike gets Sinister Strike
+-- cast at it, which teaches the energy model nothing it did not already assume and closes
+-- the feedback loop on the wrong answer. At a training dummy -- sustained single target,
+-- no target swaps, nothing to interrupt the loop -- that degenerates into a bar showing
+-- one builder forever, which is exactly what it did.
+--
+-- Affordability is the ONLY constraint relaxed. Cooldown readiness, known-spell status,
+-- combo points and stealth all still apply, so this cannot recommend something the player
+-- could never cast -- only something they cannot cast YET. Every step it produces is
+-- marked `pooling` at position 1 and `bounded` behind it, so the display shows it as a
+-- wait rather than a command.
+function Tuono.Rotation.PredictRelaxed(state, steps)
+	local prev = ignoreEnergy
+	ignoreEnergy = true
+	local ok, result = pcall(Tuono.Rotation.Predict, state, steps)
+	-- Reset unconditionally: a throw must not leave affordability permanently disabled for
+	-- every later evaluation in the session.
+	ignoreEnergy = prev
+	if not ok then return nil end
+	return result
+end
+
 function Tuono.Rotation.Predict(state, steps)
 	if not state then return nil end
 

@@ -202,3 +202,53 @@ describe("fallback: one bad rule cannot empty the bar", function()
     if not ok then error("assertions failed", 0) end
   end)
 end)
+
+describe("fallback: the fallback is the APL, not a constant", function()
+  -- "we aren't falling back to the optimal rotation, we fall back to nothing except
+  -- sinister strike, when it should be the APL list based on the current modeled state"
+  --
+  -- This matters more than it looks because the model is fed by what the player casts. A
+  -- bar that answers with a hardcoded filler gets that filler cast at it, which teaches
+  -- the energy model nothing it did not already assume. At a training dummy -- sustained
+  -- single target, nothing to interrupt the loop -- it degenerates into one builder
+  -- forever, which is exactly what it did.
+  it("produces a full sequence when nothing is affordable, not one icon", function()
+    local Tuono, stub = harness.boot({ world = starved, inCombat = true })
+    local ids = harness.queueIDs(harness.evaluate(Tuono))
+    expect.truthy(#ids >= 3,
+      "energy-starved must still answer with the priority list, not a filler; got "
+        .. #ids .. " entries")
+  end)
+
+  it("still respects cooldowns while relaxing affordability", function()
+    -- Only affordability is suspended. Recommending something on cooldown would be a
+    -- different and worse lie than recommending something unaffordable, because the
+    -- player can wait out energy but cannot wait out a 3-minute cooldown in one GCD.
+    local Tuono, stub = harness.boot({
+      inCombat = true,
+      world = function(s)
+        starved(s)
+        for _, id in ipairs({ 13750, 271877, 1277933, 1214909, 51690, 381989, 315341, 13877 }) do
+          s.setCooldown(id, 120)
+        end
+      end,
+    })
+    local result = harness.evaluate(Tuono)
+    local onCooldown = { [13750] = true, [271877] = true, [1214909] = true,
+                         [51690] = true, [315341] = true, [13877] = true }
+    for i, e in ipairs(result.queue) do
+      if e.isSequence and i == 1 then
+        expect.falsy(onCooldown[e.spellID],
+          "position 1 recommended an ability that is on cooldown")
+      end
+    end
+  end)
+
+  it("marks the relaxed head as a wait, never as a command", function()
+    local Tuono, stub = harness.boot({ world = starved, inCombat = true })
+    local first = harness.evaluate(Tuono).queue[1]
+    expect.truthy(first, "queue empty")
+    expect.truthy(first.confidence == "pooling" or first.confidence == "fallback",
+      "an unaffordable position 1 must render as a wait; got " .. tostring(first.confidence))
+  end)
+end)

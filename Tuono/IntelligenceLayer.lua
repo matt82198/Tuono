@@ -865,22 +865,64 @@ function Tuono.Engine.Evaluate()
   -- "fallback" so the display renders it as a wait rather than a command -- we are not
   -- claiming it is castable this instant, only that it is what you are waiting for.
   if #seq == 0 then
-    local profile = Tuono.Profiles and Tuono.Profiles.Active()
-    local key = profile and (profile.fallback or "sinisterStrike")
-    local fallbackID = profile and profile.spells and profile.spells[key]
-    local known = fallbackID and S.knownSpells and S.knownSpells[fallbackID]
-    -- Fail OPEN on an unprobed spell: nil means "never asked", and refusing to show
-    -- anything because we did not probe is the unknown-as-no defect in its purest form.
-    if fallbackID and (known ~= false or S.knownUnavailable) then
-      seq = { {
-        spellID = fallbackID,
-        source = "fallback",
-        kind = "rotation",
-        confidence = "fallback",
-        step = 1,
-        isSequence = true,
-      } }
+    -- THE FALLBACK IS THE APL, NOT A CONSTANT.
+    --
+    -- This used to emit a single hardcoded filler. That is not a rotation, it is a
+    -- constant standing in for one, and it is wrong in a way that compounds: the model is
+    -- fed by what the player casts, so a bar answering "Sinister Strike" gets Sinister
+    -- Strike cast at it, which teaches the energy model nothing it did not already assume.
+    -- At a training dummy -- sustained single target, nothing to interrupt the loop -- it
+    -- degenerated into one builder forever.
+    --
+    -- The honest answer to "we could not build a sequence" is what the priority list says
+    -- given what we currently model, with affordability suspended and nothing else.
+    -- Cooldown readiness, known-spell status, combo points and stealth all still apply, so
+    -- this cannot recommend something the player could never cast -- only something they
+    -- cannot cast YET.
+    local relaxed = Tuono.Rotation.PredictRelaxed
+      and Tuono.safe(Tuono.Rotation.PredictRelaxed, S, PREDICT_DEPTH)
+    if relaxed and #relaxed > 0 then
+      seq = {}
+      for i, pred in ipairs(relaxed) do
+        if pred.spellID then
+          table.insert(seq, {
+            spellID = pred.spellID,
+            source = pred.reason or "relaxed_predict",
+            kind = "rotation",
+            -- Position 1 is a WAIT, not a command: we are explicitly saying the player
+            -- cannot afford it yet. Everything behind it rests on assumed regeneration.
+            confidence = (i == 1) and "pooling" or "bounded",
+            step = i,
+            at = pred.at,
+            since = pred.since,
+            isSequence = true,
+          })
+        end
+      end
       E.usedFallback = true
+    end
+
+    -- Only if even the relaxed walk found nothing -- no rule matched at all -- does the
+    -- single declared filler apply. That is a genuinely empty priority list, not a
+    -- resource problem, and a blank bar still reads as "the addon is broken".
+    if #seq == 0 then
+      local profile = Tuono.Profiles and Tuono.Profiles.Active()
+      local key = profile and (profile.fallback or "sinisterStrike")
+      local fallbackID = profile and profile.spells and profile.spells[key]
+      local known = fallbackID and S.knownSpells and S.knownSpells[fallbackID]
+      -- Fail OPEN on an unprobed spell: nil means "never asked", and refusing to show
+      -- anything because we did not probe is the unknown-as-no defect in its purest form.
+      if fallbackID and (known ~= false or S.knownUnavailable) then
+        seq = { {
+          spellID = fallbackID,
+          source = "fallback",
+          kind = "rotation",
+          confidence = "fallback",
+          step = 1,
+          isSequence = true,
+        } }
+        E.usedFallback = true
+      end
     end
   else
     E.usedFallback = false
