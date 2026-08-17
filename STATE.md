@@ -1,17 +1,17 @@
 # STATE — Tuono
 
 **Date:** 2026-08-17
-**Version:** 2.2.1 (imported from live AddOns at `b882b54`; no prior VCS)
+**Version:** 2.2.1 (imported from live AddOns; no prior VCS)
+**HEAD:** `326f882` · **Tests:** 63 passing, full suite green
 **Single-writer:** Orchestrator
 
 ---
 
 ## Intent
 
-Ship a rotation helper that is **more accurate than Blizzard's Assisted Combat and more
-readable than Hekili**, on a client that hides the state both of those were designed
-around. Position 1 is already right. The product is not yet *enjoyable*, and that is the
-whole remaining problem.
+Ship a rotation helper that is more accurate than Blizzard's Assisted Combat and more
+readable than anything else on a client that hides the state they were designed around.
+Position 1 is already right. The remaining problem is that it is not yet *enjoyable*.
 
 ## The thesis (locked)
 
@@ -19,108 +19,185 @@ Midnight hides combat state behind secret values. Tuono never reads the hidden v
 **bounds** it from never-secret signals and carries the width of that bound into the UI.
 Certainty is an output, not an assumption.
 
-This is a genuine edge and it is already built:
+**This is now the only differentiator in the market, and the market is emptier than we
+thought.** Hekili is dead under Midnight (CLEU removal plus secret resources — structural,
+not fixable). Everything that replaced it is a presentation layer over Blizzard's Assisted
+Combat: HekiLight states outright that "Blizzard controls the rotation logic, HekiLight
+only reads and displays it". Blizzard ships **Assisted Highlight** natively since 11.1.7.
+Nobody else models resources or expresses uncertainty. See `docs/RESEARCH-MIDNIGHT.md`.
 
-- `EnergyModel.lua` brackets hidden energy from both sides via `C_Spell.IsSpellUsable`
-  (`isUsable` ⇒ lower bound, `insufficientPower` ⇒ upper bound), collapses the interval to
-  an **exact value** on a threshold crossing, and *solves for regen* between two crossings
-  — retiring the secret haste read and the stochastic Combat Potency guess.
-- `Rotation.lua` rates each predicted step by **provenance** (what the firing rule actually
-  depended on), not by how far down the list it sits.
-- The player's own actions are an observation channel: a successful cast proves
-  affordability; a failed cast plus a localized out-of-power error proves the opposite.
+Corollary that should govern UI work: a Tuono that only glows position 1 is a worse copy
+of a built-in feature. Occupying the action bar is defensible **only** if it carries what
+Blizzard's cannot — lead time and uncertainty.
 
 ## Locked decisions
 
-1. **The bar is ours.** Blizzard's `GetNextCastSpell` is a *drift sensor* and an AoE
-   signal, never an icon. (`IntelligenceLayer.lua:84`)
-2. **The sequence is a causal chain, not a list.** Nothing may reorder or splice it — the
-   legacy `PIN`/`PREFER` rules are deliberately inert for exactly this reason.
-   (`IntelligenceLayer.lua:198`)
-3. **Recommendation only.** No input automation, ever. No reading of protected values.
+1. **The bar is ours.** Blizzard's pick is a sensor and an AoE signal, never an icon.
+2. **The sequence is a causal chain, not a list.** Nothing may reorder or splice it.
+3. **Recommendation only.** No input automation. No reading of protected values.
 4. **Unknown is never "no".** Fail open, lower confidence, surface it.
-5. **Interval over point estimate.** A single number for a hidden value is a lie with a
-   decimal point on it.
+5. **Interval over point estimate.**
+6. **Truth at the moment you can act on it.** The sequence is frozen while the GCD is
+   running (nothing is pressable, and the bar is being *read*) and live when it is free.
 
 ---
 
-## The live complaint
+## Done this session
 
-> "The first button is optimal. It switches the entire list a lot and it's not smooth."
+- **Version control, `/power` layer, `.toc`-driven deploy** (`tools/deploy.ps1`, fails
+  closed on a manifest that lists a missing file).
+- **Offline test harness.** Loads the addon in real `.toc` order against a WoW API stub.
+  63 tests. Includes fail-closed TOC lint, a Lua 5.1 lint (the harness runs 5.4, which
+  would otherwise accept code the game rejects), and a secret-read lint.
+- **Churn diagnosed and fixed.** `Rotation.Predict` is pure and idempotent; the churn came
+  from a *flapping input* — RtB stage readable on only 27% of live ticks, and every flip
+  legitimately reorders the sequence. `IntelligenceLayer` now commits the sequence per
+  GCD. Position 1 is frozen too: measurement showed it was the largest source of change
+  (39 of 40 frames), so exempting it defeated the layer.
+- **Five correctness fixes**, each with a failing test written first: the `aoeDetected`
+  capability-set bug, and three more copies of the unknown-as-no defect on the RtB stage.
+- **Display strobe fixed** (D2/D3): sweeps re-armed ~10×/sec; now keyed on the absolute
+  instant a cooldown ends, and position 1's sweep belongs solely to the GCD.
+- **Full-suite hang fixed.** `wow_stub.lua` captured `type` *after* overwriting `_G.type`,
+  so each `harness.load()` added a stack frame to every `type()` call — quadratic. Every
+  suite passed alone, which is what made it confusing.
 
-**Diagnosis (inferred from reading; NOT yet proven by test).** Position 1 is stable
-because it is re-derived from ground truth every tick. Positions 2–N are not smoothed at
-all: `Engine.Evaluate` → `Rotation.Predict` re-simulates from scratch on every tick, at up
-to ~30Hz, with **zero state carried between ticks**. Three independent oscillators feed it:
+---
 
-1. **Queue length flaps.** `IntelligenceLayer.lua:389` truncates the sequence at the first
-   step rated `unknown`. `inputConfidence` returns `unknown` for a `buffUp` condition
-   whenever `buffs.degraded` is set and `fromOverlay` is not — and `degraded` toggles with
-   per-tick aura read success. So the visible list length jumps between 1 and 4.
-2. **The energy interval breathes.** `widen()` grows the interval continuously with time;
-   `Observe()` tightens it only every `BRACKET_MIN_INTERVAL` (0.25s). That is a ~4Hz
-   sawtooth on interval width, which flips `AffordState` between `yes` and `maybe` for the
-   marginal step and re-rates its confidence.
-3. **RtB stage readability flaps**, flipping `rtbStage`-gated rules between rated and cut.
+## OPEN DEFECTS, ranked
 
-**This is a smoothing / commitment problem, not a modeling problem.** The model is the
-asset. The presentation layer has no hysteresis, no commitment, and no notion that the
-player is a human with a reaction time.
+### CRITICAL
 
-## Open defects (found by reading; unverified in game)
+**C1 — `CooldownModel.lua:216`: the inferred-cooldown placeholder is treated as real.**
+`Reconcile` re-arms an unobserved cooldown with `duration = 1` on *every* tick, so
+`remaining` is pinned near 1.0s and never decays. `remainingKnown = false` correctly stops
+Display drawing a number, but the **simulator reads `remaining` directly** and decrements
+one GCD per step — so a 180s Adrenaline Rush becomes "ready" at step 2. Worse, it renders
+*solid*, because `inputConfidence` rates `cdReady` as `certain` whenever `cd.known` is set.
+Confidently wrong is the worst failure this addon can produce. Triggered by any `/reload`
+or login mid-fight. Verified end-to-end by execution.
 
-| # | Severity | Where | Defect |
-|---|---|---|---|
-| D1 | **HIGH** | `profiles/OutlawRogue.lua:327` | The **AoE** Roll-the-Bones rule is missing the `stageKnown == false` guard that the single-target copy has at :135. In AoE this reproduces the "reroll a Jackpot every 45s" bug the comment at :116 says was the most damaging thing the profile ever did — and it will *throw* outright if `stage` is nil. |
-| D2 | MED | `Display.lua:651` | The cooldown cache-guard re-fires on `sinceLast > 0.1`, so `SetCooldown` restarts the sweep animation ~10×/sec on any cooldown entry. This is the same strobe the GCD path at :699 was explicitly fixed for; the fix was never applied here. |
-| D3 | MED | `Display.lua:668` | `cooldownWidget:Show()` is called unconditionally inside the `if icon.cooldownText` branch, including when `remaining == 0` and `SetCooldown` was never called — leaving a stale sweep on screen. The `else` branch that hides it is structurally unreachable (`cooldownText` is always created in `CreateIcon`). |
-| D4 | LOW | `Rotation.lua:613` | If a rule matches but resolves to a nil spellID, `reason` is assigned while `spellID` stays nil; the loop continues and a later rule's spell can be paired with an earlier rule's reason. |
+**C2 — `UserRules.lua:109`: compiled user rules drop the RtB stage guard, and they
+*replace* the profile's closures.** The moment a user opens the rule editor, the
+reroll-a-Jackpot bug returns in full. Verified side by side on identical state: compiled
+fires `true`, built-in fires `false`.
 
-**Zero of these are provable today**, which is the real finding — see below.
+**C3 — `UserRules.lua:206`: `GetRows` writes on read.** Opening the editor and changing
+nothing permanently forks that user off the built-in profile (`IsCustomised` flips
+`false → true` on a pure display call). They silently stop receiving every future APL fix
+— including the ones committed today. This quietly breaks the maintenance story for the
+most engaged users, and gets worse with every release.
 
-## The blocking structural gap
+### HIGH
 
-**There are no tests.** 21 files, ~378KB of Lua, an engine claimed at 3% error, and the
-only verification surface is `ApiTest.lua`, which requires being logged into the game.
-The *ancestor* project (`outlaw-assist`, archived in Downloads) had `tests/wow_stub.lua`,
-`tests/run_tests.lua` and a fail-closed `toc_check.lua`. Tuono dropped all three.
+**H1 — Buffs never expire inside the simulation.** `deepCopyState` copies `expires` but
+`Predict` advances virtual time without re-checking it. A 4-step lookahead can recommend
+Pistol Shot at step 4 on an Opportunity that expired at step 2. The commitment layer will
+faithfully preserve steps that are simply wrong.
 
-"No accepted bugs" is unreachable without this. It is prerequisite to everything else.
+**H2 — `Highlight.lua:260`: the glow is an opaque green rectangle.** `SetColorTexture`
+defaults alpha to 1.0 on a texture that `SetAllPoints` the whole button at `HIGH` strata.
+The recommended ability's art is completely hidden. The player is told "press the green
+square" and cannot see which spell it is. One-line fix; largest single UX win available.
+
+**H3 — Tuono models no buff maintenance at all.** The 0/127 Blizzard disagreement in the
+trace is fully explained: `GetNextCastSpell` returned **315584 = Instant Poison** on every
+sample — the player's weapon poison had lapsed. Blizzard caught a real mistake we do not
+model. Also means the drift sensor must exclude non-rotation picks before counting
+disagreement, or it measures nothing.
+
+**H4 — `Engine.Evaluate` returns `resultQueue` itself and wipes it in place next tick.**
+Any consumer holding the previous queue sees it mutate underneath.
+
+**H5 — Confidence encoding collides.** `Display.lua:682` clamps a stalled recommendation
+to alpha 0.45 while `unknown` is already 0.4 — so *stalled* and *uncertain* are visually
+identical, discarding the stall detector's output exactly when it matters. Pooling renders
+at 0.35, *dimmer* than unknown, but pooling is a high-confidence claim. The encoding is
+inverted. Root cause: alpha carries three unrelated meanings on one channel that only says
+"less" — and it cannot port to the action bar, since dimming a Blizzard button means
+writing to a secure frame.
+
+### MEDIUM
+
+- **M1** `Display.lua:485` treats `buffs.degraded` as a global flag; the trace has it true
+  on 100% of ticks, so it marks everything and therefore marks nothing. Per-step
+  provenance already exists at `Rotation.lua:415`.
+- **M2** `Highlight.lua:191/204` calls `GetActionInfo` un-`pcall`'d then compares the
+  result — the same defect `Display.lua` already fixed with `safeActionInfo`.
+- **M3** `StateTracker.lua:488` boolean-tests `aura.spellId` *before* the secrecy check
+  meant to protect it.
+- **M4** `Highlight.rebuildSlotIndex` sweeps slots 1–120 but `GetActionButtonFrameName`
+  rejects >108, so a spell on bar 8 resolves to a slot and then to no frame.
+- **M5** Energy-model soundness holds for every bound derived from an *observation* and
+  fails only where a bound is derived from an *inference*: the Opportunity free-cast
+  assumption (`EnergyModel.lua:844`) and a long gap leaving pre-loading-screen bounds
+  (`:790`). Both self-heal via the contradiction branch. Enforceable invariant, one grep
+  away: **no path may raise `E.lo` except from a never-secret observation.**
+- **M6** Restless Blades is implemented twice, independently (`Rotation.lua:329` and
+  `CooldownModel.lua:51`).
+- **M7** `Display.lua` and `Highlight.lua` each carry their own copy of
+  `CurrentMainBarSlot` and the slot→binding mapping. This duplication shape is the same
+  one that produced the RtB divergence.
+
+---
+
+## The framework gap
+
+The spec-agnosticism claim is **false in four modules**. Adding a second spec today means
+editing five engine files (`StateTracker`, `Rotation`, `EnergyModel`, `CooldownModel`,
+`UserRules`). That is why no second spec exists.
+
+- `profile.resources` (`profiles/OutlawRogue.lua:433`) is **dead code** — zero consumers.
+- `StateTracker.lua:3` claims to be spec-agnostic; it has a fixed state schema, nine
+  hardcoded Outlaw cooldown keys, a bare literal `195627`, three if/elseif chains on
+  Outlaw buff names, and a hardcoded `Enum.PowerType.Energy`.
+- `EnergyModel`'s interval-bracketing mechanism, by contrast, is **already fully general**
+  — it would serve Focus, Rage, Runic Power or Mana unmodified; only the constants are
+  Outlaw. That is the piece worth building the framework around.
+
+Packaging hygiene not yet done: no `LICENSE` file despite `## X-License: MIT` in the TOC
+(the grant is not actually made), no `.pkgmeta`, no release automation, and the addon does
+not register with Blizzard's Settings API at all — invisible in Game Menu → AddOns, for no
+technical reason. See `docs/FRAMEWORK.md`.
+
+---
+
+## Claims to stop making
+
+- **"27% better than Blizzard" is not supported by anything.** The only verifiable figure
+  is 15–20%, and that is for *one-button* mode, which carries a GCD penalty that does not
+  apply to highlight assist — the mode Tuono actually competes with. Do not publish it.
+- **"3% error rate"** is not reproducible from anything versioned. What the trace *does*
+  support: energy interval width **median 0.2**, min 0.0, over 127 ticks, with regen solved
+  at 16.37/s from 112 crossing samples. That is a strong, defensible claim. Use it instead.
+- **"`GetPowerRegenForPowerType` gives us regen directly"** — it is SECRET in combat. The
+  13.7257 reading was taken out of combat. The code is safe (it routes through `readNum`),
+  but the comment at `EnergyModel.lua:145` overstates its reach.
+- **"`if secret then` always errors"** — it errors only on *boolean-typed* secrets. This
+  narrows the real hazard considerably and makes `wow_stub.lua`'s documented limitation
+  less severe than stated.
+- **"Waiting for Energy is Feral-only"** is PARTIALLY REFUTED. On the strength of that
+  claim the exact-anchor machinery (`EnergyModel.lua:640-739`) is switched **off** for
+  Outlaw, potentially discarding the tightest observation in the model. Cheap to settle:
+  the recorder already logs `assist` per tick — scan traces for `1249752` or icon `134377`.
 
 ---
 
 ## NEXT STEPS (ranked)
 
-1. **Test harness.** Port the ancestor's `wow_stub.lua` forward; add `toc_check.lua`
-   (fail-closed: every `.lua` listed, every listed file exists, single-number Interface
-   line). Gate: `lua tests/run_tests.lua` green.
-2. **Prove the defects.** Write a failing test for D1–D4 *before* fixing them.
-3. **Replay rig.** `Recorder.lua` already snapshots ticks. Turn recorded traces into
-   deterministic fixtures, then define **queue churn as a measured number** (edit distance
-   between consecutive ticks' queues, per second). The complaint becomes a metric.
-4. **Smoothing layer.** Commitment + hysteresis on positions 2–N, tuned against that
-   metric. Position 1 keeps its current re-derive-every-tick behaviour.
-5. **UX pass.** Decide the primary surface (queue strip vs. action-bar highlight vs. both)
-   — see the open decision below.
-6. **Multi-spec.** The engine is already spec-agnostic; only `profiles/` is Outlaw. This
-   is the growth path, and it is gated on 1–4 being solid.
-
-## Open decisions (need the human)
-
-- **D-A: Primary UI surface.** The user's instinct is to highlight icons on existing
-  action/WeakAura bars. `Highlight.lua` already does this for position 1 only. It is more
-  glanceable but structurally cannot show lead time — and lead time is what a rotation
-  helper is *for*. Candidate resolution: keep both, make the highlight the default and the
-  strip an opt-in "lookahead" panel, and put a numbered order badge on highlighted buttons
-  so the bar itself carries 2–3 steps of prediction.
-- **D-B: Where does the 3% error figure come from?** Not reproducible from anything in
-  this repo. Needs to be either located and checked in as a fixture, or re-measured. It is
-  the central marketing claim and currently rests on nothing versioned.
+1. **C1, C2, C3.** All three are live correctness or maintenance failures.
+2. **H1** (buff expiry in the simulator) — it silently poisons the lookahead the
+   commitment layer now preserves.
+3. **H2** (opaque glow) — one line, biggest perceived improvement.
+4. **H5 + M1** — move certainty off alpha onto ring pattern; the design is specified in
+   `docs/UI.md`.
+5. **Packaging hygiene**: LICENSE, `.pkgmeta`, Settings API registration. ~1 day.
+6. **H3** — model buff maintenance, and fix the drift sensor to exclude non-rotation picks.
+7. **The three framework seams** (resource schema, aura schema, declarative effects,
+   ~11 days), with Fury Warrior as the adversarial forcing function.
 
 ## Known constraints
 
-- Enemy auras, enemy cooldowns, other units' health: unreadable (secret values).
-- No combat log for addons in Midnight.
-- Energy is unconditionally secret; combo points and `UnitPowerMax` are not.
-- Haste went secret in 12.0.5 (`SecretWhenUnitStatsRestricted`).
-- Lua 5.1; no input automation; recommendation only.
+Enemy auras, enemy cooldowns and other units' health are unreadable. No combat log for
+addons. Energy is secret unconditionally — it does not lift out of combat. Haste went
+secret in 12.0.5. Lua 5.1. Recommendation only; no input automation, ever.
