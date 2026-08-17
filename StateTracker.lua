@@ -422,7 +422,9 @@ local function ProcessAuraDelta(updateInfo)
 			end
 			instanceMap[instanceID] = nil
 		end) then
-		Tuono.State.buffs.degraded = true
+		-- The array itself is secret, which is the normal state in combat. Blind on this
+		-- channel, not degraded overall -- see the note in ProcessAuraDelta's header.
+		Tuono.State.buffs.deltaBlind = true
 	end
 
 	-- addedAuras: match by spellId (readable-first check) or correlation
@@ -480,13 +482,19 @@ local function ProcessAuraDelta(updateInfo)
 							Tuono.State.buffs.degraded = false
 						end
 					else
-						-- No correlation possible: mark degraded
-						Tuono.State.buffs.degraded = true
+						-- AN UNIDENTIFIED BUFF IS NOT OUR BUFF.
+						-- This marked the whole state degraded whenever an added aura
+						-- could not be correlated to a recent cast -- which fires for
+						-- every food, flask, raid buff, trinket proc and world buff the
+						-- player gains. None of those say anything about the four auras
+						-- we actually track, and all of them arrive constantly.
+						Tuono.State.buffs.deltaBlind = true
 					end
 				end
 			end
 		end) then
-		Tuono.State.buffs.degraded = true
+		-- Secret array; see above.
+		Tuono.State.buffs.deltaBlind = true
 	end
 
 	-- updatedAuraInstanceIDs: refresh mapped entries via GetAuraDataByAuraInstanceID
@@ -505,7 +513,8 @@ local function ProcessAuraDelta(updateInfo)
 					end
 				end
 			end) then
-			Tuono.State.buffs.degraded = true
+			-- Secret array; see above.
+			Tuono.State.buffs.deltaBlind = true
 		end
 	end
 end

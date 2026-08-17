@@ -72,6 +72,36 @@ describe("statetracker: degraded means unreadable, not absent", function()
       "it should still be recorded as blind, because that is true and diagnostic")
   end)
 
+  it("is not degraded when the delta ARRAYS are secret", function()
+    -- Distinct from the payload case: the payload can be readable while
+    -- addedAuras / removedAuraInstanceIDs / updatedAuraInstanceIDs are each secret
+    -- independently. All three fire throughout combat. A live trace after fixing only
+    -- the payload case still showed degraded on 54% of ticks; these arrays were why.
+    local Tuono, stub = harness.boot({ inCombat = true })
+    stub.FireEvent("UNIT_AURA", "player", {
+      isFullUpdate = false,
+      addedAuras = stub.makeSecret({}),
+      removedAuraInstanceIDs = stub.makeSecret({}),
+      updatedAuraInstanceIDs = stub.makeSecret({}),
+    })
+    expect.falsy(Tuono.State.buffs.degraded,
+      "secret delta arrays are the normal state in combat, not degradation")
+    expect.truthy(Tuono.State.buffs.deltaBlind, "should still be recorded as blind")
+  end)
+
+  it("is not degraded by a buff that is none of ours", function()
+    -- Food, flask, raid buffs, trinket procs and world buffs all arrive as added auras
+    -- that correlate to no cast of ours. Marking the whole state degraded for them made
+    -- the flag a function of how buffed the player is.
+    local Tuono, stub = harness.boot({ inCombat = true })
+    stub.FireEvent("UNIT_AURA", "player", {
+      isFullUpdate = false,
+      addedAuras = { { auraInstanceID = 9001, spellId = 12345 } },  -- not a tracked aura
+    })
+    expect.falsy(Tuono.State.buffs.degraded,
+      "an unidentified third-party buff says nothing about the auras we track")
+  end)
+
   it("does not let absence of buffs suppress the whole lookahead", function()
     local Tuono, stub = harness.boot({
       inCombat = true,
