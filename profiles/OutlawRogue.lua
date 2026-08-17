@@ -132,8 +132,7 @@ local PRIORITY = {
 		conditions = { { type = "rtbStage", op = "<", value = 2 }, { type = "cdReady", spell = "rollTheBones" } },
 		when = function(S, A)
 			local H = Tuono.RuleHelpers
-			if S.buffs.rtb.stageKnown == false then return false end
-			return S.buffs.rtb.stage < 2 and H.cdOf(S, "rollTheBones").ready
+			return H.rtbStageBelow(S, 2) and H.cdOf(S, "rollTheBones").ready
 				and H.canAfford(S, SPELLS.rollTheBones)
 		end
 	},
@@ -147,8 +146,7 @@ local PRIORITY = {
 		conditions = { { type = "rtbStage", op = ">=", value = 3 }, { type = "cdReady", spell = "keepItRolling" } },
 		when = function(S, A)
 			local H = Tuono.RuleHelpers
-			if S.buffs.rtb.stageKnown == false then return false end
-			return S.buffs.rtb.stage >= 3 and H.cdOf(S, "keepItRolling").ready
+			return H.rtbStageAtLeast(S, 3) and H.cdOf(S, "keepItRolling").ready
 				and H.canAfford(S, SPELLS.keepItRolling)
 		end
 	},
@@ -318,13 +316,20 @@ local PRIORITY_AOE = {
 		end
 	},
 	{
+		-- FAILS CLOSED ON AN UNREADABLE STAGE, through the same helper the single-target
+		-- list uses. This rule used to read `S.buffs.rtb.stage < 2` directly: it treated
+		-- "cannot see the buff" as "no buff", and it threw outright on a nil stage. A
+		-- live 69s trace had the stage readable only 27% of the time.
+		--
+		-- The guard is a shared helper rather than an inline check precisely because the
+		-- inline version DIVERGED -- single-target carried it, this list never got it.
 		name = "Roll the Bones below stage 2",
 		spellKey = "rollTheBones",
 		requiresSpell = "rollTheBones",
 		conditions = { { type = "rtbStage", op = "<", value = 2 }, { type = "cdReady" } },
 		when = function(S, A)
 			local H = Tuono.RuleHelpers
-			return S.buffs.rtb.stage < 2 and H.cdOf(S, "rollTheBones").ready
+			return H.rtbStageBelow(S, 2) and H.cdOf(S, "rollTheBones").ready
 				and H.canAfford(S, SPELLS.rollTheBones)
 		end
 	},

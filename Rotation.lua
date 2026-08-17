@@ -112,6 +112,41 @@ local function cpBelowCap(S)
 	return S.comboPoints < cpCap(S)
 end
 
+-- ---------------------------------------------------------------------------
+-- ROLL THE BONES STAGE, TRI-STATE
+-- ---------------------------------------------------------------------------
+-- `stage` reads 0 both when there is genuinely no Roll the Bones buff AND when we
+-- simply cannot see one, so no caller may read it without also asking whether it is
+-- known. Returns (stage, known); stage is nil whenever known is false.
+local function rtbStage(S)
+	local rtb = S and S.buffs and S.buffs.rtb
+	if not rtb then return nil, false end
+	if rtb.stageKnown == false then return nil, false end
+	local stage = rtb.stage
+	if type(stage) ~= "number" then return nil, false end
+	return stage, true
+end
+
+-- BOTH RtB RULES SPEND A COOLDOWN, so both are positive claims and both must fail
+-- closed on an unreadable stage. Rerolling a stage we cannot see is how the addon came
+-- to tell players to reroll a Jackpot every 45 seconds.
+--
+-- These exist as HELPERS rather than as an inline guard in each rule specifically
+-- because the inline version diverged: the single-target list carried the guard, the
+-- AoE list was written later without it, and the AoE list is the one that ran. A shared
+-- helper cannot be half-applied.
+local function rtbStageBelow(S, n)
+	local stage, known = rtbStage(S)
+	if not known then return false end
+	return stage < n
+end
+
+local function rtbStageAtLeast(S, n)
+	local stage, known = rtbStage(S)
+	if not known then return false end
+	return stage >= n
+end
+
 -- Is an ALTERNATIVE ability genuinely usable? An unlearned spell sits at zero cooldown,
 -- so a cooldown-only check reports it "ready" and blocks the fallback that should fire.
 local function isUsableAlternative(S, spellID, cdKey)
@@ -182,6 +217,9 @@ Tuono.RuleHelpers = {
 	cpBelowCap = cpBelowCap,
 	isUsableAlternative = isUsableAlternative,
 	canAfford = canAfford,
+	rtbStage = rtbStage,
+	rtbStageBelow = rtbStageBelow,
+	rtbStageAtLeast = rtbStageAtLeast,
 }
 
 -- ---------------------------------------------------------------------------
@@ -508,23 +546,28 @@ function Tuono.Rotation.ResolveMode(S)
 		return "single"
 	end
 
-	-- BLIZZARD'S OWN LIST IS AN AOE SIGNAL. If C_AssistedCombat's rotation contains Blade
-	-- Flurry, its engine -- which can see the enemy state Midnight hides from us -- has
-	-- concluded this is a cleave. That is strictly better information than our nameplate
-	-- count, which misses anything unnameplated or out of range.
-	--
-	-- The old blade_flurry_aoe rule treated this as one of three OR-ed signals. When the
-	-- rotation moved into the profile's AoE priority list, the mode selector was written
-	-- against nameplate count alone and this signal was silently dropped, so a cleave
-	-- Blizzard could see and we could not would keep running the single-target list.
-	if Tuono.Assist and Tuono.Assist.aoeDetected then
-		belowThresholdSince = nil
-		Tuono.Rotation.mode, Tuono.Rotation.modeReason = "aoe", "Blizzard's list is cleaving"
-		return "aoe"
-	end
-
 	local count = S and S.enemyCount
+
+	-- ========================================================================
+	-- BLIZZARD'S PICK IS A FALLBACK, NOT AN OVERRIDE
+	-- ========================================================================
+	-- Its engine can see enemy state Midnight hides from us, which makes it valuable
+	-- exactly when our own nameplate count is unreadable -- and redundant when it is not.
+	--
+	-- This test used to sit ABOVE the count and return unconditionally, so an inferred
+	-- signal outranked a direct measurement. Combined with the capability-set bug in
+	-- AssistReader (aoeDetected was constant true for any Outlaw with Blade Flurry
+	-- talented), that pinned the addon into the AoE priority list permanently -- on every
+	-- fight, against any number of targets.
+	--
+	-- Order is now: explicit pin > direct count > Blizzard's live pick > hold.
 	if count == nil then
+		if Tuono.Assist and Tuono.Assist.aoeDetected then
+			belowThresholdSince = nil
+			Tuono.Rotation.mode = "aoe"
+			Tuono.Rotation.modeReason = "Blizzard is cleaving (count unreadable)"
+			return "aoe"
+		end
 		-- Count unreadable: HOLD the current mode rather than snapping to single-target.
 		-- Treating "cannot tell" as "one enemy" would drop AoE mid-pack.
 		Tuono.Rotation.modeReason = "count unreadable (holding)"
