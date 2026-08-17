@@ -62,6 +62,9 @@ Tuono.RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player", function(event, un
     if planned and planned.spellID == id then
       E.cursor = E.cursor + 1
       E.disagreeTicks = 0
+      -- Followed correctly -- but possibly LATE. Re-validate on the very next tick
+      -- instead of trusting the rest of the plan; see the note in Evaluate.
+      E.verifyOnAdvance = true
     else
       local ability = Tuono.Rotation and Tuono.Rotation.ABILITIES
         and Tuono.Rotation.ABILITIES[id]
@@ -406,15 +409,8 @@ function Tuono.Engine.Evaluate()
     resultQueue[i] = entry
   end
 
-  -- Remember what we are about to recommend, so the stall detector can compare the
-  -- player's next cast against it. Reset the counter when the recommendation CHANGES:
-  -- a stall is "same advice, repeatedly ignored", not "advice that happens to differ
-  -- from what you pressed once".
-  local newPos1 = resultQueue[1] and resultQueue[1].spellID or nil
-  if newPos1 ~= Tuono.Engine.lastPos1 then
-    Tuono.Engine.stallCount = 0
-    Tuono.Engine.lastPos1 = newPos1
-  end
+  -- (lastPos1 is assigned AFTER the plan and fallback layers, further down: it must
+  -- describe what was published, not what was derived. See the note there.)
 
   -- CONFIDENCE TRUNCATION: show lookahead only as far as we can stand behind it.
   --
@@ -534,9 +530,24 @@ function Tuono.Engine.Evaluate()
   if not replan then
     local planned = plan[E.cursor]
     local freshHead = fresh[1] and fresh[1].spellID or nil
+    -- A CAST IS THE MOMENT OF MAXIMUM INFORMATION, SO CHECK HARDEST THERE.
+    --
+    -- The plan assumes the player casts each step PROMPTLY -- the simulator advanced one
+    -- GCD per step. Press the right button late (clipped GCD, a moment's hesitation) and
+    -- the world has moved further than the plan modelled: energy regenerated, a cooldown
+    -- came up, a proc landed. The remaining steps may no longer be optimal even though
+    -- the player did exactly the right thing.
+    --
+    -- So advancing the cursor does not grant the plan immunity. It schedules an immediate
+    -- re-check: one tick of disagreement is enough to re-plan right after a cast, where
+    -- between casts it takes three. Noise rejection is for quiet periods; a cast boundary
+    -- is a real event and disagreement there is real news.
+    local needed = E.verifyOnAdvance and 1 or DISAGREE_TICKS_BEFORE_REPLAN
+    E.verifyOnAdvance = false
+
     if planned and freshHead and planned.spellID ~= freshHead then
       E.disagreeTicks = (E.disagreeTicks or 0) + 1
-      if E.disagreeTicks >= DISAGREE_TICKS_BEFORE_REPLAN then replan = true end
+      if E.disagreeTicks >= needed then replan = true end
     else
       E.disagreeTicks = 0
       -- The plan and the world agree, so refresh the head's provenance from the fresh
@@ -563,11 +574,64 @@ function Tuono.Engine.Evaluate()
     seq = {}
     for i = E.cursor, #plan do table.insert(seq, plan[i]) end
   end
+  -- ==========================================================================
+  -- THERE IS ALWAYS AN ANSWER
+  -- ==========================================================================
+  -- A live trace recorded ten UI errors fired while the queue held NOTHING -- the player
+  -- was pressing buttons into a blank bar. An empty bar reads as "the addon is broken",
+  -- which is strictly worse than one slightly suboptimal suggestion and worse than an
+  -- honest "wait for this", both of which are information.
+  --
+  -- Two mechanisms already existed to prevent this: the profile's unconditional
+  -- last-resort rule, and Predict's pooling fallback which re-runs the list with
+  -- affordability suspended. The trace proves they still leave gaps -- the last-resort
+  -- rule is itself gated on canAfford, so provable unaffordability empties it, and a
+  -- deviation can drop a plan at a moment when Predict returns nothing.
+  --
+  -- So the guarantee moves here, where it can be enforced rather than hoped for. The
+  -- profile names its filler; the engine promises the bar is never blank. Marked
+  -- "fallback" so the display renders it as a wait rather than a command -- we are not
+  -- claiming it is castable this instant, only that it is what you are waiting for.
+  if #seq == 0 then
+    local profile = Tuono.Profiles and Tuono.Profiles.Active()
+    local key = profile and (profile.fallback or "sinisterStrike")
+    local fallbackID = profile and profile.spells and profile.spells[key]
+    local known = fallbackID and S.knownSpells and S.knownSpells[fallbackID]
+    -- Fail OPEN on an unprobed spell: nil means "never asked", and refusing to show
+    -- anything because we did not probe is the unknown-as-no defect in its purest form.
+    if fallbackID and (known ~= false or S.knownUnavailable) then
+      seq = { {
+        spellID = fallbackID,
+        source = "fallback",
+        kind = "rotation",
+        confidence = "fallback",
+        step = 1,
+        isSequence = true,
+      } }
+      E.usedFallback = true
+    end
+  else
+    E.usedFallback = false
+  end
+
   E.committedHead = seq[1] and seq[1].spellID or nil
 
   wipeTable(resultQueue)
   for _, entry in ipairs(seq) do table.insert(resultQueue, entry) end
   for _, entry in ipairs(extras) do table.insert(resultQueue, entry) end
+
+  -- WHAT WE ACTUALLY PUBLISHED, not what we derived before planning.
+  --
+  -- This assignment used to sit above the plan block, so lastPos1 described the raw
+  -- prediction rather than the sequence on screen. Both consumers care about the screen:
+  -- the stall detector compares the player's cast against what they were SHOWN, and the
+  -- flight recorder files it as `rec`, which is how a trace attributes an error to a
+  -- recommendation. Reading the wrong one makes a trace blame the wrong spell.
+  local publishedPos1 = resultQueue[1] and resultQueue[1].spellID or nil
+  if publishedPos1 ~= Tuono.Engine.lastPos1 then
+    Tuono.Engine.stallCount = 0
+    Tuono.Engine.lastPos1 = publishedPos1
+  end
 
   -- Step 5: Truncate queue to 8
   while #resultQueue > 8 do

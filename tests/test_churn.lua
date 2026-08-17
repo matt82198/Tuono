@@ -226,12 +226,58 @@ describe("plan: pressing the recommended button advances the sequence", function
     local Tuono, stub = harness.boot({ world = stationaryWorld, inCombat = true })
     local before = harness.queueIDs(harness.evaluate(Tuono))
     expect.truthy(#before >= 3, "need depth")
+    -- harness.cast applies the ability's real cost/generation/cooldown, which firing the
+    -- event alone does not. Without that the world never moves, a fresh prediction keeps
+    -- recommending the spell just cast, and the engine correctly re-plans -- see the
+    -- clipped-GCD test below, which relies on exactly that.
     for i = 1, 2 do
-      stub.FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", "c" .. i, before[i])
+      harness.cast(Tuono, stub, before[i])
       stub.state.time = stub.state.time + TICK
       harness.evaluate(Tuono)
     end
     expect.equal(Tuono.Engine.cursor, 3, "the cursor did not track two presses")
+  end)
+
+  it("re-checks harder immediately after a press than between presses", function()
+    -- The caveat that motivated this: press the right button but LATE -- a clipped GCD,
+    -- a moment's hesitation -- and the world moved further than the plan modelled, so the
+    -- remaining steps may no longer be optimal even though the player did the right
+    -- thing. Following the plan therefore does NOT grant it immunity; it schedules an
+    -- immediate re-check.
+    --
+    -- Asserted on the contract rather than on a particular spell's side effects: a cast
+    -- arms verifyOnAdvance, and one tick of disagreement is then enough to re-plan, where
+    -- between presses it takes three.
+    local Tuono, stub = harness.boot({ world = stationaryWorld, inCombat = true })
+    local ids = harness.queueIDs(harness.evaluate(Tuono))
+    harness.cast(Tuono, stub, ids[1])
+    expect.truthy(Tuono.Engine.verifyOnAdvance,
+      "following the plan must schedule a re-check, not buy immunity from one")
+
+    local planAt = Tuono.Engine.planAt
+    -- Move the world out from under the remaining plan, the way a late press does: the
+    -- next planned step is no longer available. Driven through the client so it reaches
+    -- Tuono.State the way the game would.
+    local nextPlanned = Tuono.Engine.plan[Tuono.Engine.cursor].spellID
+    stub.setCooldown(nextPlanned, 120)
+    stub.state.time = stub.state.time + TICK
+    harness.evaluate(Tuono)
+    expect.truthy(Tuono.Engine.planAt ~= planAt,
+      "a single tick of disagreement right after a press must re-plan")
+  end)
+
+  it("still requires persistence when no press just happened", function()
+    -- The other half of the same rule: away from a cast boundary, one tick of
+    -- disagreement is far likelier to be a blinking sensor than a changed world.
+    local Tuono, stub = harness.boot({ world = liveLikeWorld, inCombat = true })
+    harness.evaluate(Tuono)
+    local planAt = Tuono.Engine.planAt
+    Tuono.State.buffs.rtb.stageKnown = false
+    Tuono.State.buffs.rtb.stage = 0
+    stub.state.time = stub.state.time + TICK
+    Tuono.Engine.Evaluate()
+    expect.equal(Tuono.Engine.planAt, planAt,
+      "one tick of disagreement with no press behind it unseated the plan")
   end)
 
   it("abandons the plan the moment the player deviates", function()

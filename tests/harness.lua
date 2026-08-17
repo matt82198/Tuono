@@ -198,6 +198,34 @@ function harness.queueIDs(result)
   return out
 end
 
+-- CAST A SPELL AND MOVE THE WORLD THE WAY THE CLIENT WOULD.
+--
+-- Firing UNIT_SPELLCAST_SUCCEEDED alone is not a cast: the stub does not simulate the
+-- game, so energy, combo points and cooldowns all stay exactly where they were. Any test
+-- of "the player followed the plan" that only fires the event is really testing what
+-- happens when a cast produces NO effect -- which the engine correctly treats as the
+-- world failing to move as predicted, and re-plans.
+--
+-- That is a genuine and useful behaviour (it is what catches a clipped GCD), so it gets
+-- its own test. This helper is for the ordinary case: apply the ability's declared cost,
+-- generation and cooldown, then fire the event.
+function harness.cast(Tuono, stub, spellID)
+  local ab = Tuono.Rotation and Tuono.Rotation.ABILITIES and Tuono.Rotation.ABILITIES[spellID]
+  if ab then
+    stub.state.energy = math.max(0, stub.state.energy - (ab.cost or 0))
+    local spend = ab.cpSpend or 0
+    if spend ~= 0 then
+      stub.state.comboPoints = 0
+    end
+    if (ab.cpGen or 0) > 0 then
+      stub.state.comboPoints = math.min(stub.state.comboPointsMax,
+        stub.state.comboPoints + ab.cpGen)
+    end
+    if (ab.cd or 0) > 0 then stub.setCooldown(spellID, ab.cd) end
+  end
+  stub.FireEvent("UNIT_SPELLCAST_SUCCEEDED", "player", "cast", spellID)
+end
+
 -- ---------------------------------------------------------------------------
 -- CHURN MEASUREMENT
 -- ---------------------------------------------------------------------------

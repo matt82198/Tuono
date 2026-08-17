@@ -130,6 +130,7 @@ local SUITE_FILES = {
   "test_userrules.lua",
   "test_display.lua",
   "test_highlight.lua",
+  "test_fallback.lua",
   "test_churn.lua",
 }
 
