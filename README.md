@@ -93,22 +93,39 @@ with your own priority logic layered on top.
 - **Honesty about uncertainty.** Values Midnight hides are shown as estimates, never as
   measurements. The display dims, shortens, and admits doubt rather than guessing at you.
 
-> **Status:** 183 behavioural tests plus 77 secret-value regressions, all passing, against
-> a harness that emulates secret values. Validated on a live 12.1.0 client in open-world
-> play: the immediate recommendation reads as optimal, and energy — a value the client
-> refuses to return at all — is held to a **mean interval width of 2.76 out of 100**. The
-> lookahead beyond the next press is right about half the time and truncates itself when it
-> cannot justify a step. **Not** yet validated inside a mythic keystone — see
-> [Help wanted](#help-wanted).
+> **Status: works, and is honest about where it stops.** 511 tests pass against a harness
+> that emulates secret values. On a live 12.1.0 client in open-world play the immediate
+> recommendation reads as optimal, and energy — a value the client refuses to return at
+> all — is held to a **mean interval width of 2.76 out of 100**.
+>
+> Three things you should know before installing:
+>
+> - **Position 1 is trusted. Position 2 is right about half the time.** The bar truncates
+>   itself rather than inventing steps, so it shortens instead of lying, but the confidence
+>   rating behind step 2 is not yet earned. This is the single biggest open problem and the
+>   top item under [Help wanted](#help-wanted).
+> - **Nothing has been validated in a mythic keystone.** Every live measurement so far is
+>   open world, on one character, on one build.
+> - **Outlaw Rogue is the only profile.** The framework is spec-agnostic; the content is not.
+>
+> It is a rotation helper that works and a framework that is early. Install it if that
+> trade reads well to you.
 
 ---
 
 ## Quick start
 
-1. Clone this repository and copy the inner `Tuono/` folder into
-   `World of Warcraft\_retail_\Interface\AddOns\`. There is no packaged release yet.
-2. **Check the nesting.** You need `Interface\AddOns\Tuono\Tuono.toc`, *not*
+**With an addon manager (recommended).** WowUp can track this repository's GitHub releases
+directly — add `https://github.com/matt82198/Tuono` as a GitHub source and it will pick up
+each tagged release and keep it updated.
+
+**By hand.** Download `Tuono-vX.Y.Z.zip` from
+[Releases](https://github.com/matt82198/Tuono/releases) and extract it into
+`World of Warcraft\_retail_\Interface\AddOns\`.
+
+1. **Check the nesting.** You need `Interface\AddOns\Tuono\Tuono.toc`, *not*
    `Interface\AddOns\Tuono\Tuono\Tuono.toc`. Move the inner folder up if so.
+   (The release ZIP is built with the correct nesting; this bites people who clone instead.)
 3. **It may show as "out of date."** Tick **Load out of date AddOns** in the Addons pane
    before entering the world.
 4. In game: `/tuono config` opens the editor; `/tuono secrets` audits what your client is
@@ -264,17 +281,72 @@ unreadable.
 
 ## Help wanted
 
-This is the part where the project needs other people, honestly:
+**The energy model is finished.** Bounding a value the client refuses to return was the
+hard part and it is done: mean interval width 2.76 out of 100, bracketed on 75 of 113
+in-combat ticks, with exact zero-width pins at threshold crossings. The maths is written up
+in [docs/INVERSION.md](docs/INVERSION.md). The out-of-combat regen seed, the two-crossing
+solve and the widget read-back question are all closed.
 
-- **Live-client validation.** Run `/tuono secrets` in a keystone and open an issue with the
-  output. The readability table above comes from one character on one build; real
-  measurements from real content beat that.
-- **Profiles for other specs.** Outlaw is the example, not the point. If you main something
-  else and can write its priority list, that is the highest-value contribution available.
-- **Accessibility feedback.** If you used a helper because of a motor or cognitive
-  impairment and this does not work for you, that is a bug report, and a high-priority one.
-- **Anyone who has read the secret-values rules closely.** If something here is legally
-  wrong, say so loudly and I will fix it.
+What the project needs now is everything downstream of that.
+
+### 1. Prediction confidence, which is the headline problem
+
+Position 2 is correct **about half the time**, and that number is more useful than it
+looks. The queue truncates at the first step rated `unknown`, so any step 2 that renders at
+all was rated `certain` or `bounded`. Being wrong half the time means those ratings are not
+earned — the model is too generous, not incapable.
+
+Three suspects, in order:
+
+- `rateRule` awards `certain` to a rule whose declared `conditions` list is incomplete
+  relative to what its `when` closure actually reads. The two can drift freely and nothing
+  checks them. **A linter that compares the two would be a genuinely valuable first PR.**
+- The simulator advances state the player then diverges from. That is a conditional, not an
+  error, and may just need saying on screen.
+- Energy `bounded` at width 2.76 straddles a cost boundary more often than the rating admits.
+
+The cheap experiment before any of that: log predicted step 2 against the player's actual
+next cast, bucketed by the rating the step carried. If `certain` runs ~90% and `bounded`
+~50%, the ratings are fine and only the display over-promises.
+
+### 2. Profiles for other specs
+
+Outlaw is the example, not the point. The rule schema is already APL-shaped. If you main
+something else and can write its priority list, this is the highest-value contribution
+available and needs no knowledge of the secret-values machinery.
+
+### 3. A SimulationCraft APL importer
+
+Blocked on nothing but effort. How much of an imported APL is evaluable under secrets is an
+open question, and answering it concretely would be worth more than a guess.
+
+### 4. UI work
+
+The bar defaults to four icons and self-truncates. The ready rail needs real design work,
+and the escalation slot for defensives and interrupts is unbuilt.
+
+### 5. Live validation, especially in keystones
+
+Every live measurement so far is open world, one character, one build. Run `/tuono secrets`
+in a keystone and open an issue with the output. `/tuono record` captures a flight recording
+that `tools/trace_analyze.py` will read — traces have found twelve defects that reading the
+code did not.
+
+Two specific unknowns worth a trace: the range/target gate is still unverified, and
+`C_RestrictedActions.IsAddOnRestrictionActive` returns `CALL_FAILED` for all six contexts
+and nobody knows why.
+
+### 6. Accessibility feedback
+
+If you used a rotation helper because of a motor or cognitive impairment and this does not
+work for you, that is a bug report and a high-priority one. See
+[docs/ACCESSIBILITY.md](docs/ACCESSIBILITY.md).
+
+### 7. Anyone who has read the secret-values rules closely
+
+[docs/LEGALITY.md](docs/LEGALITY.md) states what is readable and what is not, with a
+confidence marker on every claim. If something there is wrong, say so loudly and I will fix
+it. That document has already had to correct itself once.
 
 Issues and PRs: <https://github.com/matt82198/Tuono/issues>
 
@@ -283,12 +355,14 @@ Issues and PRs: <https://github.com/matt82198/Tuono/issues>
 ## Development
 
 ```bash
-lua tests/run_tests.lua           # 183 behavioural tests (also runs the two lints)
-lua tests/secrets_regression.lua  #  77 assertions against emulated secret values
-lua tests/migration_test.lua      #   8 tests for the OutlawAssist import path
-lua tests/toc_check.lua           #   TOC / CHANGELOG / file-manifest drift gate
-lua tests/lua51_check.lua         #   Lua 5.1 syntax gate (the WoW runtime)
+lua tests/run_tests.lua   # 511 assertions across 62 suites, plus every lint and drift gate
 ```
+
+One entry point. It runs the describe/it suites in-process and the five legacy suites as
+subprocesses, because those call `os.exit` and mutate globals. Before 3.0.0 the scenario,
+migration and secret-value suites were standalone and you had to know to invoke them by
+hand; merging the two WoW API stubs at the same time exposed four fidelity bugs that had
+been quietly making whole categories of assertion vacuous.
 
 The suite is **mutation-checked**: every fix is confirmed to turn its covering test red
 against the broken code before being called done. A test that only passes proves nothing —
