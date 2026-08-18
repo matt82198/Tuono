@@ -18,7 +18,7 @@
 
 **Branch discipline:** Feature branches only; PR + MERGED-state verification; worktrees only (never checkout primary tree).
 
-**Release channel:** GitHub release with ZIP asset (user's WoW PC pulls latest release; sanctioned delivery, no CurseForge auto-publish).
+**Release channel:** Tagging `v*` runs `.github/workflows/release.yml`, which gates on the full suite and then packages via BigWigsMods/packager. It attaches the ZIP to the GitHub release always, and publishes to CurseForge / Wago / WoWInterface only where both a repo secret (`CF_API_KEY`, `WAGO_API_TOKEN`, `WOWI_API_TOKEN`) and the matching `X-*-ID` in the TOC exist, skipping any that do not. WowUp installs from the GitHub releases directly and needs none of them.
 
 **Lua constraints:** 5.1-compatible, no new globals except `TuonoDB` (Core), no io/os/require/setfenv/goto, ASCII only, Tuono.num/Tuono.bool coercion for ALL WoW API returns (secret-value guards), rules table distilled from docs only (no invented mechanics).
 

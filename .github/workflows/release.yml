@@ -1,0 +1,55 @@
+name: Release
+
+# Packages the addon and publishes it wherever credentials exist.
+#
+# The packager skips any platform whose token or project ID is missing, so this
+# workflow is safe to merge before the CurseForge and Wago projects exist: it will
+# simply attach the ZIP to the GitHub release and say nothing about the others.
+#
+# Enabling a platform takes two steps, both of which need a human:
+#
+#   CurseForge  - create the project, then add repository secret CF_API_KEY and put
+#                 "## X-Curse-Project-ID: <id>" in Tuono/Tuono.toc
+#   Wago        - create the project, then add repository secret WAGO_API_TOKEN and put
+#                 "## X-Wago-ID: <id>" in Tuono/Tuono.toc
+#   WoWInterface- add WOWI_API_TOKEN and "## X-WoWI-ID: <id>"
+#
+# WowUp needs none of this to install Tuono: it can already track this repository's
+# GitHub releases directly. CurseForge and Wago are about discovery, not delivery.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # Manual runs exist so packaging can be proven BEFORE a real tag is cut. The very
+  # first run should be a manual one - see the note in the pull request that added
+  # this file about the Tuono/ subdirectory and .pkgmeta.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: Package and publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          # The packager builds the changelog from tag history, so it needs all of it.
+          fetch-depth: 0
+
+      - name: Run the gates
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq lua5.4
+          lua5.4 tests/run_tests.lua
+
+      - name: Package and publish
+        uses: BigWigsMods/packager@master
+        env:
+          GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}
+          CF_API_KEY: ${{ secrets.CF_API_KEY }}
+          WAGO_API_TOKEN: ${{ secrets.WAGO_API_TOKEN }}
+          WOWI_API_TOKEN: ${{ secrets.WOWI_API_TOKEN }}
