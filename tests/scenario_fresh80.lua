@@ -3,11 +3,21 @@ local stub = require("tests.wow_stub")
 _G.ADDON_NAME = "Tuono"
 local Tuono = {}
 for k, v in pairs(stub) do if k ~= "state" then _G[k] = v end end
-for _, f in ipairs({"Tuono/Core.lua","Tuono/data/rules.lua","Tuono/StateTracker.lua",
-  "Tuono/AssistReader.lua","Tuono/Rotation.lua","Tuono/IntelligenceLayer.lua",
-  "Tuono/Display.lua","Tuono/Config.lua","Tuono/Highlight.lua","Tuono/ApiTest.lua"}) do
-  assert(loadfile(f))("Tuono", Tuono)
+-- LOAD ORDER COMES FROM THE .toc, NOT FROM A HAND-KEPT LIST.
+-- This file used to hardcode its own subset and omitted Profiles.lua, so Rotation.lua
+-- indexed a nil Tuono.Profiles and the whole scenario crashed before asserting anything.
+-- It had been dead on main for some time. The .toc IS the contract; read it.
+local function tocFiles()
+  local fh = assert(io.open("Tuono/Tuono.toc", "r"))
+  local out = {}
+  for line in fh:lines() do
+    local t = line:gsub("^%s+", ""):gsub("%s+$", "")
+    if t ~= "" and t:sub(1, 1) ~= "#" then out[#out + 1] = "Tuono/" .. t end
+  end
+  fh:close()
+  return out
 end
+for _, f in ipairs(tocFiles()) do assert(loadfile(f))("Tuono", Tuono) end
 stub.FireEvent("ADDON_LOADED", "Tuono"); stub.FireEvent("PLAYER_LOGIN"); stub.FireEvent("PLAYER_ENTERING_WORLD")
 
 local out = {}

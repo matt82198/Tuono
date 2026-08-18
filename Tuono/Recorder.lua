@@ -409,8 +409,61 @@ function R.Snapshot()
 	local lo, hi = nil, nil
 	if Tuono.Energy and Tuono.Energy.Interval then lo, hi = Tuono.Energy.Interval() end
 
+	-- HOW MANY ICONS THE PLAYER ACTUALLY SAW.
+	--
+	-- Every trace so far has recorded only position 1, so three separate reports of the
+	-- bar behaving badly -- "it switches the entire list a lot", "it just goes empty",
+	-- "single combat shows one button" -- were all unanswerable from the data, and each
+	-- one had to be chased by reproducing it offline and guessing at the live cause. The
+	-- depth of the published sequence is the single most useful number the recorder was
+	-- not capturing.
+	--
+	-- Read off the plan rather than the queue: Engine.Evaluate returns resultQueue itself
+	-- and wipes it in place on the next tick, so holding a reference here would observe a
+	-- table that mutates underneath us.
+	local E = Tuono.Engine
+	local planLen, cursor, visible = nil, nil, nil
+	if E and E.plan and E.cursor then
+		planLen = #E.plan
+		cursor = E.cursor
+		visible = math.max(0, planLen - cursor + 1)
+	end
+
+	-- ERRORS ARE SWALLOWED BY DESIGN, SO THEY MUST BE COUNTED.
+	--
+	-- Every stage of the tick runs inside Tuono.safe, which prints an error ONCE and then
+	-- suppresses it. That is right for stability -- one bad call must not take the frame
+	-- down -- but it means a rule throwing on every tick is invisible after the first
+	-- chat line, and a thrown Predict returns nil, which reaches the player as an empty
+	-- bar with no explanation. A live trace showed the sequence empty on 51 of 198 ticks
+	-- and there was no way to tell a throw from a genuine "nothing matched".
+	local errCount = Tuono.errorCount or 0
+	local firstErr = nil
+	if errCount > 0 then
+		for msg in pairs(Tuono.errorsSeen or {}) do firstErr = msg break end
+	end
+
 	push({
 		k = "tick",
+		-- Sequence depth as rendered, plus why it might be short.
+		vis = visible, planLen = planLen, cur = cursor,
+		-- Icons actually on screen after run-collapsing, which is NOT the engine depth: a
+		-- sequence of 8 can render as 1 icon. Three live reports turned on that gap.
+		shown = Tuono.Display and Tuono.Display.shownCount or nil,
+		-- Why position 1 was filtered out, when it was. Distinguishes 'nothing matched'
+		-- from 'something matched and we removed it' -- the filler makes those identical
+		-- on screen, and a live trace was empty on 36% of ticks with no way to tell.
+		drop = E and E.lastDrop or nil,
+		err = (errCount > 0) and errCount or nil,
+		errMsg = firstErr,
+		-- Rules that THREW during the priority walk. These are pcall'd per rule and
+		-- skipped, which is right -- one bad rule must not take the rotation down -- but
+		-- skipping was invisible, so a rule throwing every tick looked exactly like one
+		-- that never matches.
+		ruleErr = (Tuono.Rotation and Tuono.Rotation.ruleErrors) or nil,
+		ruleErrName = Tuono.Rotation and Tuono.Rotation.lastRuleError or nil,
+		fb = E and E.usedFallback or nil,
+		replan = E and E.lastReplanReason or nil,
 		cp = S.comboPoints, cpK = S.comboPointsKnown,
 		eLo = lo, eHi = hi, eSrc = S.energySource,
 		rtb = S.buffs.rtb.stage, rtbK = S.buffs.rtb.stageKnown,

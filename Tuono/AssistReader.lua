@@ -189,11 +189,30 @@ function Tuono.Assist.Update()
 		table.insert(Tuono.Assist.queue, Tuono.Assist.nextSpellID)
 	end
 
-	-- Detect AoE: check if Blade Flurry appears in the capability set (rotationSet)
+	-- ============================================================================
+	-- CAPABILITY IS NOT A TARGET COUNT
+	-- ============================================================================
+	-- This used to read `rotationSet[bladeFlurry]`. But rotationSet is built from
+	-- GetRotationSpells, which the block above correctly calls a CAPABILITY SET -- the
+	-- spells in this spec's rotation table, not a live recommendation. Blade Flurry is
+	-- in every Outlaw's rotation table permanently, so membership was true on every tick
+	-- of every fight, and `aoeDetected` was a constant.
+	--
+	-- The live PICK is the real signal. If Blizzard's engine -- which can see the enemy
+	-- state Midnight hides from us -- is recommending Blade Flurry *right now*, it has
+	-- concluded this is a cleave. That is the claim the original comment made; it was
+	-- just being read off the wrong source.
+	--
+	-- Kept as a separate published field so the mode selector can weigh it against a
+	-- direct nameplate count rather than being overridden by it.
 	Tuono.Assist.aoeDetected = false
 	if Tuono.SpellIDs and Tuono.SpellIDs.bladeFlurry then
-		Tuono.Assist.aoeDetected = Tuono.Assist.rotationSet[Tuono.SpellIDs.bladeFlurry] or false
+		Tuono.Assist.aoeDetected = (Tuono.Assist.nextSpellID == Tuono.SpellIDs.bladeFlurry)
 	end
+	-- Retained for diagnostics: whether the spec CAN cleave, which is a different and
+	-- much weaker statement than whether it IS cleaving.
+	Tuono.Assist.cleaveCapable = (Tuono.SpellIDs and Tuono.SpellIDs.bladeFlurry
+		and Tuono.Assist.rotationSet[Tuono.SpellIDs.bladeFlurry]) or false
 end
 
 -- Deviation detection: flag when player casts a spell that doesn't match recommendation

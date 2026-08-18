@@ -15,6 +15,8 @@ Tuono.defaults = {
 	display = {
 		locked = true,
 		scale = 1,
+		-- Text size, INDEPENDENT of icon size. See HandleFontScale.
+		fontScale = 1,
 		point = "CENTER",
 		x = 0,
 		y = -180,
@@ -47,6 +49,32 @@ local function HandleUnlock()
 	if Tuono.Display and Tuono.Display.anchor then
 		Tuono.Display.anchor:SetMovable(true)
 	end
+end
+
+-- TEXT SIZE IS NOT ICON SIZE.
+--
+-- docs/ACCESSIBILITY.md item 1: the addon had exactly one scale control, and it scaled the
+-- whole anchor. Keybind text is 11px at positions 2+, which renders around 7px at a common
+-- 1440p UI scale -- and a low-vision player could only enlarge it by enlarging the icons
+-- too. That coupling is backwards for precisely the population that needs the control, and
+-- it was the only barrier in that document that makes the addon COMPLETELY unusable rather
+-- than merely worse.
+local function HandleFontScale(arg)
+	if not arg or arg == "" then
+		Tuono.print("Usage: /tuono fontscale <0.5-3>   (text size only; /tuono scale sizes the icons)")
+		Tuono.print("Currently " .. tostring(Tuono.db.display.fontScale or 1))
+		return
+	end
+	local v = tonumber(arg)
+	if not v then
+		Tuono.print("Invalid font scale. Use a number between 0.5 and 3.")
+		return
+	end
+	-- Clamped generously upward: 3x is legible across a room, and someone who needs it
+	-- needs it more than the layout needs to stay tidy.
+	v = math.max(0.5, math.min(3, v))
+	Tuono.db.display.fontScale = v
+	Tuono.print("Font scale set to " .. tostring(v) .. " (/reload to apply to every icon)")
 end
 
 local function HandleScale(arg)
@@ -187,6 +215,7 @@ Tuono.HandleDebugModules = HandleDebugModules
 Tuono.RegisterSlash("lock", HandleLock, "Lock the display (disable dragging).")
 Tuono.RegisterSlash("unlock", HandleUnlock, "Unlock the display (enable dragging).")
 Tuono.RegisterSlash("scale", HandleScale, "Set display scale (0.5-2).")
+Tuono.RegisterSlash("fontscale", HandleFontScale, "Set TEXT size independently of icon size (0.5-3).")
 Tuono.RegisterSlash("icons", HandleIcons, "Set icon count (1-8).")
 Tuono.RegisterSlash("toggle", HandleToggle, "Toggle a feature: queue|ooc.")
 Tuono.RegisterSlash("aoe", HandleAoe, "Toggle AoE mode.")

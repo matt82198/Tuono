@@ -153,7 +153,12 @@ local function applyCDR(cpSpent)
 	end
 	local cdr = cpSpent * rate
 	for _, s in pairs(started) do
-		s.at = s.at - cdr
+		-- Only shift entries that hold a real countdown. An inferred entry has no
+		-- duration, so reducing its start time expresses nothing -- and would silently
+		-- back-date the anchor if a later observation ever gave it one.
+		if s.duration ~= nil then
+			s.at = s.at - cdr
+		end
 	end
 end
 
@@ -185,9 +190,22 @@ function CM.OnCast(spellID)
 end
 
 -- Predicted remaining for a key. Returns (remaining, known).
+--
+-- AN INFERRED ENTRY HAS NO REMAINDER TO PREDICT, and saying so is the whole point.
+-- It used to carry a one-second placeholder duration and report it as KNOWN, which made
+-- an invented number indistinguishable from a derived one at the only boundary that
+-- could still tell them apart. StateTracker trusts `remaining` exactly when this returns
+-- known, and Rotation.Predict then decrements that remainder one GCD per simulated step
+-- -- so a 180s Adrenaline Rush we never observed reported "ready" two steps into the
+-- lookahead, rated `certain`, because `known` was true.
+--
+-- Returning unknown makes StateTracker fall through to its own not-ready row, whose
+-- `remaining` is 0. The simulator only decrements entries above zero, so the ability
+-- correctly stays unavailable for the whole lookahead instead of resurrecting itself.
 function CM.Predict(key)
 	local s = key and started[key]
 	if not s then return nil, false end
+	if s.duration == nil then return nil, false end
 	local remaining = (s.at + s.duration) - GetTime()
 	if remaining <= 0 then
 		started[key] = nil
@@ -209,11 +227,27 @@ function CM.Reconcile(key, ready)
 	end
 
 	-- Ground truth says NOT ready. If the model disagrees, we missed a cast or hold a
-	-- wrong duration for this build. Re-arm with a conservative floor rather than
-	-- reporting zero, and mark it so the UI does not present it as measured.
+	-- wrong duration for this build. Record that a cooldown is running WITHOUT a
+	-- duration: we know it is not ready -- the client just said so -- and we genuinely
+	-- do not know when it will be.
+	--
+	-- The old form invented `duration = 1`. Two failures came out of that. The remainder
+	-- sawtoothed between 1 and 0 forever, because this branch re-fired the moment the
+	-- fake second elapsed and reset `at`; and the fake second was small enough that one
+	-- simulated GCD wiped it out, turning any unobserved cooldown into a ready one at
+	-- step 2 of the lookahead.
+	--
+	-- An entry that is ALREADY inferred is left strictly alone. There is nothing to
+	-- refresh -- it holds no time -- and rewriting `at` every tick is what produced the
+	-- sawtooth.
 	local s = started[key]
-	if not s or (s.at + s.duration) - GetTime() <= 0 then
-		started[key] = { at = GetTime(), duration = 1, inferred = true }
+	if s == nil then
+		started[key] = { at = GetTime(), inferred = true }
+	elseif s.duration ~= nil and (s.at + s.duration) - GetTime() <= 0 then
+		-- We held a real duration and it has run out, yet the client still says the
+		-- ability is not ready. Our duration was wrong for this build, or we missed a
+		-- later cast. Demote to inferred rather than keep asserting a finished countdown.
+		started[key] = { at = GetTime(), inferred = true }
 	end
 end
 

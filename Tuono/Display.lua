@@ -21,8 +21,19 @@ local function GetInventoryItemTexture(unit, slot)
 	return nil
 end
 
-local FALLBACK_TEXTURE = 134400
+-- FALLBACK_TEXTURE deliberately removed. It was a hardcoded FileDataID (134400), and
+-- Blizzard no longer names new icons, so that number is not a stable reference to the
+-- question-mark art it was chosen for -- it renders whatever now occupies the ID. An icon
+-- the player cannot identify is not a degraded recommendation, it is a wrong one. Entries
+-- with no identity at all are dropped; entries whose art merely failed to load draw a
+-- neutral block and are identified by their keybind.
 local TRINKET_SLOTS = { 13, 14 }
+
+-- How far the reconstructed end instant of a cooldown may move before we treat it as a
+-- DIFFERENT cooldown and restart the sweep. `remaining` is recomputed every refresh, so
+-- the derived end wobbles by fractions of a frame; the smallest real change is Restless
+-- Blades at 1.0s per combo point. This sits comfortably between the two.
+local CD_REARM_EPSILON = 0.25
 
 -- Keybind cache: spellID -> "S-1" (already abbreviated, ready to display)
 -- Module-local to avoid per-tick allocations; invalidated only on binding changes
@@ -255,6 +266,138 @@ local function GetKindBorderColor(kind)
 	end
 end
 
+-- ============================================================================
+-- FONT SCALE, INDEPENDENT OF ICON SCALE
+-- ============================================================================
+-- There was exactly one control, `display.scale`, and it scaled the whole anchor. At a
+-- common 1440p UI scale of ~0.64 an 11px glyph renders around 7px of actual screen, and
+-- the only way a low-vision player could enlarge the keybind was to enlarge the icons
+-- too. The coupling is backwards for precisely the population that needs the text bigger.
+--
+-- Pure function so the arithmetic is testable without a font engine: the stub's SetFont
+-- is a no-op and records nothing.
+local MIN_FONT_PX = 8
+
+function Tuono.Display.FontSize(base)
+	local db = Tuono.db and Tuono.db.display
+	local mult = db and db.fontScale or 1
+	if type(mult) ~= "number" or mult <= 0 then mult = 1 end
+	local px = math.floor((base or 11) * mult + 0.5)
+	if px < MIN_FONT_PX then px = MIN_FONT_PX end
+	return px
+end
+
+-- SetFont can fail (a missing font path, a locale without the glyph). The old code
+-- wrapped it in a bare pcall and moved on, which leaves the string at whatever default it
+-- had -- a silent degradation on exactly the accessibility path that matters. Fall back to
+-- a Blizzard font OBJECT, which always exists, so text is never left unreadable.
+local function applyFont(fs, base)
+	if not fs then return end
+	local ok = pcall(function()
+		fs:SetFont(STANDARD_TEXT_FONT, Tuono.Display.FontSize(base), "THICKOUTLINE")
+	end)
+	if not ok and fs.SetFontObject then
+		pcall(fs.SetFontObject, fs, _G.GameFontNormalSmall)
+	end
+	return ok
+end
+Tuono.Display.ApplyFont = applyFont
+
+-- ============================================================================
+-- CERTAINTY LIVES ON THE RING, NOT ON ALPHA
+-- ============================================================================
+-- Alpha was multiplexing three unrelated statements onto one channel that can only say
+-- "less", and the player cannot decode which of the three they are seeing:
+--
+--   unknown -> 0.40   "we do not know if this is right"   (epistemic)
+--   pooling -> 0.35   "you cannot afford this yet"        (timing)
+--   stalled -> <=0.45 "you keep ignoring us"              (social)
+--
+-- Two defects followed. The stall clamp was `math.min(baseAlpha, 0.45)` against an
+-- `unknown` alpha of 0.40, so min(0.40, 0.45) = 0.40 -- a STALLED recommendation was
+-- pixel-identical to a merely uncertain one, discarding the stall detector's output
+-- exactly when the player is most likely ignoring the addon BECAUSE it is uncertain. And
+-- pooling drew dimmer than unknown despite being a HIGH-confidence claim ("I am certain
+-- you cannot press this yet"), so the more certain state read as the less certain one.
+--
+-- Alpha now carries ONE meaning: how sure we are. Everything else moved to the ring,
+-- which also ports to the action bar -- we cannot dim a Blizzard button without writing
+-- to a secure frame, so alpha was structurally unavailable on the surface that matters.
+--
+-- Ring PATTERN carries certainty; ring COLOUR stays free for kind. No collision, and the
+-- pattern survives greyscale, which matters because deuteranopia is ~6% of men.
+local CERTAINTY = {
+	certain  = { alpha = 1.00, pattern = "solid"  },
+	bounded  = { alpha = 0.75, pattern = "dashed" },
+	unknown  = { alpha = 0.45, pattern = "dashed" },
+	pooling  = { alpha = 0.90, pattern = "solid"  },
+	fallback = { alpha = 0.50, pattern = "dashed" },
+	-- Legacy tiers, still accepted so older profiles and tests keep rendering.
+	-- `high` was MISSING here while medium and low were kept, so anything still passing
+	-- the old name fell through to the `bounded` default and rendered at 0.75 instead of
+	-- full opacity -- a silent downgrade of a confident recommendation, which is the
+	-- unknown-as-default defect class this codebase keeps re-shipping. An incomplete
+	-- compatibility map is worse than none, because it fails quietly for a subset.
+	high     = { alpha = 1.00, pattern = "solid"  },
+	medium   = { alpha = 0.75, pattern = "dashed" },
+	low      = { alpha = 0.50, pattern = "dashed" },
+}
+
+-- AUTHORITY IS THICKNESS AS WELL AS LUMINANCE.
+--
+-- docs/UI.md 5.2 specifies a 2px ring on position 1 and 1px on the lookahead. Only the
+-- colour half was implemented, so position 1 differed from position 2 by HUE ALONE --
+-- near-white against the kind colour. Measured in greyscale that is a 1.82x luminance
+-- contrast, and against the pooling blue only 1.63x: perceptible, but thin to be the sole
+-- carrier of "this is the one to press", and it violates the rule that no meaning may
+-- rest on colour alone. Thickness is a second, independent channel that survives every
+-- form of colour vision and any icon art underneath.
+local RING_THICKNESS_AUTHORITY = 3
+local RING_THICKNESS_LEAD = 1
+local RING_INSET = 7   -- how far a dashed edge pulls back from each corner
+
+-- Paint the four-edge ring. "solid" is a closed outline; "dashed" pulls each edge back
+-- from the corners so the outline is literally incomplete -- the suppressed resolution IS
+-- the encoding, which reads instantly and needs no legend. "none" hides it entirely.
+local function setRing(icon, pattern, r, g, b, a, thickness)
+	local ring = icon.ring
+	if not ring then return end
+	icon.ringPattern = pattern
+	thickness = thickness or RING_THICKNESS_LEAD
+	icon.ringThickness = (pattern ~= "none") and thickness or 0
+
+	if pattern == "none" then
+		for _, t in pairs(ring) do t:Hide() end
+		return
+	end
+
+	local inset = (pattern == "dashed") and RING_INSET or 0
+	for edge, t in pairs(ring) do
+		pcall(function()
+			t:ClearAllPoints()
+			if edge == "top" then
+				t:SetPoint("TOPLEFT", icon, "TOPLEFT", inset, 0)
+				t:SetPoint("TOPRIGHT", icon, "TOPRIGHT", -inset, 0)
+				t:SetHeight(thickness)
+			elseif edge == "bottom" then
+				t:SetPoint("BOTTOMLEFT", icon, "BOTTOMLEFT", inset, 0)
+				t:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", -inset, 0)
+				t:SetHeight(thickness)
+			elseif edge == "left" then
+				t:SetPoint("TOPLEFT", icon, "TOPLEFT", 0, -inset)
+				t:SetPoint("BOTTOMLEFT", icon, "BOTTOMLEFT", 0, inset)
+				t:SetWidth(thickness)
+			else
+				t:SetPoint("TOPRIGHT", icon, "TOPRIGHT", 0, -inset)
+				t:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", 0, inset)
+				t:SetWidth(thickness)
+			end
+		end)
+		t:SetColorTexture(r, g, b, a)
+		t:Show()
+	end
+end
+
 local function CreateIcon(parent, name, size, x, y, isPosition1)
 	local btn = CreateFrame("Button", name, parent)
 	btn:SetSize(size, size)
@@ -268,6 +411,10 @@ local function CreateIcon(parent, name, size, x, y, isPosition1)
 	local okCD, cooldownWidget = pcall(CreateFrame, "Cooldown", nil, btn, "CooldownFrameTemplate")
 	if okCD and cooldownWidget and cooldownWidget.SetAllPoints then
 		pcall(cooldownWidget.SetAllPoints, cooldownWidget, btn)
+		-- Born hidden, like every other overlay below. Render only ever SHOWS this when
+		-- there is a sweep to draw, so a widget that starts shown is a sweep asserted
+		-- before anything has been measured.
+		if cooldownWidget.Hide then pcall(cooldownWidget.Hide, cooldownWidget) end
 		btn.cooldownWidget = cooldownWidget
 	end
 
@@ -278,17 +425,57 @@ local function CreateIcon(parent, name, size, x, y, isPosition1)
 	local cooldownText = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
 	cooldownText:SetPoint("CENTER", btn, "CENTER", 0, 0)
 	cooldownText:SetTextColor(1, 0.9, 0.4, 1)
+	-- Scaled like the others: a countdown a low-vision player cannot read is not a
+	-- countdown. The template supplies a fallback if SetFont fails.
+	btn.cdBaseFont = isPosition1 and 14 or 12
+	applyFont(cooldownText, btn.cdBaseFont)
 	cooldownText:Hide()
 	btn.cooldownText = cooldownText
+
+	-- Run multiplier, top-left. "x4" on one Sinister Strike says the same thing as four
+	-- identical icons, in a quarter of the space, and without implying four decisions.
+	-- Top-LEFT because bottom-right is the keybind and centre is the cooldown countdown;
+	-- three numbers on one icon need three unambiguous homes.
+	local countText = btn:CreateFontString(nil, "OVERLAY")
+	countText:SetPoint("TOPLEFT", btn, "TOPLEFT", 2, -2)
+	countText:SetTextColor(1, 1, 1, 1)
+	btn.countBaseFont = isPosition1 and 13 or 11
+	applyFont(countText, btn.countBaseFont)
+	countText:Hide()
+	btn.countText = countText
+
+	-- WHEN, not just what. Hekili stores an absolute time per button and recomputes the
+	-- delay every frame (Hekili UI.lua:1493), which is what lets "wait 1.4s then press
+	-- this" look different from "press this now". Tuono rendered both identically.
+	-- Top-RIGHT: top-left is the repeat count, bottom-right the keybind, centre the
+	-- cooldown countdown. Four numbers need four unambiguous homes.
+	local delayText = btn:CreateFontString(nil, "OVERLAY")
+	delayText:SetPoint("TOPRIGHT", btn, "TOPRIGHT", -2, -2)
+	delayText:SetTextColor(0.4, 0.7, 1, 1)   -- blue: the pooling/timing channel
+	btn.delayBaseFont = isPosition1 and 13 or 11
+	applyFont(delayText, btn.delayBaseFont)
+	delayText:Hide()
+	btn.delayText = delayText
 
 	local keyText = btn:CreateFontString(nil, "OVERLAY")
 	keyText:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", -2, 1)
 	keyText:SetTextColor(1, 1, 1, 1)
-	-- Use THICKOUTLINE for contrast against arbitrary spell art
-	local fontSize = isPosition1 and 13 or 11
-	pcall(function() keyText:SetFont(STANDARD_TEXT_FONT, fontSize, "THICKOUTLINE") end)
+	-- THICKOUTLINE for contrast against arbitrary spell art
+	btn.keyBaseFont = isPosition1 and 13 or 11
+	applyFont(keyText, btn.keyBaseFont)
 	keyText:Hide()
 	btn.keyText = keyText
+
+	-- Certainty ring: four edges, so "incomplete outline" is expressible without a font,
+	-- a colour, or a texture file. See the CERTAINTY block above for why this is not alpha.
+	local ring = {}
+	for _, edge in ipairs({ "top", "bottom", "left", "right" }) do
+		local seg = btn:CreateTexture(nil, "OVERLAY")
+		seg:Hide()
+		ring[edge] = seg
+	end
+	btn.ring = ring
+	btn.ringPattern = "none"
 
 	-- Kind ring (BORDER layer, thin 2px effect via alpha)
 	local kindRing = btn:CreateTexture(nil, "BORDER")
@@ -374,8 +561,9 @@ function Tuono.Display.Init()
 		table.insert(anchor.icons, icon)
 		icon.queueIndex = i
 		icon.isSizeLarge = isPos1
-		icon.lastCDStart = nil
-		icon.lastCDDuration = nil
+		-- Absolute instant this icon's current cooldown ends. Identity for the sweep, so
+		-- the same cooldown arms it exactly once. See CD_REARM_EPSILON.
+		icon.cdEndsAt = nil
 	end
 
 	-- ========================================================================
@@ -487,11 +675,113 @@ function Tuono.Display.Render(result)
 	-- so the "assist unavailable" status text below was unreachable.
 	local assistAvailable = not (Tuono.Assist and Tuono.Assist.available == false)
 
-	-- Calculate visible entry count for dynamic strip resize
-	local visibleCount = 0
-	if show.queue and result and result.queue then
-		visibleCount = math.min(iconCount, 8, #result.queue)
+	-- ========================================================================
+	-- COLLAPSE RUNS: FOUR SINISTER STRIKES IS ONE DECISION, NOT FOUR
+	-- ========================================================================
+	-- The engine simulates 8 steps but the bar shows 4, and an Outlaw at a 5-point cap
+	-- needs up to 5 builders before a finisher -- so the finisher fell off the end and the
+	-- player saw a wall of one icon with cooldowns popping into slot 1. The sequence was
+	-- correct the whole time; it was being truncated at exactly the point where it became
+	-- interesting.
+	--
+	-- Repeats carry no extra information as separate icons. "Sinister Strike x4 then
+	-- Between the Eyes" is the same fact in a quarter of the space, and it is MORE honest:
+	-- four identical icons imply four decisions when there is one decision repeated. The
+	-- count then ticks down as the player presses, and the finisher visibly approaches,
+	-- which is the predictive behaviour the wheel exists for.
+	--
+	-- Only consecutive identical SEQUENCE steps merge. The cooldown and trinket reminders
+	-- appended after the sequence are independent facts and are never folded together.
+	-- AN UNIDENTIFIABLE ICON IS WORSE THAN NO ICON.
+	--
+	-- Reported from live play as "some dude's face with a blue icon". Entries whose art
+	-- cannot be resolved were rendering FALLBACK_TEXTURE, a hardcoded FileDataID -- and
+	-- since Blizzard stopped naming new icons, that ID now points at whatever art happens
+	-- to live there. The whole product is "press THIS button", so an icon the player
+	-- cannot identify is not a degraded recommendation, it is a wrong one.
+	--
+	-- This surfaced because advisories stopped being trimmed off past the queue cap, which
+	-- was itself a fix: they were being silently deleted. A trinket advisory carries no
+	-- spellID and depends on GetInventoryItemTexture, which answers nil when there is
+	-- nothing to draw -- so the entries that had been invisible became visible AND broken
+	-- in the same change.
+	-- IDENTIFIABLE, OR NOT SHOWN. But "identifiable" is not the same as "has art".
+	--
+	-- The first version of this dropped every entry whose texture would not resolve. That
+	-- over-corrects: C_Spell.GetSpellTexture can answer nil transiently before the client
+	-- has cached a spell's data, and silently deleting a REAL recommendation is worse than
+	-- the placeholder it was meant to prevent -- the player is left with no answer at all
+	-- and no way to know one was withheld.
+	--
+	-- The two cases are genuinely different:
+	--   * has a spellID, art missing -- still identifiable. The keybind names the button
+	--     and the position carries the order, so keep it and draw a neutral block.
+	--   * no spellID and no item art -- a trinket advisory with nothing equipped. Nothing
+	--     on screen could tell the player what it is. Drop it.
+	local function resolveTexture(entry)
+		if entry.itemSlot and (entry.itemSlot == 13 or entry.itemSlot == 14) then
+			return GetInventoryItemTexture("player", entry.itemSlot)
+		end
+		if not entry.spellID then return nil end
+		return GetSpellTexture(entry.spellID)
 	end
+
+	-- Can the player tell WHAT this is, by any channel we have?
+	local function isIdentifiable(entry)
+		return (entry.__tex ~= nil) or (entry.spellID ~= nil)
+	end
+
+	local collapsed = {}
+	if show.queue and result and result.queue then
+		for _, entry in ipairs(result.queue) do
+			entry.__tex = resolveTexture(entry)
+		end
+		local drawable = {}
+		for _, entry in ipairs(result.queue) do
+			if isIdentifiable(entry) then table.insert(drawable, entry) end
+		end
+		result = { queue = drawable, advisories = result.advisories }
+		for _, entry in ipairs(result.queue) do
+			local prev = collapsed[#collapsed]
+			if prev and prev.entry.isSequence and entry.isSequence
+				and prev.entry.spellID == entry.spellID and entry.spellID ~= nil then
+				prev.count = prev.count + 1
+				-- Keep the WEAKEST confidence across the run: the bar must not claim more
+				-- certainty about the fourth press than it has about the fourth press.
+				if entry.confidence == "unknown" or prev.entry.confidence == "pooling" then
+					prev.worst = entry.confidence
+				end
+			else
+				table.insert(collapsed, { entry = entry, count = 1 })
+			end
+		end
+	end
+
+	-- COLLAPSING MUST EARN ITS PLACE.
+	--
+	-- Reported from live play: "it literally just drops to 1 icon when there is one target
+	-- and 4 when there are multi". Collapsing a run is only a win when it FREES SPACE FOR
+	-- SOMETHING ELSE. When the whole sequence is one ability -- a builder chain with no
+	-- reachable finisher -- collapsing turns the entire bar into a single box, which reads
+	-- as broken and destroys the lead time the wheel exists to give.
+	--
+	-- So: if collapsing does not reveal a second distinct ability, do not collapse. The
+	-- player gets their icons back and the run is shown as the row of presses it is.
+	if #collapsed < 2 and result and result.queue and #result.queue >= 2 then
+		collapsed = {}
+		for _, entry in ipairs(result.queue) do
+			table.insert(collapsed, { entry = entry, count = 1 })
+		end
+	end
+
+	-- Calculate visible entry count for dynamic strip resize
+	local visibleCount = math.min(iconCount, 8, #collapsed)
+
+	-- What the player actually SEES, published for the flight recorder. Every trace so far
+	-- has recorded engine-side depth, which is not the same number: a sequence of 8 can
+	-- render as 1 icon after collapsing, and three separate live reports turned on exactly
+	-- that gap.
+	Tuono.Display.shownCount = visibleCount
 
 	-- Dynamic strip resize: only call SetSize if count actually changed
 	if visibleCount ~= anchor.lastCount then
@@ -513,16 +803,32 @@ function Tuono.Display.Render(result)
 		for i = 1, 8 do
 			local icon = anchor.icons[i]
 			if i <= visibleCount then
-				local entry = result.queue[i]
+				local slot = collapsed[i]
+				local entry = slot and slot.entry
+				local repeatCount = slot and slot.count or 1
 				if entry then
 					-- Determine texture based on entry type
-					local tex = nil
-					if entry.itemSlot and (entry.itemSlot == 13 or entry.itemSlot == 14) then
-						tex = GetInventoryItemTexture("player", entry.itemSlot) or FALLBACK_TEXTURE
+					-- NO HARDCODED FileDataID. The old FALLBACK_TEXTURE was 134400 -- the
+					-- classic question-mark ID -- and since Blizzard stopped naming new
+					-- icons that number now points at unrelated art, which is how the bar
+					-- came to show a stranger's face. There is no stable numeric icon to
+					-- fall back to, so we stop pretending there is: draw a flat neutral
+					-- block and let the keybind identify the button.
+					if entry.__tex then
+						icon.texture:SetTexture(entry.__tex)
 					else
-						tex = GetSpellTexture(entry.spellID) or FALLBACK_TEXTURE
+						icon.texture:SetColorTexture(0.16, 0.16, 0.18, 1)
 					end
-					icon.texture:SetTexture(tex)
+
+					-- The multiplier. Shown only when it means something: "x1" is noise.
+					if icon.countText then
+						if repeatCount > 1 then
+							icon.countText:SetText("x" .. repeatCount)
+							icon.countText:Show()
+						else
+							icon.countText:Hide()
+						end
+					end
 
 					-- PROVENANCE-DRIVEN ALPHA. Confidence now describes what the decision
 					-- was DERIVED FROM, not how far down the queue it sits, so a step
@@ -531,79 +837,103 @@ function Tuono.Display.Render(result)
 					-- unknown even in slot 1. The sequence visibly dissolves at exactly
 					-- the step where we stopped knowing things, which is the honest
 					-- picture rather than an arbitrary fade.
-					local confidence = entry.confidence or "bounded"
-					local baseAlpha = 1.0
-					if confidence == "bounded" then
-						baseAlpha = 0.72         -- real bounds, but a threshold could straddle them
-					elseif confidence == "unknown" then
-						baseAlpha = 0.4          -- depends on something Midnight hides
-					elseif confidence == "pooling" then
-						baseAlpha = 0.35
-					-- Legacy tiers, still accepted so older profiles/tests keep rendering.
-					elseif confidence == "medium" then
-						baseAlpha = 0.7
-					elseif confidence == "low" then
-						baseAlpha = 0.45
-					end
+					-- The run keeps the WEAKEST confidence across its members: the bar must
+					-- not claim more certainty about the fourth press than it has.
+					local confidence = (slot and slot.worst) or entry.confidence or "bounded"
+					local tier = CERTAINTY[confidence] or CERTAINTY.bounded
+					local baseAlpha = tier.alpha
 
-					-- Position 1 gets authority ring (silver, always opaque)
+					-- Alpha now says ONE thing: how sure we are. Timing lives on the delay
+					-- text and the blue ring; the social "you are ignoring us" signal recedes
+					-- the icon rather than dimming it (further down).
+					local stalled = (i == 1) and Tuono.Engine and Tuono.Engine.IsStalled
+						and Tuono.Engine.IsStalled() or false
+
+					local kind = entry.kind or "rotation"
+					local rr, rg, rb = GetKindBorderColor(kind)
 					if i == 1 then
-						if icon.authRing then
-							icon.authRing:SetVertexColor(0.9, 0.9, 0.9, 0.4)
-						end
-						if icon.kindRing then
-							icon.kindRing:Hide()
-						end
-						if icon.badge then
-							icon.badge:Hide()
-						end
-					else
-						-- Positions 2-8: kind ring + badge
-						local kind = entry.kind or "rotation"
-						local r, g, b = GetKindBorderColor(kind)
-						if icon.kindRing then
-							icon.kindRing:SetColorTexture(r, g, b, baseAlpha * 0.6)
-							icon.kindRing:Show()
-						end
-						if icon.badge then
-							-- Badge would be a shape texture here; for now hide
-							icon.badge:Hide()
-						end
+						-- Authority is carried by LUMINANCE, not hue: near-white reads against
+						-- arbitrary spell art for every form of colour vision, and deliberately
+						-- avoids blue, which is Blizzard's own Assisted Highlight.
+						rr, rg, rb = 0.95, 0.95, 0.95
 					end
-
-					-- UNKNOWN provenance gets an amber hazard wash, the same language the
-					-- degraded-data state already uses. Dimness alone is ambiguous -- it
-					-- reads as "less preferred" rather than "we could not check this".
-					if confidence == "unknown" and icon.hazard then
-						icon.hazard:SetColorTexture(1, 0.6, 0, 0.22)
-						icon.hazard:Show()
-					end
-
-					-- POOLING: this is "wait for it", not "press it". Dim alpha alone reads as
-					-- low confidence, which is a different message, so position 1 also gets
-					-- a blue marker and its authority ring is muted -- the ring is what says
-					-- "press this now" and it must not say that here.
 					if confidence == "pooling" then
-						if icon.badge then
-							icon.badge:SetColorTexture(0.3, 0.6, 1, 0.9)
-							icon.badge:Show()
-						end
-						if i == 1 and icon.authRing then
-							icon.authRing:SetVertexColor(0.3, 0.6, 1, 0.25)
-						end
+						-- Timing channel. Solid ring, because we are SURE you cannot press it
+						-- yet -- that is a high-confidence claim, not a doubtful one.
+						rr, rg, rb = 0.30, 0.60, 1.00
 					end
 
-					-- Degraded overlay: amber hazard stripes
-					if entry.degraded then
-						if icon.hazard then
-							icon.hazard:SetColorTexture(1, 0.6, 0, 0.35)
-							icon.hazard:Show()
-						end
+					if stalled then
+						-- RECEDE, DO NOT DIM. A faded icon reads as "less important"; dropping
+						-- the ring reads as the addon stepping back while staying available.
+						-- The old encoding clamped alpha to 0.45 against an unknown alpha of
+						-- 0.40, so the stall signal was silently swallowed.
+						setRing(icon, "none")
 					else
-						if icon.hazard then
+						setRing(icon, tier.pattern, rr, rg, rb, 0.95,
+							(i == 1) and RING_THICKNESS_AUTHORITY or RING_THICKNESS_LEAD)
+					end
+					icon.stalled = stalled
+
+					-- Legacy regions retired: the ring now carries both kind and certainty.
+					if icon.kindRing then icon.kindRing:Hide() end
+					if icon.authRing then icon.authRing:SetVertexColor(0, 0, 0, 0) end
+					if icon.badge then icon.badge:Hide() end
+
+					-- HAZARD, DECIDED ONCE. An amber wash ON TOP of the dashed ring: two
+					-- independent cues, and the hatch is borrowed from hazard signage so it
+					-- needs no learning. Dimness alone is ambiguous -- it reads as "less
+					-- preferred" rather than "we could not check this".
+					--
+					-- This used to be two blocks: one showing it for `unknown`, and a later
+					-- one that showed it for `entry.degraded` and HID it otherwise -- which
+					-- unconditionally undid the first. One decision, one place.
+					--
+					-- Per-step, never global. `Tuono.State.buffs.degraded` was true on 100%
+					-- of ticks in a recorded trace, so a display-wide treatment marks
+					-- everything suspect permanently, which is the same as marking nothing.
+					if icon.hazard then
+						if confidence == "unknown" or entry.degraded then
+							icon.hazard:SetColorTexture(1, 0.6, 0, entry.degraded and 0.35 or 0.22)
+							icon.hazard:Show()
+						else
 							icon.hazard:Hide()
 						end
 					end
+
+					-- ============================================================
+					-- WHEN TO PRESS IT
+					-- ============================================================
+					-- Inspired by Hekili UI.lua:1487-1566. The critical detail there is the
+					-- EARLIEST-TIME SUBTRACTION: it only shows a delay when the recommendation
+					-- is later than the soonest it could physically happen. Waiting out the
+					-- GCD is not news -- the player can see the sweep. Waiting BEYOND it, to
+					-- pool energy, is news, and it is the one thing our simulation knows that
+					-- Blizzard's highlighter structurally cannot.
+					--
+					-- Defensive: `at` is supplied by Rotation.Predict and may be absent, in
+					-- which case we simply say nothing rather than invent a number.
+					if icon.delayText then
+						local at = entry.at
+						local shown = false
+						if type(at) == "number" and at > 0 then
+							local earliest = 0
+							if i == 1 and Tuono.CooldownModel and Tuono.CooldownModel.GCDRemaining then
+								local okG, g = pcall(Tuono.CooldownModel.GCDRemaining)
+								if okG and type(g) == "number" then earliest = g end
+							end
+							if at > earliest + 0.05 then
+								icon.delayText:SetText(string.format("%.1f", at))
+								icon.delayText:SetAlpha(baseAlpha)
+								icon.delayText:Show()
+								shown = true
+							end
+						end
+						if not shown then icon.delayText:Hide() end
+					end
+
+					-- (Hazard is decided in one place above. This block used to re-decide it
+					-- and hid whatever the confidence branch had just shown.)
 
 					-- Display keybind text (bottom-right, large, THICKOUTLINE)
 					if entry.spellID then
@@ -620,70 +950,91 @@ function Tuono.Display.Render(result)
 						icon.keyText:Hide()
 					end
 
-					-- Cooldown widget: cache-guard to avoid resetting animation every tick
-					if icon.cooldownWidget then
-						local remaining = 0
-						-- Default TRUE so trinkets and the no-cooldown case behave as before;
-						-- only a spell cooldown whose timer went secret sets this false.
-						local remainingIsKnown = true
-						if entry.kind == "cooldown" and entry.spellID then
-							-- Resolve via the shared spellID->key map rather than a hand-written
-							-- chain: the old inline version knew only AR/Blade Rush/Preparation,
-							-- so every other cooldown silently rendered no sweep at all.
-							local cdKey = Tuono.Rotation and Tuono.Rotation.SPELL_TO_CDKEY
-								and Tuono.Rotation.SPELL_TO_CDKEY[entry.spellID]
-							local cd = cdKey and Tuono.State.cooldowns[cdKey]
-							if cd then
-								remaining = cd.remaining or 0
-								remainingIsKnown = cd.remainingKnown ~= false
-							end
-						elseif entry.kind == "trinket" and entry.itemSlot then
-							if Tuono.State.trinkets[entry.itemSlot] then
-								remaining = Tuono.State.trinkets[entry.itemSlot].remaining
-							end
+					-- How much cooldown this entry has left. The NUMBER and the SWEEP are
+					-- driven separately below, because position 1's sweep belongs to the GCD.
+					local remaining = 0
+					-- Default TRUE so trinkets and the no-cooldown case behave as before;
+					-- only a spell cooldown whose timer went secret sets this false.
+					local remainingIsKnown = true
+					if entry.kind == "cooldown" and entry.spellID then
+						-- Resolve via the shared spellID->key map rather than a hand-written
+						-- chain: the old inline version knew only AR/Blade Rush/Preparation,
+						-- so every other cooldown silently rendered no sweep at all.
+						local cdKey = Tuono.Rotation and Tuono.Rotation.SPELL_TO_CDKEY
+							and Tuono.Rotation.SPELL_TO_CDKEY[entry.spellID]
+						local cd = cdKey and Tuono.State.cooldowns[cdKey]
+						if cd then
+							remaining = cd.remaining or 0
+							remainingIsKnown = cd.remainingKnown ~= false
 						end
+					elseif entry.kind == "trinket" and entry.itemSlot then
+						if Tuono.State.trinkets[entry.itemSlot] then
+							remaining = Tuono.State.trinkets[entry.itemSlot].remaining or 0
+						end
+					end
 
-						-- Cache-guard. `(GetTime() - icon.lastCDStart or 0)` parsed as
-						-- `(GetTime() - lastCDStart) or 0`, so it performed arithmetic on nil
-						-- whenever the first branch did not short-circuit -- a latent throw that
-						-- would abort the whole render. Compare against an explicit default.
-						local sinceLast = GetTime() - (icon.lastCDStart or 0)
-						if remaining ~= icon.lastCDDuration or sinceLast > 0.1 then
-							if remaining > 0 then
+					-- Only draw a countdown we actually measured. Under Midnight the timer
+					-- goes secret while readiness stays readable, so `remaining` is
+					-- legitimately 0-with-unknown-duration; printing "0" there would assert a
+					-- precision we do not have. CooldownModel.Reconcile also parks an
+					-- unobserved cooldown at a 1s placeholder and flags it inferred -- neither
+					-- a number nor a sweep may be drawn from that.
+					local drawable = remaining > 0 and remainingIsKnown
+
+					if icon.cooldownText then
+						if drawable then
+							icon.cooldownText:SetText(string.format("%.0f", remaining))
+							icon.cooldownText:Show()
+						else
+							icon.cooldownText:Hide()
+						end
+					end
+
+					-- ARM THE SWEEP ONCE PER COOLDOWN, NOT ONCE PER TICK.
+					--
+					-- The old guard also fired on `sinceLast > 0.1`, so SetCooldown restarted
+					-- the animation from full ten times a second and the icon strobed. That is
+					-- the same defect the GCD block below was already fixed for, and it takes
+					-- the same fix: identify the cooldown by something that does NOT move while
+					-- it runs.
+					--
+					-- `remaining` counts down every tick, so it can never be that identity. The
+					-- absolute instant the cooldown ENDS can: it holds still for the whole
+					-- sweep and shifts only on a genuine change -- a recast, or Restless Blades
+					-- cutting it short.
+					--
+					-- POSITION 1 IS EXCLUDED. The GCD block below owns that widget, and two
+					-- writers on one Cooldown frame re-arm over each other every tick. Nothing
+					-- is lost: Engine's castability filter already drops a position-1 entry
+					-- whose cooldown is known and not ready, so there is no sweep to draw there.
+					if icon.cooldownWidget and i > 1 then
+						if drawable then
+							local endsAt = GetTime() + remaining
+							if icon.cdEndsAt == nil
+								or math.abs(icon.cdEndsAt - endsAt) > CD_REARM_EPSILON then
+								icon.cdEndsAt = endsAt
 								icon.cooldownWidget:SetCooldown(GetTime(), remaining)
 							end
-							if icon.cooldownText then
-								-- Only draw a countdown we actually measured. Under Midnight the
-								-- timer goes secret while readiness stays readable, so `remaining`
-								-- is legitimately 0-with-unknown-duration; printing "0" there would
-								-- assert a precision we do not have.
-								if remaining and remaining > 0 and remainingIsKnown then
-									icon.cooldownText:SetText(string.format("%.0f", remaining))
-									icon.cooldownText:Show()
-								else
-									icon.cooldownText:Hide()
-								end
-								icon.lastCDStart = GetTime()
-								icon.lastCDDuration = remaining
-								icon.cooldownWidget:Show()
-							else
-								icon.cooldownWidget:Hide()
-								icon.lastCDStart = nil
-								icon.lastCDDuration = nil
+							icon.cooldownWidget:Show()
+						else
+							-- Show() used to be called here unconditionally: it sat inside
+							-- `if icon.cooldownText then`, whose else branch is unreachable
+							-- because CreateIcon always creates cooldownText. A finished sweep
+							-- therefore stayed on screen over a ready ability.
+							if icon.cdEndsAt ~= nil then
+								icon.cdEndsAt = nil
+								icon.cooldownWidget:SetCooldown(0, 0)
 							end
+							icon.cooldownWidget:Hide()
 						end
 					end
 
-					-- STALLED: the same advice, ignored repeatedly. Fade position 1 rather
-					-- than keep asserting it. Silent by design -- a warning here would be
-					-- alarm fatigue for something the player is doing on purpose.
-					if i == 1 and Tuono.Engine and Tuono.Engine.IsStalled
-						and Tuono.Engine.IsStalled() then
-						baseAlpha = math.min(baseAlpha, 0.45)
-						if icon.authRing then
-							icon.authRing:SetVertexColor(0.6, 0.6, 0.6, 0.15)
-						end
-					end
+					-- (Stalling is handled above by dropping the ring rather than clamping
+					-- alpha. The old clamp was `math.min(baseAlpha, 0.45)` against an
+					-- `unknown` alpha of 0.40, so min(0.40, 0.45) = 0.40 and a stalled
+					-- recommendation was pixel-identical to a merely uncertain one --
+					-- discarding the stall detector's output in precisely the case where the
+					-- player is most likely ignoring the addon BECAUSE it is uncertain.)
 
 					-- GLOBAL COOLDOWN on position 1. A live trace showed Sinister Strike
 					-- failing 31 times against 14 successes, every failure paired with
@@ -712,10 +1063,14 @@ function Tuono.Display.Render(result)
 					elseif i == 1 then
 						-- GCD over: clear the sweep so a stale one cannot linger on an icon
 						-- that has since been replaced. Guarded, or this would fire 10x/sec.
+						-- Hidden as well as zeroed: SetCooldown(0, 0) stops the animation but
+						-- leaves the frame shown, which is the same lingering-overlay defect
+						-- the cooldown block above was just fixed for.
 						if icon.gcdStart then
 							icon.gcdStart = nil
 							if icon.cooldownWidget then
 								icon.cooldownWidget:SetCooldown(0, 0)
+								icon.cooldownWidget:Hide()
 							end
 						end
 					end

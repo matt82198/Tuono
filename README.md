@@ -64,6 +64,21 @@ capability rather than removing it**, and that the relocation has a cost somebod
 
 ## What this is
 
+> **Tuono is not an install-and-play rotation helper.** It is the substrate that makes a
+> rotation assistant possible again on a client that removed the state those assistants
+> were built on — and right now it has a steep configuration curve.
+>
+> That distinction is the project. Everything that replaced the old helpers is a
+> presentation layer over Blizzard's Assisted Combat: it reads Blizzard's recommendation
+> and draws it, models none of your resources, and cannot tell you anything Blizzard's
+> engine has not already decided. Tuono models the state instead of reading it. That is
+> the part that took the work, and it is what this repository is for.
+>
+> A polished one-click experience is downstream of that and is not finished. If you want
+> something that works the moment you install it, use one of the Assisted Combat wrappers.
+> If you want an engine that can be pointed at a spec, argued with, and extended, this is
+> that.
+
 A framework for building rotation helpers out of the data that is still legally readable,
 with your own priority logic layered on top.
 
