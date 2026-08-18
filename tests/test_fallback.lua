@@ -252,3 +252,82 @@ describe("fallback: the fallback is the APL, not a constant", function()
       "an unaffordable position 1 must render as a wait; got " .. tostring(first.confidence))
   end)
 end)
+
+describe("plan: a filtered-out step means the plan is stale", function()
+  -- "i think it was just doing nothing most of the time"
+  --
+  -- At login and at combat start the known-spell probe has not finished, so knownSpells is
+  -- empty and buildActivePriorityList correctly fails open, admitting every rule. A plan
+  -- built in that window can contain an ability the player does not own. The probe then
+  -- completes and the castability filter strips that entry out of the HELD plan on every
+  -- subsequent tick -- and when the stripped entry was position 1, the bar published
+  -- nothing at all. Measured in a live trace: "while recommending None" on 60 of 74 UI
+  -- errors, and position 1 changing 0.09 times per second.
+  local PREPARATION = 1277933
+
+  it("re-derives instead of publishing a gutted plan", function()
+    local Tuono, stub = harness.boot({ inCombat = true })
+    harness.evaluate(Tuono)
+
+    -- Force the plan to contain a spell, then have the client reveal it is not known --
+    -- exactly the probe-completes-after-the-plan ordering.
+    local plan = Tuono.Engine.plan
+    expect.truthy(plan and #plan > 0, "no plan to invalidate")
+    table.insert(plan, 1, {
+      spellID = PREPARATION, kind = "rotation", confidence = "certain",
+      step = 1, isSequence = true, source = "test",
+    })
+    Tuono.Engine.cursor = 1
+    Tuono.State.knownSpells[PREPARATION] = false
+    Tuono.State.knownUnavailable = false
+
+    local ids = harness.queueIDs(Tuono.Engine.Evaluate())
+    expect.notContains(ids, PREPARATION, "an unknown spell was published")
+    expect.truthy(#ids >= 1,
+      "stripping a step must re-derive, not leave the bar empty -- an empty bar is the "
+        .. "reported symptom, not an acceptable degradation")
+  end)
+
+  it("names the reason, so a trace can say why", function()
+    local Tuono, stub = harness.boot({ inCombat = true })
+    harness.evaluate(Tuono)
+    local plan = Tuono.Engine.plan
+    table.insert(plan, 1, {
+      spellID = PREPARATION, kind = "rotation", confidence = "certain",
+      step = 1, isSequence = true, source = "test",
+    })
+    Tuono.Engine.cursor = 1
+    Tuono.State.knownSpells[PREPARATION] = false
+    Tuono.Engine.Evaluate()
+    -- TALENTS is the better answer here and fires first: learning that the character does
+    -- not own a spell changes which rules are ELIGIBLE, which is the earlier and more
+    -- specific cause than any individual step being uncastable. UNCASTABLE is the backstop
+    -- for the case where the rule set is unchanged but a step stops being castable anyway
+    -- -- an ability going on cooldown at position 1. Either is a named reason, which is
+    -- the property that matters: a silent re-plan is undiagnosable from a trace.
+    local T = Tuono.Engine.TRIGGER
+    local reason = Tuono.Engine.lastTrigger
+    expect.truthy(reason == T.UNCASTABLE or reason == T.TALENTS,
+      "expected a named reason for the re-plan; got " .. tostring(reason))
+  end)
+
+  it("UNCASTABLE covers a step that stops being castable on its own", function()
+    -- The rule set is untouched here -- the ability is simply on cooldown now -- so the
+    -- talent fingerprint cannot see it and this is the path that must catch it.
+    local Tuono, stub = harness.boot({ inCombat = true })
+    harness.evaluate(Tuono)
+    local plan = Tuono.Engine.plan
+    expect.truthy(plan and #plan > 0, "no plan")
+    table.insert(plan, 1, {
+      spellID = 13750, kind = "rotation", confidence = "certain",
+      step = 1, isSequence = true, source = "test",
+    })
+    Tuono.Engine.cursor = 1
+    Tuono.State.cooldowns.adrenalineRush = {
+      known = true, ready = false, remaining = 90, remainingKnown = true,
+    }
+    local ids = harness.queueIDs(Tuono.Engine.Evaluate())
+    expect.truthy(#ids >= 1, "the bar emptied instead of re-deriving")
+    expect.notContains(ids, 13750, "published an ability that is on cooldown")
+  end)
+end)

@@ -93,6 +93,7 @@ local TRIGGER = {
   EXHAUSTED = "plan-exhausted",   -- the player followed it to the end
   AGED      = "plan-aged-out",    -- nobody is following it; catch up rather than freeze
   RESOURCE  = "resource-changed", -- combo points moved without us casting anything
+  UNCASTABLE = "plan-uncastable", -- the filter removed a step, so the plan is stale
   WORLD     = "world-changed",    -- fallback label when no more specific reason was set
 }
 Tuono.Engine.TRIGGER = TRIGGER
@@ -492,6 +493,9 @@ function Tuono.Engine.applyCastabilityFilter(queue, S)
 end
 
 function Tuono.Engine.Evaluate()
+  -- Cleared per tick. This was set once and never reset, so the recorder reported the
+  -- same drop on every subsequent tick -- one real event echoing as 96.
+  Tuono.Engine.lastDrop = nil
   wipeTable(resultQueue)
   wipeTable(resultAdvisories)
   wipeSet(tempDedup)
@@ -1051,8 +1055,40 @@ function Tuono.Engine.Evaluate()
   -- entries were chosen on an earlier tick and have not been checked since -- so a spell
   -- untalented away, or an ability that went on cooldown at position 1, would be published
   -- anyway. The plan holds the CHOICE; it does not license showing something uncastable.
+  --
+  -- AND IF THE FILTER TAKES SOMETHING OUT, THE PLAN IS STALE -- RE-DERIVE, do not publish
+  -- what is left.
+  --
+  -- This is the bug behind "it was just doing nothing most of the time". At login and at
+  -- combat start the known-spell probe has not finished, so knownSpells is empty and
+  -- buildActivePriorityList -- which excludes only spells the client has told us the
+  -- character does NOT have -- correctly fails open and admits every rule. A plan built in
+  -- that window can contain an ability the player does not actually own. Preparation, in
+  -- the trace that found this.
+  --
+  -- The probe then completes, and from that tick on the filter strips that entry out of
+  -- the HELD plan on every single tick. Publishing the remainder meant publishing a gutted
+  -- plan, and when the stripped entry was position 1 it meant publishing nothing at all --
+  -- measured: "while recommending None" on 60 of 74 UI errors, and position 1 changing
+  -- 0.09 times a second because the same dead plan was held for enormous stretches.
+  --
+  -- A filter that removes something is evidence the plan no longer describes a castable
+  -- world. That is exactly what the trigger set is for, so it re-plans on the spot rather
+  -- than being worked around.
+  local seqBefore = #seq
   seq = Tuono.Engine.applyCastabilityFilter(seq, S)
   extras = Tuono.Engine.applyCastabilityFilter(extras, S)
+
+  if not replan and #seq < seqBefore then
+    Tuono.Engine.InvalidatePlan(TRIGGER.UNCASTABLE)
+    local rebuilt = {}
+    for _, entry in ipairs(fresh) do table.insert(rebuilt, entry) end
+    rebuilt = Tuono.Engine.applyCastabilityFilter(rebuilt, S)
+    E.plan, E.cursor, E.planAt = rebuilt, 1, now
+    E.planContext = snapshotPlanContext(S)
+    E.disagreeTicks = 0
+    seq = rebuilt
+  end
 
   E.committedHead = seq[1] and seq[1].spellID or nil
 
