@@ -2,6 +2,121 @@
 
 All notable changes to Tuono are documented here.
 
+## [3.0.0] - 2026-08-18
+
+The engine no longer rebuilds its answer from scratch every tick. It commits a plan, and
+re-derives it on a **named trigger** — which is the whole reason for the major version. It
+buys something Hekili structurally cannot offer, since it can say *why* a recommendation
+changed; it costs something Hekili never has to pay, since a committed plan can outlive the
+state that justified it. Most of this release is the work of making that trade honest.
+
+Every defect below came out of a live flight recording rather than a reading of the code.
+That is deliberate: four separate bar complaints have now needed a new instrument built
+before they could be diagnosed, and each turned out to be a different mechanism than the
+obvious hypothesis.
+
+### A plan could outlive the tick that built it
+
+Reported as *"the model is behind it"*. The words were literal, and the cause was one bug
+wearing five hats — a committed plan surviving past the state that justified it, never
+re-checked. Three distinct holes:
+
+- **`worldChangedSince` skipped its own comparison** when the plan had no baseline. The
+  guard read like known-to-known discipline but was not: a plan built while combo points
+  were unreadable carried no `ctx.cp`, so the comparison was skipped *forever* and that plan
+  could never be invalidated by combo points again, however far they moved. Known-ness is
+  now snapshotted separately, and an unknown-to-known transition triggers. Safe because
+  combo points are never secret; the Roll the Bones stage does blink, so its check stays
+  strictly known-to-known.
+- **The castability filter ran only on the freshly-derived queue.** A held plan was published
+  without re-checking, so a spell talented away — or an ability that went on cooldown at
+  position 1 — was shown anyway. Extracted to `Engine.applyCastabilityFilter` and run at both
+  sites; extracted rather than duplicated, because a guard applied to one copy and not the
+  other has caused five separate defects in this codebase already.
+- **The eligible rule set had no trigger.** Learning or losing a spell changes which rules can
+  fire, and only the in-game talent event noticed.
+
+`DISAGREE_TICKS_BEFORE_REPLAN` moved 3 to 2, chosen by measurement against a sensor blinking
+every tick over 40 frames: identical churn for half the worst-case staleness. The resulting
+~0.2s independently matches the cadence Hekili reached for the same decision.
+
+### A gutted plan is a stale plan
+
+Reported as *"it was just doing nothing most of the time"*, and the trace named it outright —
+position 1 dropped as `unknown-spell:1277933` (Preparation), on 60 of 74 UI errors, with zero
+icons on 33 ticks.
+
+At login and at combat start the known-spell probe has not finished, so the priority list
+correctly fails open and admits every rule — including one for a spell this character does not
+own. Once the probe completed, the castability filter stripped that entry out of the *held*
+plan every tick, forever. Publishing the remainder meant publishing a gutted plan, and because
+the stripped entry was position 1, it meant publishing nothing. The bar sat inert while the
+player pressed buttons at it.
+
+A filter that removes something is now treated as evidence the plan no longer describes a
+castable world, so the engine re-derives on the spot under a named reason (`UNCASTABLE`)
+rather than publishing what is left.
+
+### The bar stopped going empty
+
+- **The confidence truncation is retired.** *"Single combat the bar just does not have enough
+  signal to predict anything"* and *"the truncation is super confusing now"* were the same
+  bug. At one single-target sample the player held 4 combo points with an energy interval
+  pinned to exactly `[100, 100]` — the tightest state the model can be in — and still saw one
+  icon. Length was never the signal.
+- **The fallback is an APL walk, not a constant.** When the normal walk produced nothing the
+  engine emitted a single hardcoded filler, which is not a rotation but a constant standing in
+  for one. It was wrong in a way that compounded: this system is fed by what the player casts,
+  so a bar that only ever answers "Sinister Strike" gets Sinister Strike cast at it, and the
+  observation channels starve.
+- **An unidentifiable icon is worse than no icon.** *"It's not even recommending abilities
+  anymore, it's some dude's face with a blue icon."* Entries whose art could not be resolved
+  rendered a hardcoded `FileDataID` (134400); since Blizzard stopped naming new icons, that ID
+  now points at whatever art happens to live there. The whole product is "press this button",
+  so an icon the player cannot identify is not a degraded recommendation — it is a wrong one.
+
+### One test harness
+
+`lua tests/run_tests.lua` is now the single entry point, running 62 suites — the describe/it
+suites in-process, and five legacy suites as subprocesses, since they call `os.exit` and mutate
+globals. Previously the entry point ran 183 assertions and the secret-value regressions, while
+both scenarios and the migration suite were standalone and had to be invoked by hand.
+
+Merging the two WoW API stubs immediately earned the work by exposing four fidelity bugs, each
+of which had been quietly making whole categories of assertion vacuous — including a missing
+`isActive`, the never-secret readiness boolean the entire cooldown model rests on.
+
+### Trace-driven defect sweep
+
+Twelve defects fixed from live flight recordings; see `STATE.md` for the itemised list. The
+load-bearing ones: `Assist.aoeDetected` keyed off a capability set, so it was a constant true
+and was allowed to outrank a direct nameplate count; and `buffs.degraded` was true on 100% of
+ticks for two independent reasons.
+
+### Instrumentation
+
+The castability filter has four ways to drop an entry and recorded none of them. It now names
+the reason — `unknown-spell` or `on-cooldown`, with the spellID — the recorder files it per
+tick, and `trace_analyze` reports the distribution. `Engine.lastDrop` is also cleared per tick;
+it was set once and never reset, so the recorder had been reporting one real event echoing.
+
+### Documentation
+
+- **`docs/HEKILI.md`** — the recalculation semantics written out, including the one trigger
+  deliberately *not* added: the energy interval crossing an affordability boundary. The
+  interval breathes, so a cost near a bound flips yes/maybe/no repeatedly; it is the highest
+  churn risk on the list and is already covered by the persistence check.
+- **What Tuono is not.** Stated up front so the reader self-selects. Tuono is not an
+  install-and-play rotation helper; it is the substrate that makes a rotation assistant
+  possible again on a client that removed the state those assistants were built on, and it
+  has a steep configuration curve. A polished one-click experience is downstream of that and
+  is not finished.
+
+### Note for anyone writing a test
+
+`Evaluate` is no longer a pure function of `Tuono.State`. A test that changes state and
+evaluates once must reset the commitment first.
+
 ## [2.2.1] - 2026-08-11
 
 ### Documentation
